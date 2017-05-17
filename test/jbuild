@@ -1,0 +1,6 @@
+(jbuild_version 1)
+
+(executables (
+  (names (test))
+  (libraries (capnp-rpc mirage-clock-unix mirage-logs alcotest examples logs.fmt))
+))

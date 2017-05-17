@@ -1,0 +1,18 @@
+opam-version: "1.2"
+maintainer:   "Thomas Leonard <thomas.leonard@docker.com>"
+authors:      "Thomas Leonard <thomas.leonard@docker.com>"
+license:      "Apache"
+homepage:     "https://github.com/mirage/capnp-rpc"
+bug-reports:  "https://github.com/mirage/capnp-rpc/issues"
+dev-repo:     "https://github.com/mirage/capnp-rpc.git"
+
+build: ["jbuilder" "build" "-p" name "-j" jobs]
+build-test: ["jbuilder" "runtest"]
+
+depends: [
+  "capnp"
+  "lwt"
+  "astring"
+  "jbuilder" {build}
+]
+available: [ocaml-version >= "4.02.0"]
