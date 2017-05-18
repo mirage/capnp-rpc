@@ -33,9 +33,20 @@ This library is new and unfinished. Check the issues page for some of the known 
 
 ### Quick start
 
-The `examples` directory contains some test services. Type `make` to build everything and run the tests.
+To build, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
 
-TODO: Add some examples once the API is stable.
+    git clone https://github.com/mirage/capnp-rpc.git
+    cd capnp-rpc
+    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces"
+    opam pin add -nyk git capnp-rpc .
+    opam depext capnp-rpc
+    opam install --deps-only -t capnp-rpc
+    make
+
+The `examples` directory contains some test services.
+Running `make` will run through the tests in `test/test.ml', which make use of the examples.
+
+TODO: Add some examples here once the API is stable.
 
 
 [capnp-ocaml]: https://github.com/pelzlpj/capnp-ocaml

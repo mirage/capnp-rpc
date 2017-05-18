@@ -13,6 +13,11 @@ depends: [
   "capnp"
   "lwt"
   "astring"
+  "fmt"
+  "logs"
   "jbuilder" {build}
+  "mirage-clock-unix" {test}
+  "mirage-logs" {test}
+  "alcotest" {test}
 ]
 available: [ocaml-version >= "4.02.0"]

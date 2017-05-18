@@ -109,8 +109,13 @@
 # bother implementing any other vat network protocol -- just use the correct container type and get
 # it for free.
 
-using Cxx = import "/capnp/c++.capnp";
-$Cxx.namespace("capnp::rpc");
+# Fails on Debian 9 with:
+#
+# lib/rpc_schema.capnp:112:20-38: error: Import failed: /capnp/c++.capnp
+# lib/rpc_schema.capnp:113:2-5: error: Not defined: Cxx
+#
+#using Cxx = import "/capnp/c++.capnp";
+#$Cxx.namespace("capnp::rpc");
 
 # ========================================================================================
 # The Four Tables
