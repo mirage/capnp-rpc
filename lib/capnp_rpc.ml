@@ -66,6 +66,12 @@ module Untyped = struct
   let abstract_method x = x
 
   let cap_index x = x
+
+  let unknown_interface ~interface_id _req =
+    Service.fail "Unknown interface %a" Uint64.printer interface_id
+
+  let unknown_method ~interface_id ~method_id _req =
+    Service.fail "Unknown method %a.%d" Uint64.printer interface_id method_id
 end
 
 module Service = Service

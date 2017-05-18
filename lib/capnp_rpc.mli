@@ -121,6 +121,9 @@ module Untyped : sig
     'a Capability.t
 
   val cap_index : Uint32.t option -> _ Payload.index option
+
+  val unknown_interface : interface_id:Uint64.t -> abstract_method_t
+  val unknown_method : interface_id:Uint64.t -> method_id:int -> abstract_method_t
 end
 
 module Connection : sig

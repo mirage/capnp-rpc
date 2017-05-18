@@ -74,3 +74,8 @@ let return_ref
     Rpc.Builder ret, caps
   in
   result, ret
+
+let fail fmt =
+  fmt |> Fmt.kstrf @@ fun msg ->
+  Promise.broken msg, Lwt.fail (Failure msg)
+
