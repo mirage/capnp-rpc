@@ -2,7 +2,7 @@
 
 (library (
   (name examples)
-  (libraries (astring capnp capnp-rpc))
+  (libraries (astring capnp-rpc-lwt))
 ))
 
 (rule

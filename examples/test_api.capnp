@@ -6,5 +6,7 @@ interface Echo {
 }
 
 interface Registry {
+  setEchoService @2 (service :Echo) -> ();
   echoService @0 () -> (service :Echo);
+  unblock @1 ();
 }
