@@ -1,0 +1,12 @@
+(jbuild_version 1)
+
+(library (
+  (name capnp_rpc_lwt)
+  (public_name capnp-rpc-lwt)
+  (libraries (lwt.unix astring capnp capnp-rpc fmt logs mirage-flow-lwt mirage-flow-unix))
+))
+
+(rule
+ ((targets (rpc_schema.ml rpc_schema.mli))
+  (deps (rpc_schema.capnp))
+  (action  (run capnpc -o ocaml ${<}))))

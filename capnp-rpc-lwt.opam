@@ -11,10 +11,13 @@ build-test: ["jbuilder" "runtest" "-p" name]
 
 depends: [
   "capnp"
+  "capnp-rpc"
+  "lwt"
   "astring"
   "fmt"
   "logs"
   "asetmap"
+  "mirage-flow-unix"
   "jbuilder" {build}
   "alcotest" {test}
 ]

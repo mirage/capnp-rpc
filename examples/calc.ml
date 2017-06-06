@@ -1,9 +1,9 @@
 (* This is the OCaml version of the C++ capnp calculator example. *)
 
 open Lwt.Infix
-open Capnp_rpc
+open Capnp_rpc_lwt
 
-module Api = Calculator.MakeRPC(Capnp.BytesMessage)(Capnp_rpc)
+module Api = Calculator.MakeRPC(Capnp.BytesMessage)(Capnp_rpc_lwt)
 
 type expr =
   | Float of float
@@ -23,7 +23,7 @@ let value_client proxy =
       let module P = Api.Reader.Calculator.Value.Read_params in
       let module R = Api.Reader.Calculator.Value.Read_results in
       let req = Capability.Request.create_no_args () in
-      Capability.call_for_value proxy#read req >|= fun resp ->
+      Capability.call_for_value_exn proxy#read req >|= fun resp ->
       R.of_payload resp |> R.value_get
   end
 
@@ -36,7 +36,7 @@ let fn_client proxy =
       let module R = Api.Reader.Calculator.Function.Call_results in
       let req, p = Capability.Request.create P.init_pointer in
       ignore (P.params_set_list p args);
-      Capability.call_for_value proxy#call req >|= fun resp ->
+      Capability.call_for_value_exn proxy#call req >|= fun resp ->
       R.of_payload resp |> R.value_get
   end
 
@@ -64,7 +64,7 @@ let client proxy =
       let module R = Api.Reader.Calculator.Evaluate_results in
       let req, p = Capability.Request.create P.init_pointer in
       write_expr ~export:(Capability.Request.export req) (P.expression_init p) expr;
-      Capability.call_for_cap proxy#evaluate req
+      Capability.call proxy#evaluate req
       |> R.value_get_pipelined
       |> value_client
 
@@ -79,7 +79,7 @@ let client proxy =
           | `Multiply -> O.Multiply
           | `Divide -> O.Divide
         );
-      Capability.call_for_cap proxy#get_operator req
+      Capability.call proxy#get_operator req
       |> R.func_get_pipelined
   end
 
@@ -112,7 +112,7 @@ let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t = fu
           result >|= fun result ->
           let resp, c = Service.Response.create Value.Read_results.init_pointer in
           Value.Read_results.value_set c result;
-          resp
+          Ok resp
         )
     end
 
@@ -132,7 +132,7 @@ let fn n_args body =
         value#read >|= fun value ->
         let resp, r = Service.Response.create R.init_pointer in
         R.value_set r value;
-        resp
+        Ok resp
       )
   end
 

@@ -1,0 +1,6 @@
+(jbuild_version 1)
+
+(library (
+  (name testbed)
+  (libraries (astring capnp fmt logs capnp_rpc alcotest asetmap))
+))
