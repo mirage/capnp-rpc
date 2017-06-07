@@ -108,7 +108,7 @@ let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t = fu
     let open Api.Builder.Calculator in
     Value.local @@ object (_ : Value.service)
       method read _ =
-        Service.return_lwt (
+        Service.return_lwt (fun () ->
           result >|= fun result ->
           let resp, c = Service.Response.create Value.Read_results.init_pointer in
           Value.Read_results.value_set c result;
@@ -128,7 +128,7 @@ let fn n_args body =
       assert (Array.length args = n_args);
       let value = value_client (eval ~args body) in
       (* Functions return floats, not Value objects, so we have to wait here. *)
-      Service.return_lwt (
+      Service.return_lwt (fun () ->
         value#read >|= fun value ->
         let resp, r = Service.Response.create R.init_pointer in
         R.value_set r value;

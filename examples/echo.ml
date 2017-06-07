@@ -18,7 +18,7 @@ let service () =
       R.reply_set results (Fmt.strf "got:%d:%s" count msg);
       count <- count + 1;
       if P.slow_get params then (
-        Service.return_lwt (
+        Service.return_lwt (fun () ->
           fst blocked >|= fun () -> Ok resp
         )
       )
