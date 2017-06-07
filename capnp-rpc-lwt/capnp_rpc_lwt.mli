@@ -89,8 +89,9 @@ module Service : sig
   val return_empty : unit -> 'a StructRef.t
   (** [return_empty ()] is a promise for a response with no payload. *)
 
-  val return_lwt : 'a Response.t or_error Lwt.t -> 'a StructRef.t
-  (** [return_lwt l] is a local promise for the result of Lwt thread [l].
+  val return_lwt : (unit -> 'a Response.t or_error Lwt.t) -> 'a StructRef.t
+  (** [return_lwt fn] is a local promise for the result of Lwt thread [fn ()].
+      If [fn ()] fails, the error is logged and an "Internal error" returned to the caller.
       Note that this does not support pipelining. *)
 
   val fail : ('a, Format.formatter, unit, 'b StructRef.t) format4 -> 'a

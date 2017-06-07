@@ -21,7 +21,7 @@ let service () =
       let resp, results = Service.Response.create R.init_pointer in
       let cap_index = Service.Response.export resp echo_service in
       R.service_set results (Some cap_index);
-      Service.return_lwt (
+      Service.return_lwt (fun () ->
         fst blocked >|= fun () -> Ok resp
       )
 

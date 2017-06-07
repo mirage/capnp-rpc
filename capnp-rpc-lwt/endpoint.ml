@@ -66,10 +66,15 @@ let rec recv t =
     Log.debug (fun f -> f "Incomplete; waiting for more data...");
     Lwt.try_bind
       (fun () -> Lwt_io.read ~count:4096 t.from_remote)
-      (fun data ->
-         Log.debug (fun f -> f "Got %S" data);
-         Capnp.Codecs.FramedStream.add_fragment t.decoder data;
-         recv t
+      (function
+        | "" ->
+          Log.info (fun f -> f "Connection closed");
+          Lwt_switch.turn_off t.switch >|= fun () ->
+          Error `Closed
+        | data ->
+          Log.debug (fun f -> f "Got %S" data);
+          Capnp.Codecs.FramedStream.add_fragment t.decoder data;
+          recv t
       )
       (function
         | Lwt_io.Channel_closed _ -> Lwt_switch.turn_off t.switch >|= fun () -> Error `Closed

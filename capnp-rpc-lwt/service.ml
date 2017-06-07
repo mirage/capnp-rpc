@@ -14,6 +14,12 @@ type abstract_method_t =
 type 'a response_promise = abstract_response_promise
 type ('a, 'b) method_t = abstract_method_t
 
+let pp_method = Capnp.RPC.Registry.pp_method
+
+let fail fmt =
+  fmt |> Fmt.kstrf @@ fun msg ->
+  Core_types.broken (`Exception msg)
+
 let local s =
   object (self : Core_types.cap)
     inherit Core_types.ref_counted
@@ -27,10 +33,13 @@ let local s =
       let call = Rpc.readable_req call in
       let interface_id = Call.interface_id_get call in
       let method_id = Call.method_id_get call in
-      Log.info (fun f -> f "Invoking local method %a" Capnp.RPC.Registry.pp_method (interface_id, method_id));
+      Log.info (fun f -> f "Invoking local method %a" pp_method (interface_id, method_id));
       let p = Call.params_get call in
       let m = s ~interface_id ~method_id in
-      m (p, caps)
+      try m (p, caps)
+      with ex ->
+        Log.warn (fun f -> f "Uncaught exception handling %a: %a" pp_method (interface_id, method_id) Fmt.exn ex);
+        fail "Internal error from %a" pp_method (interface_id, method_id)
 
     method shortest = self
   end
@@ -43,27 +52,23 @@ let return resp =
 let return_empty () =
   return @@ Response.create_empty ()
 
-let buffer () =
-  let q = Queue.create () in
-  let add _xs _req _caps =
-    failwith "todo: create promise for result and enqueue"
-  in
-  add, q
-
 (* A convenient way to implement a simple blocking local function, where
    pipelining is not supported (further messages will be queued up at this
    host until it returns). *)
-let return_lwt resp =
+let return_lwt fn =
   let result = Local_struct_promise.make () in
   Lwt.async (fun () ->
-      resp >|= function
-      | Ok resp ->
-        let msg, caps = Response.finish resp in
-        result#resolve (Ok (msg, caps));
-      | Error _ as e -> result#resolve e
+      Lwt.catch (fun () ->
+          fn () >|= function
+          | Ok resp ->
+            let msg, caps = Response.finish resp in
+            result#resolve (Ok (msg, caps));
+          | Error _ as e -> result#resolve e
+        )
+        (fun ex ->
+           Log.warn (fun f -> f "Uncaught exception: %a" Fmt.exn ex);
+           result#resolve (Error (`Exception "Internal error"));
+           Lwt.return_unit
+        );
     );
   (result :> Core_types.struct_ref)
-
-let fail fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
-  Core_types.broken (`Exception msg)
