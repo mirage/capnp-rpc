@@ -3,6 +3,8 @@
 (library (
   (name capnp_rpc_lwt)
   (public_name capnp-rpc-lwt)
+  (ocamlc_flags (:standard -w -55))
+  (ocamlopt_flags (:standard -w -55))
   (libraries (lwt.unix astring capnp capnp-rpc fmt logs mirage-flow-lwt mirage-flow-unix))
 ))
 

@@ -15,7 +15,7 @@ depends: [
   "fmt"
   "logs"
   "asetmap"
-  "jbuilder" {build}
+  "jbuilder" {build & >= "1.0+beta10" }
   "alcotest" {test}
 ]
 available: [ocaml-version >= "4.02.0"]
