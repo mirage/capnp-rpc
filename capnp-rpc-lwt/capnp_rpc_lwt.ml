@@ -64,6 +64,8 @@ end
 
 module StructRef = struct
   type 'a t = Core_types.struct_ref
+
+  let finish t = t#finish
 end
 
 module Untyped = struct

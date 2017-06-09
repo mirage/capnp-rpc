@@ -4,6 +4,12 @@ module StructRef : sig
   type 'a t
   (** An ['a t] is a reference to a response message (that may not have arrived yet)
       with content type ['a]. *)
+
+  val finish : 'a t -> unit
+  (** [finish t] indicates that this result will never be used again.
+      If the results have not yet arrived, we send a cancellation request (which
+      may or may not succeed). As soon as the results are available, they are
+      released. It is an error to use [t] after calling this. *)
 end
 
 module rec Payload : sig
