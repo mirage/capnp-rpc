@@ -13,7 +13,7 @@ module Make (C : S.CONCRETE) (N : S.NETWORK_TYPES) : sig
     module Make (P : Protocol.S) : sig
       type t
 
-      val tags : t -> Logs.Tag.set
+      val tags : ?qid:P.T.QuestionId.t -> ?aid:P.T.AnswerId.t -> t -> Logs.Tag.set
 
       val bootstrap : t -> Core_types.cap
 

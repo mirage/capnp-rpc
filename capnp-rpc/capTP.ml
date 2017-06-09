@@ -28,7 +28,13 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         bootstrap;
       }
 
-    let tags t = t.tags
+    let tags ?qid ?aid t =
+      match qid, aid with
+      | None, None -> t.tags
+      | Some qid, None -> Logs.Tag.add Debug.qid_tag (P.T.QuestionId.uint32 qid) t.tags
+      | None, Some aid -> Logs.Tag.add Debug.qid_tag (P.T.AnswerId.uint32 aid) t.tags
+      | Some _, Some _ -> assert false
+
     let stats t = P.stats t.p
 
     let register t x y =
@@ -63,10 +69,9 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         let result = make_remote_promise t in
         let con_caps = RO_array.map (to_cap_desc t) caps in
         let question, qid, message_target, descs = P.Send.call t.p (result :> struct_resolver) target con_caps in
-        Log.info (fun f -> f ~tags:t.tags "Sending: (%a).call %a (q%a)"
+        Log.info (fun f -> f ~tags:(tags ~qid t) "Sending: (%a).call %a"
                      P.pp_cap target
-                     Request_payload.pp (msg, caps)
-                     P.T.QuestionId.pp qid);
+                     Request_payload.pp (msg, caps));
         result#set_question question;
         t.queue_send (`Call (qid, message_target, msg, descs));
         (result :> struct_ref)
@@ -93,8 +98,8 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
 
           method set_question q =
             let finish = lazy (
-              Log.info (fun f -> f ~tags:t.tags "Send finish %t" self#pp);
               let qid = P.Send.finish t.p q in
+              Log.info (fun f -> f ~tags:(tags ~qid t) "Send finish %t" self#pp);
               t.queue_send (`Finish (qid, false));
             ) in
             self#update_target (Some (q, finish))
@@ -164,38 +169,34 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       let result = Self_proxy.make_remote_promise t in
       let question, qid = P.Send.bootstrap t.p (result :> struct_resolver) in
       result#set_question question;
-      Log.info (fun f -> f ~tags:t.tags "Sending: bootstrap (q%a)" P.T.QuestionId.pp qid);
+      Log.info (fun f -> f ~tags:(tags ~qid t) "Sending: bootstrap");
       t.queue_send (`Bootstrap qid);
       let service = result#cap Path.root in
       result#when_resolved (fun _ -> result#finish);
       service
 
     let return_results t answer =
-      let q, ret =
+      let aid, ret =
         let answer_promise = P.answer_promise answer in
         match answer_promise#response with
         | None -> assert false
         | Some (Ok (msg, caps)) ->
           RO_array.iter (fun c -> c#inc_ref) caps;        (* Copy everything stored in [answer]. *)
           let con_caps = RO_array.map (Self_proxy.to_cap_desc t) caps in
-          let q, ret = P.Send.return_results t.p answer msg con_caps in
-          Log.info (fun f -> f ~tags:t.tags "Returning results: answer q%a -> %a"
-                       P.T.AnswerId.pp q
+          let aid, ret = P.Send.return_results t.p answer msg con_caps in
+          Log.info (fun f -> f ~tags:(tags ~aid t) "Returning results: %a"
                        Response_payload.pp (msg, caps));
-          q, ret
+          aid, ret
         | Some (Error (`Exception msg)) ->
-          let q, ret = P.Send.return_error t.p answer msg in
-          Log.info (fun f -> f ~tags:t.tags "Returning error: answer q%a -> %s"
-                       P.T.AnswerId.pp q
-                       msg);
-          q, ret
+          let aid, ret = P.Send.return_error t.p answer msg in
+          Log.info (fun f -> f ~tags:(tags ~aid t) "Returning error: %s" msg);
+          aid, ret
         | Some (Error `Cancelled) ->
-          let q, ret = P.Send.return_cancelled t.p answer in
-          Log.info (fun f -> f ~tags:t.tags "Returning cancelled: answer q%a"
-                       P.T.AnswerId.pp q);
-          q, ret
+          let aid, ret = P.Send.return_cancelled t.p answer in
+          Log.info (fun f -> f ~tags:(tags ~aid t) "Returning cancelled");
+          aid, ret
       in
-      t.queue_send (`Return (q, ret))
+      t.queue_send (`Return (aid, ret))
 
     let reply_to_call t = function
       | `Bootstrap answer ->
@@ -220,19 +221,17 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
          let promise = Local_struct_promise.make () in
          let answer = P.Input.bootstrap t.p qid ~answer:promise in
          reply_to_call t (`Bootstrap answer)
-      | `Call (qid, message_target, msg, descs) ->
-        Log.info (fun f -> f ~tags:t.tags "Received call a%a to %a"
-                     P.T.AnswerId.pp qid
-                     P.In.pp_desc message_target);
+      | `Call (aid, message_target, msg, descs) ->
+        Log.info (fun f -> f ~tags:(tags ~aid t) "Received call to %a" P.In.pp_desc message_target);
         let promise = Local_struct_promise.make () in
-        let answer, target, caps = P.Input.call t.p qid message_target descs ~allowThirdPartyTailCall:false `Caller ~answer:promise in
+        let answer, target, caps = P.Input.call t.p aid message_target descs ~allowThirdPartyTailCall:false `Caller ~answer:promise in
         let target = Self_proxy.from_cap_desc t target in
         let caps = RO_array.map (Self_proxy.from_cap_desc t) caps in
         reply_to_call t (`Call (answer, target, msg, caps))
-      | `Return (q, ret) ->
+      | `Return (qid, ret) ->
          begin match ret with
          | `Results (msg, descs) ->
-           let result, caps = P.Input.return_results t.p q msg descs ~releaseParamCaps:false in
+           let result, caps = P.Input.return_results t.p qid msg descs ~releaseParamCaps:false in
            let is_cancelled = result#response = Some (Error `Cancelled) in
            let from_cap_desc = function
              | `LocalEmbargo (c, _) when is_cancelled -> c (* Can't be anything pipelined after the cancel *)
@@ -253,31 +252,23 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
              | #P.recv_cap as x -> Self_proxy.from_cap_desc t x
            in
            let caps = RO_array.map from_cap_desc caps in
-           Log.info (fun f -> f ~tags:t.tags "Got results: question q%a -> %a"
-                        P.T.QuestionId.pp q
+           Log.info (fun f -> f ~tags:(tags ~qid t) "Got results: %a"
                         Response_payload.pp (msg, caps)
                     );
            result#resolve (Ok (msg, caps))
          | `Exception msg ->
-           let result = P.Input.return_exception t.p q ~releaseParamCaps:false in
-           Log.info (fun f -> f ~tags:t.tags "Got exception: question q%a -> %s"
-                        P.T.QuestionId.pp q
-                        msg
-                    );
+           let result = P.Input.return_exception t.p qid ~releaseParamCaps:false in
+           Log.info (fun f -> f ~tags:(tags ~qid t) "Got exception: %s" msg);
            result#resolve (Error (`Exception msg))
          | `Cancelled ->
-           let result = P.Input.return_cancelled t.p q ~releaseParamCaps:false in
-           Log.info (fun f -> f ~tags:t.tags "Got cancelled: question q%a"
-                        P.T.QuestionId.pp q
-                    );
+           let result = P.Input.return_cancelled t.p qid ~releaseParamCaps:false in
+           Log.info (fun f -> f ~tags:(tags ~qid t) "Got cancelled");
            result#resolve (Error `Cancelled)
          | _ -> failwith "TODO: other return"
          end
-      | `Finish (qid, releaseResultCaps) ->
-        let answer = P.Input.finish t.p qid ~releaseResultCaps in
-        Log.info (fun f -> f ~tags:t.tags "Received finish for answer %a -> %t"
-                     P.T.AnswerId.pp
-                     qid answer#pp);
+      | `Finish (aid, releaseResultCaps) ->
+        let answer = P.Input.finish t.p aid ~releaseResultCaps in
+        Log.info (fun f -> f ~tags:(tags ~aid t) "Received finish for %t" answer#pp);
         answer#finish
       | `Release (id, referenceCount) ->
         P.Input.release t.p id ~referenceCount

@@ -40,7 +40,7 @@ let pp_call f call =
   let method_id = Call.method_id_get call in
   Capnp.RPC.Registry.pp_method f (interface_id, method_id)
 
-let tags t = Conn.tags t.conn
+let tags ?qid ?aid t = Conn.tags ?qid ?aid t.conn
 
 let write_promised_answer pa (qid, xforms) =
   let open Builder in
@@ -103,12 +103,12 @@ let handle_return t return =
     Conn.handle_msg t.conn (`Return (qid, `Results (Rpc.Readonly return, descs)))
   | Return.Exception ex ->
     let reason = Exception.reason_get ex in
-    Log.info (fun f -> f ~tags:(tags t) "Got exception %S" reason);
+    Log.info (fun f -> f ~tags:(tags ~qid t) "Got exception %S" reason);
     Conn.handle_msg t.conn (`Return (qid, `Exception reason))
   | Return.Canceled ->
     Conn.handle_msg t.conn (`Return (qid, `Cancelled))
   | _ ->
-    Log.warn (fun f -> f ~tags:(tags t) "Got unknown return type");
+    Log.warn (fun f -> f ~tags:(tags ~qid t) "Got unknown return type");
     failwith "Unexpected return type received"
 
 let handle_finish t finish =
@@ -132,10 +132,9 @@ let parse_target msg_target =
 
 (* We have received a question from our peer. *)
 let handle_call t call =
-  Log.info (fun f -> f ~tags:(tags t) "Received call %a" pp_call call);
   let open Reader in
   let aid = Call.question_id_get call |> AnswerId.of_uint32 in
-  let open Reader in
+  Log.info (fun f -> f ~tags:(tags ~aid t) "Received call %a" pp_call call);
   (* Resolve capabilities *)
   let p = Call.params_get call in
   let descs = parse_descs (Payload.cap_table_get_list p |> RO_array.of_list) in
