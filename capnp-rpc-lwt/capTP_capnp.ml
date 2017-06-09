@@ -105,6 +105,8 @@ let handle_return t return =
     let reason = Exception.reason_get ex in
     Log.info (fun f -> f ~tags:(tags t) "Got exception %S" reason);
     Conn.handle_msg t.conn (`Return (qid, `Exception reason))
+  | Return.Canceled ->
+    Conn.handle_msg t.conn (`Return (qid, `Cancelled))
   | _ ->
     Log.warn (fun f -> f ~tags:(tags t) "Got unknown return type");
     failwith "Unexpected return type received"
@@ -260,6 +262,11 @@ let serialise ~tags : Proto.Out.t -> _ =
           let ex = Return.exception_init ret in
           Exception.type_set ex Exception.Type.Failed;    (* todo: other types? *)
           Exception.reason_set ex msg;
+          ret
+        | `Cancelled ->
+          let m = Message.init_root () in
+          let ret = Message.return_init m in
+          Return.canceled_set ret;
           ret
         | _ -> failwith "TODO: other return type"
     in

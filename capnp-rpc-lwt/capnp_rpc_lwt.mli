@@ -54,7 +54,9 @@ and Capability : sig
       It is the same as [snd (call_full m req)].
       This is simpler than using [call_full], but doesn't support pipelining
       (you can't use any capabilities in the response in another message until the
-      response arrives). *)
+      response arrives).
+      Doing [Lwt.cancel] on the result will send a cancel message to the target
+      for remote calls. *)
 
   val call_for_value_exn : ('a, 'b) method_t -> 'a Request.t -> 'b Payload.t Lwt.t
   (** Wrapper for [call_for_value] that turns errors in Lwt failures. *)
