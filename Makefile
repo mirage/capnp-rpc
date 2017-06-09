@@ -3,9 +3,9 @@
 default: test
 
 all:
-	jbuilder build --dev @install
+	jbuilder build --dev @install test/test.bc test-lwt/test.bc
 	rm -rf _build/_tests
-	jbuilder runtest --dev # --no-buffer
+	jbuilder runtest --dev --no-buffer -j 1
 
 fuzz:
 	jbuilder build --dev fuzz/fuzz.exe
@@ -18,4 +18,5 @@ clean:
 
 test:
 	rm -rf _build/_tests
-	jbuilder build @runtest --dev # --no-buffer
+	jbuilder build --dev test/test.bc test-lwt/test.bc
+	jbuilder build @runtest --dev --no-buffer -j 1
