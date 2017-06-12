@@ -68,6 +68,21 @@ let test_embargo switch =
   Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:2:ping" >>= fun () ->
   Lwt.return ()
 
+let test_cancel switch =
+  let service = run_server ~switch ~service:(Echo.service ()) () in
+  let reply1 = Echo.Client.ping service ~slow:true "ping1" in
+  assert (Lwt.state reply1 = Lwt.Sleep);
+  Lwt.cancel reply1;
+  Lwt.try_bind
+    (fun () -> reply1)
+    (fun _ -> Alcotest.fail "Should have been cancelled!")
+    (function
+      | Lwt.Canceled -> Lwt.return ()
+      | ex -> Lwt.fail ex
+    )
+  >>= fun () ->
+  Echo.Client.unblock service
+
 let test_calculator switch =
   let c = Calc.client @@ run_server ~switch ~service:Calc.service () in
   (c#evaluate (`Float 1.))#read >|= Alcotest.(check float) "Simple calc" 1. >>= fun () ->
@@ -86,6 +101,7 @@ let rpc_tests = [
   "Embargo",    `Quick, run_lwt test_embargo;
   "Registry",   `Quick, run_lwt test_registry;
   "Calculator", `Quick, run_lwt test_calculator;
+  "Cancel",     `Quick, run_lwt test_cancel;
 ]
 
 let () =

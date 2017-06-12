@@ -4,6 +4,12 @@ module StructRef : sig
   type 'a t
   (** An ['a t] is a reference to a response message (that may not have arrived yet)
       with content type ['a]. *)
+
+  val finish : 'a t -> unit
+  (** [finish t] indicates that this result will never be used again.
+      If the results have not yet arrived, we send a cancellation request (which
+      may or may not succeed). As soon as the results are available, they are
+      released. It is an error to use [t] after calling this. *)
 end
 
 module rec Payload : sig
@@ -54,7 +60,9 @@ and Capability : sig
       It is the same as [snd (call_full m req)].
       This is simpler than using [call_full], but doesn't support pipelining
       (you can't use any capabilities in the response in another message until the
-      response arrives). *)
+      response arrives).
+      Doing [Lwt.cancel] on the result will send a cancel message to the target
+      for remote calls. *)
 
   val call_for_value_exn : ('a, 'b) method_t -> 'a Request.t -> 'b Payload.t Lwt.t
   (** Wrapper for [call_for_value] that turns errors in Lwt failures. *)

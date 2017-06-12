@@ -33,11 +33,14 @@ module Capability = struct
     target#call (Rpc.Builder c) (Request.caps req)
 
   let call_for_value m req =
-    let p, r = Lwt.wait () in
+    let p, r = Lwt.task () in
     let result = call m req in
+    let finish = lazy result#finish in
+    Lwt.on_cancel p (fun () -> Lazy.force finish);
     result#when_resolved (function
         | Error _ as e -> Lwt.wakeup r e
         | Ok (resp, caps) ->
+          Lazy.force finish;
           let open Schema.Reader in
           let resp = Rpc.readable_resp resp in
           match Return.get resp with
@@ -61,6 +64,8 @@ end
 
 module StructRef = struct
   type 'a t = Core_types.struct_ref
+
+  let finish t = t#finish
 end
 
 module Untyped = struct
