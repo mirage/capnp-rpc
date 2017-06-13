@@ -34,17 +34,15 @@ module Client = struct
   type t = Api.Reader.Echo.t Capability.t
 
   let ping t ?(slow=false) msg =
-    let proxy = new Api.Reader.Echo.client t in
     let module P = Api.Builder.Echo.Ping_params in
     let module R = Api.Reader.Echo.Ping_results in
     let req, p = Capability.Request.create P.init_pointer in
     P.slow_set p slow;
     P.msg_set p msg;
-    Capability.call_for_value_exn proxy#ping req >|= fun resp ->
+    Capability.call_for_value_exn t Api.Reader.Echo.ping_method req >|= fun resp ->
     R.of_payload resp |> R.reply_get
 
   let unblock t =
-    let proxy = new Api.Reader.Echo.client t in
     let req = Capability.Request.create_no_args () in
-    Capability.call_for_value proxy#unblock req >|= ignore
+    Capability.call_for_value t Api.Reader.Echo.unblock_method req >|= ignore
 end

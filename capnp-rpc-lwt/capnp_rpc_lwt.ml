@@ -16,7 +16,7 @@ end
 module Capability = struct
   type 'a t = Core_types.cap
   type 'a capability_t = 'a t
-  type ('a, 'b) method_t = Core_types.cap * Uint64.t * int
+  type ('t, 'a, 'b) method_t = Uint64.t * int
 
   module Request = Request
   module Response = Payload
@@ -24,17 +24,18 @@ module Capability = struct
   let inc_ref x = x#inc_ref
   let dec_ref x = x#dec_ref
 
-  let call ((target, interface_id, method_id) : ('a, 'b) method_t) req =
+  let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) req =
     let open Schema.Builder in
-    Log.info (fun f -> f "Calling %a" Capnp.RPC.Registry.pp_method (interface_id, method_id));
+    Log.info (fun f -> f "Calling %a" Capnp.RPC.Registry.pp_method m);
     let c = Request.get_call req in
+    let (interface_id, method_id) = m in
     Call.interface_id_set c interface_id;
     Call.method_id_set_exn c method_id;
     target#call (Rpc.Builder c) (Request.caps req)
 
-  let call_for_value m req =
+  let call_for_value cap m req =
     let p, r = Lwt.task () in
-    let result = call m req in
+    let result = call cap m req in
     let finish = lazy result#finish in
     Lwt.on_cancel p (fun () -> Lazy.force finish);
     result#when_resolved (function
@@ -50,14 +51,13 @@ module Capability = struct
       );
     p
 
-  let call_for_value_exn m req =
-    call_for_value m req >>= function
+  let call_for_value_exn cap m req =
+    call_for_value cap m req >>= function
     | Ok x -> Lwt.return x
     | Error e ->
-      let target, iid, mid = m in
       let msg = Fmt.strf "Error calling %t(%a): %a"
-          target#pp
-          Capnp.RPC.Registry.pp_method (iid, mid)
+          cap#pp
+          Capnp.RPC.Registry.pp_method m
           Capnp_rpc.Error.pp e in
       Lwt.fail (Failure msg)
 end
@@ -88,8 +88,8 @@ module Untyped = struct
 
   let local = Service.local
 
-  let bind_method target ~interface_id ~method_id : ('a, 'b) Capability.method_t =
-    (target, interface_id, method_id)
+  let define_method ~interface_id ~method_id : ('t, 'a, 'b) Capability.method_t =
+    (interface_id, method_id)
 
   type abstract_method_t = Service.abstract_method_t
 

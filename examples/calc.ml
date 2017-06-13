@@ -17,26 +17,24 @@ let or_fail msg = function
 
 (* A more user-friendly API for the Value interface *)
 let value_client proxy =
-  let proxy = new Api.Reader.Calculator.Value.client proxy in
   object
     method read =
       let module P = Api.Reader.Calculator.Value.Read_params in
       let module R = Api.Reader.Calculator.Value.Read_results in
       let req = Capability.Request.create_no_args () in
-      Capability.call_for_value_exn proxy#read req >|= fun resp ->
+      Capability.call_for_value_exn proxy Api.Reader.Calculator.Value.read_method req >|= fun resp ->
       R.of_payload resp |> R.value_get
   end
 
 (* A more user-friendly API for the Function interface *)
 let fn_client proxy =
-  let proxy = new Api.Reader.Calculator.Function.client proxy in
   object
     method call args =
       let module P = Api.Builder.Calculator.Function.Call_params in
       let module R = Api.Reader.Calculator.Function.Call_results in
       let req, p = Capability.Request.create P.init_pointer in
       ignore (P.params_set_list p args);
-      Capability.call_for_value_exn proxy#call req >|= fun resp ->
+      Capability.call_for_value_exn proxy Api.Reader.Calculator.Function.call_method req >|= fun resp ->
       R.of_payload resp |> R.value_get
   end
 
@@ -57,14 +55,13 @@ let rec write_expr ~export b expr =
 
 (* A more user-friendly API for the Calculator interface *)
 let client proxy =
-  let proxy = new Api.Reader.Calculator.client proxy in
   object
     method evaluate expr =
       let module P = Api.Builder.Calculator.Evaluate_params in
       let module R = Api.Reader.Calculator.Evaluate_results in
       let req, p = Capability.Request.create P.init_pointer in
       write_expr ~export:(Capability.Request.export req) (P.expression_init p) expr;
-      Capability.call proxy#evaluate req
+      Capability.call proxy Api.Reader.Calculator.evaluate_method req
       |> R.value_get_pipelined
       |> value_client
 
@@ -79,7 +76,7 @@ let client proxy =
           | `Multiply -> O.Multiply
           | `Divide -> O.Divide
         );
-      Capability.call proxy#get_operator req
+      Capability.call proxy Api.Reader.Calculator.get_operator_method req
       |> R.func_get_pipelined
   end
 
