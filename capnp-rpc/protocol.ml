@@ -174,10 +174,10 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
 
     module Send : sig
       val bootstrap : t -> C.struct_resolver -> question * Out.QuestionId.t
-      val call : t -> C.struct_resolver -> message_target_cap -> cap RO_array.t ->
+      val call : t -> C.struct_resolver -> message_target_cap -> [< cap] RO_array.t ->
         question * Out.QuestionId.t * Out.message_target * Out.desc RO_array.t
 
-      val return_results : t -> answer -> C.Response.t -> cap RO_array.t -> Out.AnswerId.t * Out.return
+      val return_results : t -> answer -> C.Response.t -> [< cap] RO_array.t -> Out.AnswerId.t * Out.return
       val return_error : t -> answer -> string -> Out.AnswerId.t * Out.return
       val return_cancelled : t -> answer -> Out.AnswerId.t * Out.return
 
@@ -496,13 +496,13 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         in
         question, question.question_id
 
-      let call t question_data (target : message_target_cap) (caps : cap RO_array.t) =
+      let call t question_data (target : message_target_cap) caps =
         let question = Questions.alloc t.questions (fun question_id ->
             {question_flags = 0; params_for_release = []; question_id; question_data; question_pipelined_fields = PathSet.empty}
           )
         in
         let descrs =
-          caps |> RO_array.map (fun (cap:cap) ->
+          caps |> RO_array.map (fun cap ->
               let descr, to_release = export t cap in
               question.params_for_release <- to_release @ question.params_for_release;
               descr

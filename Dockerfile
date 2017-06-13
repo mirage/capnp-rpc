@@ -7,7 +7,7 @@ RUN opam pin add -ny capnp "https://github.com/talex5/capnp-ocaml.git#interfaces
     opam pin add -ny capnp-rpc . && \
     opam pin add -ny capnp-rpc-lwt . && \
     opam depext capnp-rpc-lwt
-RUN opam install capnp-rpc-lwt alcotest
+RUN opam install capnp-rpc-lwt alcotest afl-persistent
 ADD . /home/opam/capnp-rpc
 RUN sudo chown -R opam /home/opam/capnp-rpc
-RUN opam config exec -- make test
+RUN opam config exec -- make test build-fuzz

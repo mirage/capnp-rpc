@@ -12,6 +12,24 @@ let echo_service = object (self : cap)
   method shortest = (self :> cap)
 end
 
+(* A service which just queues incoming messages and lets the test driver handle them. *)
+let manual () = object (self : #cap)
+  inherit ref_counted
+  val queue = Queue.create ()
+
+  method call x caps =
+    assert (ref_count > 0);
+    let result = Capnp_direct.Local_struct_promise.make () in
+    Queue.add (x, caps, result) queue;
+    (result :> struct_ref)
+
+  method pop = Queue.pop queue
+
+  method private release = ()
+  method pp f = Fmt.string f "manual"
+  method shortest = (self :> cap)
+end
+
 (* Callers can swap their arguments for the slot's contents. *)
 let swap_service slot = object (self : cap)
   inherit ref_counted

@@ -7,11 +7,12 @@ all:
 	rm -rf _build/_tests
 	jbuilder runtest --dev --no-buffer -j 1
 
-fuzz:
+build-fuzz:
 	jbuilder build --dev fuzz/fuzz.exe
-	#./_build/default/fuzz/fuzz.exe
+
+fuzz: build-fuzz
 	# TODO: remove -d
-	afl-fuzz -d -i _build/in -o _build/out ./_build/default/fuzz/fuzz.exe @@
+	afl-fuzz -d -i _build/in -o _build/out ./_build/default/fuzz/fuzz.exe
 
 clean:
 	rm -rf _build
@@ -19,4 +20,5 @@ clean:
 test:
 	rm -rf _build/_tests
 	jbuilder build --dev test/test.bc test-lwt/test.bc
+	#./_build/default/test/test.bc test core 7
 	jbuilder build @runtest --dev --no-buffer -j 1

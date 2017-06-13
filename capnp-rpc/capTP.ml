@@ -12,7 +12,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
     type t = {
       queue_send : (P.Out.t -> unit);
       p : P.t;
-      ours : (cap, P.cap) Hashtbl.t;              (* TODO: use weak table *)
+      ours : (cap, P.message_target_cap) Hashtbl.t;              (* TODO: use weak table *)
       tags : Logs.Tag.set;
       embargoes : (cap * Protocol.EmbargoId.t, Cap_proxy.embargo_cap) Hashtbl.t;
       bootstrap : cap option;
@@ -38,32 +38,32 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
     let stats t = P.stats t.p
 
     let register t x y =
-      assert (not (Hashtbl.mem t.ours x));
-      Hashtbl.add t.ours x y
+      match Hashtbl.find t.ours x with
+      | exception Not_found -> Hashtbl.add t.ours x y
+      | existing -> assert (y = existing)
 
     let unwrap t x =
       try Some (Hashtbl.find t.ours x)
       with Not_found -> None
 
     module Self_proxy = struct
-      (* Will [c#dec_ref] if we no longer need [c], but keep the ref count
-         the same if we need it to hang around so the remote peer can use it
-         later. *)
-      let to_cap_desc t (cap : cap) : P.cap =
+      let to_cap_desc t (cap : cap) =
         let cap = cap#shortest in
         match unwrap t cap with
         | None -> `Local cap
-        | Some x ->
-          match x with
-          | `ReceiverHosted _
-          | `ReceiverAnswer _ -> cap#dec_ref; x
-          | `None
-          | `SenderHosted _
-          | `SenderPromise _
-          | `ThirdPartyHosted _
-          | `Local _ -> x
+        | Some x -> (x :> [`Local of cap | P.message_target_cap])
 
       type target = (P.question * unit Lazy.t) option  (* question, finish *)
+
+      (* We've just converted [caps] to [con_caps] and transmitted them.
+         [dec_ref] each [cap], unless we need to keep it around so the peer can refer
+         to it later. *)
+      let release_remote_caps caps con_caps =
+        con_caps |> RO_array.iteri (fun i -> function
+            | `ReceiverHosted _
+            | `ReceiverAnswer _ -> (RO_array.get caps i)#dec_ref
+            | `Local _ -> ()
+          )
 
       let rec call t target msg caps =
         let result = make_remote_promise t in
@@ -74,6 +74,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
                      Request_payload.pp (msg, caps));
         result#set_question question;
         t.queue_send (`Call (qid, message_target, msg, descs));
+        release_remote_caps caps con_caps;
         (result :> struct_ref)
 
       (* A cap that sends to a promised answer's cap at other *)
@@ -172,7 +173,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       Log.info (fun f -> f ~tags:(tags ~qid t) "Sending: bootstrap");
       t.queue_send (`Bootstrap qid);
       let service = result#cap Path.root in
-      result#when_resolved (fun _ -> result#finish);
+      result#finish;
       service
 
     let return_results t answer =
@@ -186,6 +187,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
           let aid, ret = P.Send.return_results t.p answer msg con_caps in
           Log.info (fun f -> f ~tags:(tags ~aid t) "Returning results: %a"
                        Response_payload.pp (msg, caps));
+          Self_proxy.release_remote_caps caps con_caps;
           aid, ret
         | Some (Error (`Exception msg)) ->
           let aid, ret = P.Send.return_error t.p answer msg in
