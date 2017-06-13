@@ -7,7 +7,7 @@
 
 (alias
   ((name runtest)
+   (package capnp-rpc)
    (deps (test.bc))
    (action (run ${<} -ev)))
 )
-
