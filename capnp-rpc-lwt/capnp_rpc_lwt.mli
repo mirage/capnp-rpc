@@ -30,7 +30,7 @@ and Capability : sig
 
   type 'a capability_t = 'a t (* (alias because we have too many t's) *)
 
-  type ('a, 'b) method_t
+  type ('t, 'a, 'b) method_t
   (** A method on some instance, as seen by the client application code. *)
 
   module Request : sig
@@ -49,13 +49,13 @@ and Capability : sig
         its index. You can use the index with the generated setter. *)
   end
 
-  val call : ('a, 'b) method_t -> 'a Request.t -> 'b StructRef.t
+  val call : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b StructRef.t
   (** [call m req] invokes [m req] and returns a promise for the result.
       Messages may be sent to the capabilities that will be in the result
       before the result arrives - they will be pipelined to the service
       responsible for resolving the promise. *)
 
-  val call_for_value : ('a, 'b) method_t -> 'a Request.t -> 'b Payload.t or_error Lwt.t
+  val call_for_value : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b Payload.t or_error Lwt.t
   (** [call_for_value m req] invokes [m ret] and waits for the response.
       It is the same as [snd (call_full m req)].
       This is simpler than using [call_full], but doesn't support pipelining
@@ -64,7 +64,7 @@ and Capability : sig
       Doing [Lwt.cancel] on the result will send a cancel message to the target
       for remote calls. *)
 
-  val call_for_value_exn : ('a, 'b) method_t -> 'a Request.t -> 'b Payload.t Lwt.t
+  val call_for_value_exn : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b Payload.t Lwt.t
   (** Wrapper for [call_for_value] that turns errors in Lwt failures. *)
 
   val inc_ref : _ t -> unit
@@ -119,8 +119,8 @@ module Untyped : sig
 
   val abstract_method : ('a, 'b) Service.method_t -> abstract_method_t
 
-  val bind_method : _ Capability.t -> interface_id:Uint64.t -> method_id:int ->
-    ('a, 'b) Capability.method_t
+  val define_method : interface_id:Uint64.t -> method_id:int ->
+    ('t, 'a, 'b) Capability.method_t
 
   val struct_field : 'a StructRef.t -> int -> 'b StructRef.t
 

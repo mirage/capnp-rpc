@@ -33,21 +33,18 @@ let service () =
 
 module Client = struct
   let set_echo_service t echo_service =
-    let proxy = new Api.Reader.Registry.client t in
     let module P = Api.Builder.Registry.SetEchoService_params in
     let req, p = Capability.Request.create P.init_pointer in
     P.service_set p (Some (Capability.Request.export req echo_service));
-    Capability.call_for_value proxy#set_echo_service req >|= ignore
+    Capability.call_for_value t Api.Reader.Registry.set_echo_service_method req >|= ignore
 
   let echo_service t =
-    let proxy = new Api.Reader.Registry.client t in
     let req = Capability.Request.create_no_args () in
     let module R = Api.Reader.Registry.EchoService_results in
-    Capability.call proxy#echo_service req
+    Capability.call t Api.Reader.Registry.echo_service_method req
     |> R.service_get_pipelined
 
   let unblock t =
-    let proxy = new Api.Reader.Registry.client t in
     let req = Capability.Request.create_no_args () in
-    Capability.call_for_value proxy#unblock req >|= ignore
+    Capability.call_for_value t Api.Reader.Registry.unblock_method req >|= ignore
 end
