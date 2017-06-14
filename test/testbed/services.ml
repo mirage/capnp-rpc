@@ -2,7 +2,7 @@ open Capnp_direct.Core_types
 
 module RO_array = Capnp_rpc.RO_array
 
-let echo_service = object (self : cap)
+let echo_service () = object (self : cap)
   inherit ref_counted
   method call x caps =
     assert (ref_count > 0);

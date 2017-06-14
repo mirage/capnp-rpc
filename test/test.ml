@@ -14,7 +14,7 @@ let response_promise = Alcotest.(option (result (pair string (ro_array cap)) err
 
 let test_simple_connection () =
   let open CS in
-  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags Services.echo_service in
+  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
   let servce_promise = C.bootstrap c in
   S.handle_msg s ~expect:"bootstrap";
   C.handle_msg c ~expect:"return:(boot)";
@@ -40,7 +40,7 @@ let init_pair ~bootstrap_service =
    at the client, it must be the original (local) object, not a proxy. *)
 let test_return () =
   let open CS in
-  let c, s, bs = init_pair ~bootstrap_service:Services.echo_service in
+  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   (* Pass callback *)
   let slot = ref ("empty", empty) in
   let local = Services.swap_service slot in
@@ -74,7 +74,7 @@ let call target msg caps =
 
 let test_share_cap () =
   let open CS in
-  let c, s, bs = init_pair ~bootstrap_service:Services.echo_service in
+  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   let q = call bs "msg" [bs; bs] in
   bs#dec_ref;
   S.handle_msg s ~expect:"call:msg";
@@ -89,7 +89,7 @@ let test_share_cap () =
    the object must arrive before ones sent directly. *)
 let test_local_embargo () =
   let open CS in
-  let c, s, bs = init_pair ~bootstrap_service:Services.echo_service in
+  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   let local = Services.logger () in
   let q = call bs "Get service" [(local :> Core_types.cap)] in
   let service = q#cap 0 in
@@ -112,10 +112,36 @@ let test_local_embargo () =
   CS.flush c s;
   CS.check_finished c s
 
+(* As above, but we call finish earlier. *)
+let test_local_embargo_2 () =
+  let open CS in
+  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
+  let local = Services.logger () in
+  let q = call bs "Get service" [(local :> Core_types.cap)] in
+  let service = q#cap 0 in
+  q#finish;
+  let _ = service#call "Message-1" empty in
+  S.handle_msg s ~expect:"call:Get service";
+  C.handle_msg c ~expect:"return:got:Get service";
+  (* We've received the bootstrap reply, so we know that [service] is local,
+     but the pipelined message we sent to it via [s] hasn't arrived yet. *)
+  let _ = service#call "Message-2" empty in
+  S.handle_msg s ~expect:"call:Message-1";
+  C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"disembargo-reply";
+  Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
+  Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
+  (* Clean up *)
+  bs#dec_ref;
+  service#dec_ref;
+  CS.flush c s;
+  CS.check_finished c s
+
 (* The field must still be useable after the struct is released. *)
 let test_fields () =
   let open CS in
-  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags Services.echo_service in
+  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
   let f0 = C.bootstrap c in
   let q1 = call f0 "c1" [] in
   S.handle_msg s ~expect:"bootstrap";
@@ -185,6 +211,7 @@ let tests = [
   "Return error", `Quick, test_return_error;
   "Connection", `Quick, test_simple_connection;
   "Local embargo", `Quick, test_local_embargo;
+  "Local embargo 2", `Quick, test_local_embargo_2;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
