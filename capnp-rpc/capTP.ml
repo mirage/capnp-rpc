@@ -65,6 +65,10 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
             | `Local _ -> ()
           )
 
+      let pp_promise f = function
+        | Some (q, _) -> P.pp_question f q
+        | None -> Fmt.string f "(not initialised)"
+
       let rec call t target msg caps =
         let result = make_remote_promise t in
         let con_caps = RO_array.map (to_cap_desc t) caps in
@@ -95,7 +99,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
             | None -> failwith "Not initialised!"
 
           method! pp f =
-            Fmt.pf f "remote-promise -> %a" Struct_proxy.pp_state state
+            Fmt.pf f "remote-promise -> %a" (Struct_proxy.pp_state ~pp_promise) state
 
           method set_question q =
             let finish = lazy (

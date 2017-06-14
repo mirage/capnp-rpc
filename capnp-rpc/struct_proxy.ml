@@ -32,9 +32,9 @@ module Make (C : S.CORE_TYPES) = struct
     | Forwarding of struct_ref
     | Finished
 
-  let pp_state f = function
-    | Unresolved {cancelling = true; _} -> Fmt.pf f "(cancelling)"
-    | Unresolved _ -> Fmt.pf f "(unresolved)"
+  let pp_state ~pp_promise f = function
+    | Unresolved {target; cancelling = true; _} -> Fmt.pf f "%a (cancelling)" pp_promise target
+    | Unresolved {target; _} -> pp_promise f target
     | Forwarding p -> p#pp f
     | Finished -> Fmt.pf f "(finished)"
 
@@ -131,7 +131,8 @@ module Make (C : S.CORE_TYPES) = struct
         ~forwarding:(fun x -> x#cap path)
 
     method pp f =
-      Fmt.pf f "proxy -> %a" pp_state state
+      let pp_promise f _ = Fmt.string f "(unresolved)" in
+      Fmt.pf f "proxy -> %a" (pp_state ~pp_promise) state
 
     method connect x =
       Log.info (fun f -> f "@[Updating: %t@\n\
