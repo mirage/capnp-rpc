@@ -19,10 +19,14 @@ let () =
   Fmt.set_style_renderer Fmt.stderr `Ansi_tty
 
 let choose_int limit =
-  assert (limit < 256);
   try
     let x = Char.code (input_char stdin) in
-    x mod limit
+    if limit < 0x100 then x mod limit
+    else (
+      let y = Char.code (input_char stdin) in
+      assert (limit < 0x10000);
+      (x lor (y lsl 8)) mod limit
+    )
   with End_of_file -> raise End_of_fuzz_data
 
 let choose options =
