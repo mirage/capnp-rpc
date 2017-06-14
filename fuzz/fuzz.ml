@@ -76,7 +76,8 @@ type vat = {
 
 let do_action state () = DynArray.pick state.actions ()
 
-let do_cap state () =
+(* Call a random cap, passing random arguments. *)
+let do_call state () =
   let cap = DynArray.pick state.caps in
   let n_args = choose_int 3 in
   let rec caps = function
@@ -88,16 +89,23 @@ let do_cap state () =
   Logs.info (fun f -> f "Call %t(%a)" cap#pp (RO_array.pp Core_types.pp_cap) args);
   DynArray.add state.structs (cap#call "call" args)
 
+(* Pick a random cap from an answer. *)
 let do_struct state () =
   let s = DynArray.pick state.structs in
   let i = choose_int 3 in
   Logs.info (fun f -> f "Get %t/%d" s#pp i);
   DynArray.add state.caps (s#cap i)
 
+(* Finish an answer *)
 let do_finish state () =
   let s = DynArray.pop state.structs in
   Logs.info (fun f -> f "Finish %t" s#pp);
   s#finish
+
+let do_release state () =
+  let c = DynArray.pop state.caps in
+  Logs.info (fun f -> f "Release %t" c#pp);
+  c#dec_ref
 
 let test_service = Testbed.Services.echo_service
 
@@ -132,9 +140,10 @@ let make_vat ?bootstrap () =
     actions = DynArray.create ignore;
   } in
   DynArray.add t.actions (do_action t);
-  DynArray.add t.actions (do_cap t);
+  DynArray.add t.actions (do_call t);
   DynArray.add t.actions (do_struct t);
   DynArray.add t.actions (do_finish t);
+  DynArray.add t.actions (do_release t);
   t
 
 let step v =
