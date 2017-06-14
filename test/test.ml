@@ -14,7 +14,7 @@ let response_promise = Alcotest.(option (result (pair string (ro_array cap)) err
 
 let test_simple_connection () =
   let open CS in
-  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags Services.echo_service in
+  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
   let servce_promise = C.bootstrap c in
   S.handle_msg s ~expect:"bootstrap";
   C.handle_msg c ~expect:"return:(boot)";
@@ -40,7 +40,7 @@ let init_pair ~bootstrap_service =
    at the client, it must be the original (local) object, not a proxy. *)
 let test_return () =
   let open CS in
-  let c, s, bs = init_pair ~bootstrap_service:Services.echo_service in
+  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   (* Pass callback *)
   let slot = ref ("empty", empty) in
   let local = Services.swap_service slot in
@@ -74,7 +74,7 @@ let call target msg caps =
 
 let test_share_cap () =
   let open CS in
-  let c, s, bs = init_pair ~bootstrap_service:Services.echo_service in
+  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   let q = call bs "msg" [bs; bs] in
   bs#dec_ref;
   S.handle_msg s ~expect:"call:msg";
@@ -89,7 +89,7 @@ let test_share_cap () =
    the object must arrive before ones sent directly. *)
 let test_local_embargo () =
   let open CS in
-  let c, s, bs = init_pair ~bootstrap_service:Services.echo_service in
+  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   let local = Services.logger () in
   let q = call bs "Get service" [(local :> Core_types.cap)] in
   let service = q#cap 0 in
@@ -115,7 +115,7 @@ let test_local_embargo () =
 (* The field must still be useable after the struct is released. *)
 let test_fields () =
   let open CS in
-  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags Services.echo_service in
+  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
   let f0 = C.bootstrap c in
   let q1 = call f0 "c1" [] in
   S.handle_msg s ~expect:"bootstrap";

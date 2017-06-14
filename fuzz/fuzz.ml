@@ -155,8 +155,8 @@ let () =
   AflPersistent.run @@ fun () ->
 
   let v1 = make_vat () in
-  let v2 = make_vat ~bootstrap:test_service () in
-  let v3 = make_vat ~bootstrap:test_service () in
+  let v2 = make_vat ~bootstrap:(test_service ()) () in
+  let v3 = make_vat ~bootstrap:(test_service ()) () in
 
   let vats = [| v1; v2; v3|] in
 
