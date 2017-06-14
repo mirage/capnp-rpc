@@ -234,9 +234,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
          begin match ret with
          | `Results (msg, descs) ->
            let result, caps = P.Input.return_results t.p qid msg descs ~releaseParamCaps:false in
-           let is_cancelled = result#response = Some (Error `Cancelled) in
            let from_cap_desc = function
-             | `LocalEmbargo (c, _) when is_cancelled -> c (* Can't be anything pipelined after the cancel *)
              | `LocalEmbargo (c, disembargo_request) ->
                c#inc_ref;
                Log.info (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
