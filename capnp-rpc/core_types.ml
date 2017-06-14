@@ -25,7 +25,7 @@ module Make(C : S.CONCRETE) = struct
   end
 
   let pp_cap f x = x#pp f
-  let pp_cap_list f caps = Fmt.pf f "[%a]" (RO_array.pp pp_cap) caps
+  let pp_cap_list f caps = RO_array.pp pp_cap f caps
 
   class virtual ref_counted = object (self)
     val mutable ref_count = 1

@@ -1,10 +1,23 @@
-open Testbed
-open Crowbar
+open Testbed.Capnp_direct
 
-module CS = Connection.Make ( )    (* A client-server pair *)
+module CS = Testbed.Connection.Make ( )    (* A client-server pair *)
+module RO_array = Capnp_rpc.RO_array
+module Test_utils = Testbed.Test_utils
+
+exception End_of_fuzz_data
 
 let () =
   Fmt.set_style_renderer Fmt.stderr `Ansi_tty
+
+let choose_int limit =
+  assert (limit < 256);
+  try
+    let x = Char.code (input_char stdin) in
+    x mod limit
+  with End_of_file -> raise End_of_fuzz_data
+
+let choose options =
+  options.(choose_int (Array.length options)) ()
 
 module DynArray = struct
   type 'a t = {
@@ -29,54 +42,81 @@ module DynArray = struct
     t.items.(t.len) <- v;
     t.len <- t.len + 1
 
-    let pick t i =
-      if t.len = 0 then t.default
-      else t.items.((abs i) mod t.len)
+  let pick t =
+    if t.len = 0 then t.default
+    else t.items.(choose_int t.len)
+
+  let pop t =
+    if t.len = 0 then t.default
+    else (
+      let i = choose_int t.len in
+      let v = t.items.(i) in
+      t.len <- t.len - 1;
+      t.items.(i) <- t.items.(t.len);
+      v
+    )
 end
 
-let op = Choose [
-    Map ([int], fun x -> `Do x);
-    Map ([int; List int], fun x args -> `Cap (x, args));
-  ]
-
 type state = {
-  caps : Core.cap DynArray.t;
-  structs : Core.promise DynArray.t;
+  caps : Core_types.cap DynArray.t;
+  structs : Core_types.struct_ref DynArray.t;
   actions : (unit -> unit) DynArray.t;
 }
 
-let perform state = function
-  | `Do i -> (DynArray.pick state.actions i) ()
-  | `Cap (i, args) ->
-    let cap = DynArray.pick state.caps i in
-    let args = List.map (DynArray.pick state.caps) args in
-    List.iter (fun c -> c#inc_ref) args;
-    Logs.info (fun f -> f "Call %t(%a)" cap#pp (Fmt.list ~sep:Fmt.(const string ", ") Core.pp_cap) args);
-    DynArray.add state.structs (cap#call "call" args)
+let do_action state () = DynArray.pick state.actions ()
 
-let test_service = Services.echo_service
+let do_cap state () =
+  let cap = DynArray.pick state.caps in
+  let n_args = choose_int 3 in
+  let rec caps = function
+    | 0 -> []
+    | i -> DynArray.pick state.caps :: caps (i - 1)
+  in
+  let args = RO_array.of_list (caps (n_args)) in
+  RO_array.iter (fun c -> c#inc_ref) args;
+  Logs.info (fun f -> f "Call %t(%a)" cap#pp (RO_array.pp Core_types.pp_cap) args);
+  DynArray.add state.structs (cap#call "call" args)
 
-let long_list x =
-  Map ([List x; List x; List x], fun a b c -> a @ b @ c)
+let do_struct state () =
+  let s = DynArray.pick state.structs in
+  let i = choose_int 3 in
+  Logs.info (fun f -> f "Get %t/%d" s#pp i);
+  DynArray.add state.caps (s#cap i)
+
+let do_finish state () =
+  let s = DynArray.pop state.structs in
+  Logs.info (fun f -> f "Finish %t" s#pp);
+  s#finish
+
+let test_service = Testbed.Services.echo_service
 
 let () =
   (* Logs.set_level (Some Logs.Error); *)
-  add_test ~name:"2-vat" [long_list op] @@ fun ops ->
+  assert (Array.length (Sys.argv) = 1);
+  AflPersistent.run @@ fun () ->
   print_endline "New run!";
   let open CS in
   let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags test_service in
   let state = {
-    caps = DynArray.create Core.none;
-    structs = DynArray.create (Core.broken `Cancelled);
+    caps = DynArray.create Core_types.null;
+    structs = DynArray.create (Core_types.broken `Cancelled);
     actions = DynArray.create ignore;
   } in
   DynArray.add state.actions (fun () ->
       Logs.info (fun f -> f "Bootstrap");
-      DynArray.add state.caps ((C.bootstrap c)#cap 0)
+      DynArray.add state.caps (C.bootstrap c)
     );
   DynArray.add state.actions (fun () -> Logs.info (fun f -> f "Server handle"); S.maybe_handle_msg s);
   DynArray.add state.actions (fun () -> Logs.info (fun f -> f "Client handle"); C.maybe_handle_msg c);
-  DynArray.add state.actions (fun () -> Logs.info (fun f -> f "Server reply"); S.maybe_reply_to_call s);
-  DynArray.add state.actions (fun () -> Logs.info (fun f -> f "Client reply"); C.maybe_reply_to_call c);
-  List.iter (perform state) ops;
-  Ok ()
+  let actions = [|
+      do_action state;
+      do_cap state;
+      do_struct state;
+      do_finish state;
+    |]
+  in
+  let rec loop () = choose actions; loop () in
+  try loop ()
+  with End_of_fuzz_data -> ()
+
+(* TODO: lots more things to test here. *)

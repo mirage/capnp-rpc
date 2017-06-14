@@ -2,5 +2,5 @@
 
 (executables (
   (names (fuzz))
-  (libraries (capnp-rpc alcotest examples logs.fmt testbed crowbar))
+  (libraries (capnp-rpc alcotest logs.fmt testbed afl-persistent))
 ))

@@ -132,6 +132,54 @@ let test_fields () =
   CS.flush c s;
   CS.check_finished c s
 
+let test_cancel () =
+  let open CS in
+  let service = Services.manual () in
+  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags
+      (service :> Core_types.cap) in
+  let f0 = C.bootstrap c in
+  let q1 = call f0 "c1" [] in
+  let prom = q1#cap 0 in
+  q1#finish;    (* Client doesn't cancel q1 because we're using prom *)
+  let _q2 = call prom "p1" [] in
+  S.handle_msg s ~expect:"bootstrap";
+  C.handle_msg c ~expect:"return:(boot)";      (* [bs] resolves *)
+  S.handle_msg s ~expect:"call:c1";
+  S.handle_msg s ~expect:"call:p1";
+  S.handle_msg s ~expect:"finish";      (* bootstrap *)
+  let (_, _, a1) = service#pop in
+  a1#resolve (Ok ("a1", empty));
+  C.handle_msg c ~expect:"return:Invalid cap index 0 in []";
+  C.handle_msg c ~expect:"return:a1";
+  f0#dec_ref;
+  CS.flush c s;
+  CS.check_finished c s
+
+let test_duplicates () =
+  let open CS in
+  let service = Services.manual () in
+  let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags
+      (service :> Core_types.cap) in
+  let f0 = C.bootstrap c in
+  let q1 = call f0 "c1" [] in
+  f0#dec_ref;
+  let x1 = q1#cap 0 in
+  let x2 = q1#cap 0 in
+  q1#finish;
+  assert (x1 = x2);
+  x1#dec_ref;
+  x2#dec_ref;
+  S.handle_msg s ~expect:"bootstrap";
+  C.handle_msg c ~expect:"return:(boot)";       (* [bs] resolves *)
+  S.handle_msg s ~expect:"call:c1";
+  S.handle_msg s ~expect:"finish";              (* bootstrap *)
+  let (_, _, a1) = service#pop in
+  a1#resolve (Ok ("a1", empty));
+  C.handle_msg c ~expect:"return:a1";
+  S.handle_msg s ~expect:"release";             (* bootstrap *)
+  S.handle_msg s ~expect:"finish";              (* c1 *)
+  CS.check_finished c s
+
 let tests = [
   "Return",     `Quick, test_return;
   "Return error", `Quick, test_return_error;
@@ -139,6 +187,8 @@ let tests = [
   "Local embargo", `Quick, test_local_embargo;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
+  "Cancel", `Quick, test_cancel;
+  "Duplicates", `Quick, test_duplicates;
 ]
 
 let () =

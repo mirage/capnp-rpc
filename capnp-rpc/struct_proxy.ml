@@ -104,7 +104,7 @@ module Make (C : S.CORE_TYPES) = struct
 
     method pipeline path msg caps =
       dispatch state
-        ~cancelling_ok:false
+        ~cancelling_ok:true
         ~unresolved:(fun x -> self#do_pipeline x.target path msg caps)
         ~forwarding:(fun x -> (x#cap path)#call msg caps)
 
@@ -154,7 +154,13 @@ module Make (C : S.CORE_TYPES) = struct
     method finish =
       dispatch state
         ~cancelling_ok:false
-        ~unresolved:(fun u -> u.cancelling <- true; self#do_finish u.target)
+        ~unresolved:(fun u ->
+            u.cancelling <- true;
+            if Field_map.is_empty u.fields then
+              self#do_finish u.target
+            (* else disable locally but don't send a cancel because we still
+               want the caps. *)
+          )
         ~forwarding:(fun x ->
             state <- Finished;
             x#finish
@@ -179,7 +185,14 @@ module Make (C : S.CORE_TYPES) = struct
     method dec_ref path =
       dispatch state
         ~cancelling_ok:true
-        ~unresolved:(fun u -> Queue.add (fun p -> (p#cap path)#dec_ref) u.when_resolved)
+        ~unresolved:(fun u ->
+            let dec_ref_when_resolved p =
+              let cap = p#cap path in
+              cap#dec_ref;      (* The dec_ref we're passing on *)
+              cap#dec_ref       (* The dec_ref for the #cap we just did *)
+            in
+            Queue.add dec_ref_when_resolved u.when_resolved
+          )
         ~forwarding:(fun x -> (x#cap path)#dec_ref)
 
     method private update_target target =
