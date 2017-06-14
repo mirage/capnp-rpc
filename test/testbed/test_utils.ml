@@ -1,7 +1,8 @@
-let pp_actor f = function
-  | `Client -> Fmt.(styled `Green (const string "client")) f ()
-  | `Server -> Fmt.(styled `Red (const string "server")) f ()
-  | `Unknown -> Fmt.(const string "------") f ()
+type actor = Fmt.style * string
+
+let pp_actor f (style, name) = Fmt.(styled style (const string name)) f ()
+
+let unknown = `Black, "------"
 
 let actor_tag = Logs.Tag.def "actor" pp_actor
 
@@ -18,7 +19,7 @@ let reporter =
     let actor =
       match Logs.Tag.find actor_tag tags with
       | Some x -> x
-      | None -> `Unknown
+      | None -> unknown
     in
     let qid = Logs.Tag.find Capnp_rpc.Debug.qid_tag tags in
     let print _ =
@@ -37,5 +38,5 @@ let () =
   Logs.set_reporter reporter;
   Logs.set_level (Some Logs.Info)
 
-let server_tags = Logs.Tag.(empty |> add actor_tag `Server)
-let client_tags = Logs.Tag.(empty |> add actor_tag `Client)
+let server_tags = Logs.Tag.(empty |> add actor_tag (`Red, "server"))
+let client_tags = Logs.Tag.(empty |> add actor_tag (`Green, "client"))
