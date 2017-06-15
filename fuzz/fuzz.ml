@@ -16,6 +16,7 @@ module Test_utils = Testbed.Test_utils
 exception End_of_fuzz_data
 
 let () =
+  Format.pp_set_margin Fmt.stderr 120;
   Fmt.set_style_renderer Fmt.stderr `Ansi_tty
 
 let choose_int limit =
@@ -76,7 +77,14 @@ type vat = {
   caps : Core_types.cap DynArray.t;
   structs : Core_types.struct_ref DynArray.t;
   actions : (unit -> unit) DynArray.t;
+  mutable connections : (int * Endpoint.t) list;
 }
+
+let pp_vat f t =
+  let pp_connection f (id, endpoint) =
+    Fmt.pf f "@[<2>Connection to %d@,%a@]" id Endpoint.dump endpoint
+  in
+  Fmt.Dump.list pp_connection f t.connections
 
 let do_action state () = DynArray.pick state.actions ()
 
@@ -129,7 +137,9 @@ let make_connection v1 v2 =
   DynArray.add v1.actions (fun () -> DynArray.add v1.caps (Endpoint.bootstrap c));
   DynArray.add v2.actions (fun () -> DynArray.add v2.caps (Endpoint.bootstrap s));
   DynArray.add v1.actions (fun () -> Logs.info (fun f -> f ~tags:v1_tags "Handle"); Endpoint.maybe_handle_msg c);
-  DynArray.add v2.actions (fun () -> Logs.info (fun f -> f ~tags:v2_tags "Handle"); Endpoint.maybe_handle_msg s)
+  DynArray.add v2.actions (fun () -> Logs.info (fun f -> f ~tags:v2_tags "Handle"); Endpoint.maybe_handle_msg s);
+  v1.connections <- (v2.id, c) :: v1.connections;
+  v2.connections <- (v1.id, s) :: v2.connections
 
 let next_id = ref 0
 
@@ -142,6 +152,7 @@ let make_vat ?bootstrap () =
     caps = DynArray.create Core_types.null;
     structs = DynArray.create (Core_types.broken `Cancelled);
     actions = DynArray.create ignore;
+    connections = [];
   } in
   DynArray.add t.actions (do_action t);
   DynArray.add t.actions (do_call t);
@@ -167,12 +178,18 @@ let () =
   make_connection v1 v2;
   make_connection v1 v3;
 
-  let rec loop () =
-    let v = choose vats in
-    step v;
-    loop ()
-  in
-  try loop ()
-  with End_of_fuzz_data -> ()
-
-(* TODO: lots more things to test here. *)
+  try
+    let rec loop () =
+      let v = choose vats in
+      step v;
+      loop ()
+    in
+    try loop ()
+    with End_of_fuzz_data -> () (* TODO: try releasing everything *)
+  with ex ->
+    Logs.err (fun f -> f "Got error - dumping state:");
+    vats |> Array.iter (fun v ->
+        let tags = tags_for_id v.id in
+        Logs.info (fun f -> f ~tags "%a" pp_vat v)
+      );
+    raise ex

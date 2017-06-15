@@ -293,5 +293,8 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
                      P.In.pp_desc target
                      embargo#pp);
         embargo#disembargo
+
+    let dump f t =
+      Fmt.pf f "@[<v 2>CapTP state:@,%a@]" P.dump t.p
   end
 end

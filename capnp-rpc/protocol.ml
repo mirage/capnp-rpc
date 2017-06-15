@@ -192,6 +192,8 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       val disembargo_reply : t -> [`ReceiverHosted of import] -> [`ReceiverHosted of Out.ImportId.t]
     end
 
+    val dump : t Fmt.t
+
     val stats : t -> Stats.t
     val pp_question : question Fmt.t
   end
@@ -303,6 +305,28 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
 
     let pp_question f q =
       Fmt.pf f "q%a" T.QuestionId.pp q.question_id
+
+    let dump_question f q =
+      Fmt.pf f "%t" q.question_data#pp
+
+    let dump_answer f x =
+      Fmt.pf f "%t" x.answer_promise#pp
+
+    let dump_export f x =
+      Fmt.pf f "%t" x.export_service#pp
+
+    let dump_import f x =
+      Fmt.pf f "import"
+
+    let dump f t =
+      Fmt.pf f "@[<2>Questions:@,%a@]@,\
+                @[<2>Answers:@,%a@]@,\
+                @[<2>Exports:@,%a@]@,\
+                @[<2>Imports:@,%a@]"
+        (Questions.dump dump_question) t.questions
+        (Answers.dump dump_answer) t.answers
+        (Exports.dump dump_export) t.exports
+        (Imports.dump dump_import) t.imports
 
     let maybe_release_question t question =
       if question.question_flags - flag_returned - flag_finished = 0 then (

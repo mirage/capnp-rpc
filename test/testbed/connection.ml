@@ -32,6 +32,9 @@ module Endpoint
     recv_queue : In.t Queue.t;
   }
 
+  let dump f t =
+    Conn.dump f t.conn
+
   let create ?bootstrap ~tags xmit_queue recv_queue =
     let queue_send x = Queue.add x xmit_queue in
     let conn = Conn.create ?bootstrap ~tags ~queue_send in

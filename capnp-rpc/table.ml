@@ -33,6 +33,15 @@ module Allocating (Key : Id.S) = struct
       failf "Key %a is no longer allocated!" Key.pp x
 
   let active t = Hashtbl.length t.used
+
+  let pp_item pp f (k, v) =
+    Fmt.pf f "%a -> @[%a@]" Key.pp k pp v
+
+  let dump pp f t =
+    let add k v acc = (k, v) :: acc in
+    let items = Hashtbl.fold add t.used [] in
+    let items = List.sort compare items in
+    (Fmt.Dump.list (pp_item pp)) f items
 end
 
 module Tracking (Key : Id.S) = struct
@@ -55,4 +64,13 @@ module Tracking (Key : Id.S) = struct
     | x -> x
 
   let active = Hashtbl.length
+
+  let pp_item pp f (k, v) =
+    Fmt.pf f "%a -> @[%a@]" Key.pp k pp v
+
+  let dump pp f t =
+    let add k v acc = (k, v) :: acc in
+    let items = Hashtbl.fold add t [] in
+    let items = List.sort compare items in
+    (Fmt.Dump.list (pp_item pp)) f items
 end
