@@ -89,7 +89,7 @@ module type CORE_TYPES = sig
         If the response has arrived, this will extract the capability from it.
         If not, it may create a capability that will pipeline through the promised
         answer until the result arrives (at which point it will use the new, more
-        direct route). *)
+        direct route). The caller should call [cap#dec_ref] when done.  *)
   end
   (** The result of a call, which may not have arrived yet.
       It can be used to pipeline calls to capabilities that we hope will
@@ -141,7 +141,8 @@ module type CORE_TYPES = sig
     inherit struct_ref
 
     method connect : struct_ref -> unit
-    (** [r#connect x] causes [r] to behave as [x] in future. *)
+    (** [r#connect x] causes [r] to behave as [x] in future.
+        [r] takes ownership of [x] (is responsible for calling [finish] on it). *)
 
     method resolve : Response_payload.t or_error -> unit
     (** [r#resolve x] is [r#resolve (return x)]. *)

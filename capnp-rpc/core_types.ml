@@ -86,7 +86,7 @@ module Make(C : S.CONCRETE) = struct
 
   module Request_payload = struct
     type t = Request.t * cap RO_array.t
-    let pp f (msg, caps) = Fmt.pf f "%a%a" Request.pp msg pp_cap_list caps
+    let pp f (msg, caps) = Fmt.pf f "@[%a%a@]" Request.pp msg pp_cap_list caps
 
     let field (msg, caps) path =
       let i = Request.cap_index msg path in
@@ -95,7 +95,7 @@ module Make(C : S.CONCRETE) = struct
 
   module Response_payload = struct
     type t = Response.t * cap RO_array.t
-    let pp f (msg, caps) = Fmt.pf f "%a%a" Response.pp msg pp_cap_list caps
+    let pp f (msg, caps) = Fmt.pf f "@[%a%a@]" Response.pp msg pp_cap_list caps
 
     let field (msg, caps) path =
       let i = Response.cap_index msg path in

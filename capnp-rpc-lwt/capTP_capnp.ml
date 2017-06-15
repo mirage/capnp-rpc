@@ -240,11 +240,11 @@ let serialise ~tags : Proto.Out.t -> _ =
         Disembargo.Context.sender_loopback_set ctx (Protocol.EmbargoId.uint32 embargo_id)
     end;
     Message.to_message m
-  | `Disembargo_reply (`ReceiverHosted id, embargo_id) ->
+  | `Disembargo_reply (target, embargo_id) ->
     let m = Message.init_root () in
     let dis = Message.disembargo_init m in
     let ctx = Disembargo.context_init dis in
-    set_target (Disembargo.target_init dis) (`ReceiverHosted id);
+    set_target (Disembargo.target_init dis) target;
     Disembargo.Context.receiver_loopback_set ctx (Protocol.EmbargoId.uint32 embargo_id);
     Message.to_message m
   | `Return (aid, return) ->

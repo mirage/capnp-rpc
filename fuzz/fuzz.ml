@@ -16,6 +16,7 @@ module Test_utils = Testbed.Test_utils
 exception End_of_fuzz_data
 
 let () =
+  Format.pp_set_margin Fmt.stderr 120;
   Fmt.set_style_renderer Fmt.stderr `Ansi_tty
 
 let choose_int limit =
@@ -70,13 +71,31 @@ module DynArray = struct
     )
 end
 
+let dummy_answer = object (self : Core_types.struct_resolver)
+  method cap _ = failwith "dummy_answer"
+  method connect x = x#finish
+  method finish = failwith "dummy_answer"
+  method pp f = Fmt.string f "dummy_answer"
+  method resolve x = self#connect (Core_types.resolved x)
+  method response = failwith "dummy_answer"
+  method when_resolved _ = failwith "when_resolved"
+end
+
 type vat = {
   id : int;
   bootstrap : Core_types.cap option;
   caps : Core_types.cap DynArray.t;
   structs : Core_types.struct_ref DynArray.t;
   actions : (unit -> unit) DynArray.t;
+  mutable connections : (int * Endpoint.t) list;
+  answers_needed : Core_types.struct_resolver DynArray.t;
 }
+
+let pp_vat f t =
+  let pp_connection f (id, endpoint) =
+    Fmt.pf f "@[<2>Connection to %d@,%a@]" id Endpoint.dump endpoint
+  in
+  Fmt.Dump.list pp_connection f t.connections
 
 let do_action state () = DynArray.pick state.actions ()
 
@@ -92,6 +111,20 @@ let do_call state () =
   RO_array.iter (fun c -> c#inc_ref) args;
   Logs.info (fun f -> f "Call %t(%a)" cap#pp (RO_array.pp Core_types.pp_cap) args);
   DynArray.add state.structs (cap#call "call" args)
+
+(* Reply to a random question. *)
+let do_answer state () =
+  let answer = DynArray.pop state.answers_needed in
+  let n_args = choose_int 3 in
+  let rec caps = function
+    | 0 -> []
+    | i -> DynArray.pick state.caps :: caps (i - 1)
+  in
+  let args = RO_array.of_list (caps (n_args)) in
+  RO_array.iter (fun c -> c#inc_ref) args;
+  Logs.info (fun f -> f "Return %a" (RO_array.pp Core_types.pp_cap) args);
+  answer#resolve (Ok ("reply", args))
+  (* TODO: reply with another promise or with an error *)
 
 (* Pick a random cap from an answer. *)
 let do_struct state () =
@@ -111,7 +144,22 @@ let do_release state () =
   Logs.info (fun f -> f "Release %t" c#pp);
   c#dec_ref
 
-let test_service = Testbed.Services.echo_service
+let test_service vat =
+  object (self : Core_types.cap)
+    inherit Core_types.ref_counted
+
+    method private release = failwith "test_service: release"
+
+    method pp f = Fmt.string f "test-service"
+
+    method shortest = self
+
+    method call _ caps =
+      caps |> RO_array.iter (fun c -> DynArray.add vat.caps c);
+      let answer = Local_struct_promise.make () in
+      DynArray.add vat.answers_needed answer;
+      (answer :> Core_types.struct_ref)
+  end
 
 let styles = [| `Red; `Green; `Blue |]
 
@@ -129,25 +177,31 @@ let make_connection v1 v2 =
   DynArray.add v1.actions (fun () -> DynArray.add v1.caps (Endpoint.bootstrap c));
   DynArray.add v2.actions (fun () -> DynArray.add v2.caps (Endpoint.bootstrap s));
   DynArray.add v1.actions (fun () -> Logs.info (fun f -> f ~tags:v1_tags "Handle"); Endpoint.maybe_handle_msg c);
-  DynArray.add v2.actions (fun () -> Logs.info (fun f -> f ~tags:v2_tags "Handle"); Endpoint.maybe_handle_msg s)
+  DynArray.add v2.actions (fun () -> Logs.info (fun f -> f ~tags:v2_tags "Handle"); Endpoint.maybe_handle_msg s);
+  v1.connections <- (v2.id, c) :: v1.connections;
+  v2.connections <- (v1.id, s) :: v2.connections
 
 let next_id = ref 0
 
-let make_vat ?bootstrap () =
+let make_vat () =
   let id = !next_id in
   next_id := succ !next_id;
   let t = {
     id;
-    bootstrap;
+    bootstrap = None;
     caps = DynArray.create Core_types.null;
     structs = DynArray.create (Core_types.broken `Cancelled);
     actions = DynArray.create ignore;
+    connections = [];
+    answers_needed = DynArray.create dummy_answer;
   } in
+  let t = {t with bootstrap = Some (test_service t)} in
   DynArray.add t.actions (do_action t);
   DynArray.add t.actions (do_call t);
   DynArray.add t.actions (do_struct t);
   DynArray.add t.actions (do_finish t);
   DynArray.add t.actions (do_release t);
+  DynArray.add t.actions (do_answer t);
   t
 
 let step v =
@@ -159,20 +213,26 @@ let () =
   AflPersistent.run @@ fun () ->
 
   let v1 = make_vat () in
-  let v2 = make_vat ~bootstrap:(test_service ()) () in
-  let v3 = make_vat ~bootstrap:(test_service ()) () in
+  let v2 = make_vat () in
+  let v3 = make_vat () in
 
   let vats = [| v1; v2; v3|] in
 
   make_connection v1 v2;
   make_connection v1 v3;
 
-  let rec loop () =
-    let v = choose vats in
-    step v;
-    loop ()
-  in
-  try loop ()
-  with End_of_fuzz_data -> ()
-
-(* TODO: lots more things to test here. *)
+  try
+    let rec loop () =
+      let v = choose vats in
+      step v;
+      loop ()
+    in
+    try loop ()
+    with End_of_fuzz_data -> () (* TODO: try releasing everything *)
+  with ex ->
+    Logs.err (fun f -> f "Got error - dumping state:");
+    vats |> Array.iter (fun v ->
+        let tags = tags_for_id v.id in
+        Logs.info (fun f -> f ~tags "%a" pp_vat v)
+      );
+    raise ex

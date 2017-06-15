@@ -32,6 +32,9 @@ module Endpoint
     recv_queue : In.t Queue.t;
   }
 
+  let dump f t =
+    Conn.dump f t.conn
+
   let create ?bootstrap ~tags xmit_queue recv_queue =
     let queue_send x = Queue.add x xmit_queue in
     let conn = Conn.create ?bootstrap ~tags ~queue_send in
@@ -100,7 +103,15 @@ module Make ( ) = struct
     let s_changed = S.step s in
     if c_changed || s_changed then flush c s
 
+  let dump c s =
+    Logs.info (fun f -> f ~tags:(C.Conn.tags c.C.conn) "%a" C.dump c);
+    Logs.info (fun f -> f ~tags:(S.Conn.tags s.S.conn) "%a" S.dump s)
+
   let check_finished c s =
-    Alcotest.(check stats) "Client finished" Stats.zero @@ C.Conn.stats c.C.conn;
-    Alcotest.(check stats) "Server finished" Stats.zero @@ S.Conn.stats s.S.conn
+    try
+      Alcotest.(check stats) "Client finished" Stats.zero @@ C.Conn.stats c.C.conn;
+      Alcotest.(check stats) "Server finished" Stats.zero @@ S.Conn.stats s.S.conn
+    with ex ->
+      dump c s;
+      raise ex
 end

@@ -22,6 +22,8 @@ module Make (C : S.CONCRETE) (N : S.NETWORK_TYPES) : sig
       val stats : t -> Stats.t
 
       val create : ?bootstrap:Core_types.cap -> tags:Logs.Tag.set -> queue_send:(P.Out.t -> unit) -> t
+
+      val dump : t Fmt.t
     end
   end
 end

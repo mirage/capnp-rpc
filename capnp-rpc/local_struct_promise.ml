@@ -16,7 +16,8 @@ module Make (C : S.CORE_TYPES) = struct
       (result :> struct_ref)
 
     method! pp f =
-      Fmt.pf f "local-struct-ref -> %a" Struct_proxy.pp_state state
+      let pp_promise f _ = Fmt.string f "(unresolved)" in
+      Fmt.pf f "local-struct-ref -> %a" (Struct_proxy.pp_state ~pp_promise) state
 
     method private on_resolve q x =
       Queue.iter (fun fn -> fn x) q
