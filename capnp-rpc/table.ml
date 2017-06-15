@@ -24,6 +24,7 @@ module Allocating (Key : Id.S) = struct
       use x
 
   let release t x =
+    assert (Hashtbl.mem t.used x);
     Hashtbl.remove t.used x;
     t.free <- x :: t.free
 

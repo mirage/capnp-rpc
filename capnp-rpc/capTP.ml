@@ -1,5 +1,7 @@
 module Log = Debug.Log
 
+let failf msg = Fmt.kstrf failwith msg
+
 module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
   module Protocol = Protocol.Make(C)(N)
 
@@ -14,7 +16,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       p : P.t;
       ours : (cap, P.message_target_cap) Hashtbl.t;              (* TODO: use weak table *)
       tags : Logs.Tag.set;
-      embargoes : (cap * Protocol.EmbargoId.t, Cap_proxy.embargo_cap) Hashtbl.t;
+      embargoes : (Protocol.EmbargoId.t, Cap_proxy.embargo_cap) Hashtbl.t;
       bootstrap : cap option;
     }
 
@@ -145,7 +147,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
                     method call msg caps = call t message_target msg caps
                     method pp f = Fmt.pf f "far-ref(rc=%d) -> %a" ref_count P.pp_cap message_target
                     method private release =
-                      Log.info (fun f -> f ~tags:t.tags "Release %t" self#pp);
+                      Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
                       let id, count = P.Send.release t.p import in
                       t.queue_send (`Release (id, count))
 
@@ -250,7 +252,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
                   using [c]. *)
                let embargo = Cap_proxy.embargo c in
                let `Loopback (_target, embargo_id) = disembargo_request in
-               Hashtbl.add t.embargoes (c, embargo_id) embargo;
+               Hashtbl.add t.embargoes embargo_id embargo;
                Self_proxy.disembargo t disembargo_request;
                (embargo :> cap)
              | #P.recv_cap as x -> Self_proxy.from_cap_desc t x
@@ -287,18 +289,31 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
             | Some (Ok payload) ->
               let cap = Response_payload.field payload path in
               match unwrap t cap with
-              | Some (`ReceiverHosted _ as target) -> Self_proxy.reply_to_disembargo t target id
-              | _ -> failwith "Protocol error: disembargo for invalid target"
+              | Some (`ReceiverHosted _ | `ReceiverAnswer _ as target) -> Self_proxy.reply_to_disembargo t target id
+              | None -> failwith "Protocol error: disembargo for invalid target"
         end
       | `Disembargo_reply (target, embargo_id) ->
-        let cap = P.Input.disembargo_reply t.p target in
-        let embargo = Hashtbl.find t.embargoes (cap, embargo_id) in
+        P.Input.disembargo_reply t.p target embargo_id;
+        let embargo =
+          try Hashtbl.find t.embargoes embargo_id
+          with Not_found -> failf "Unexpected disembargo ID %a" Protocol.EmbargoId.pp embargo_id
+        in
+        Hashtbl.remove t.embargoes embargo_id;
         Log.info (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
                      P.In.pp_desc target
                      embargo#pp);
         embargo#disembargo
 
+    let pp_embargoes f xs =
+      let pp_item f (id, proxy) =
+        Fmt.pf f "%a: @[%t@]" Protocol.EmbargoId.pp id proxy#pp
+      in
+      let add k v acc = (k, v) :: acc in
+      let items = Hashtbl.fold add xs [] in
+      let items = List.sort compare items in
+      (Fmt.Dump.list pp_item) f items
+
     let dump f t =
-      Fmt.pf f "@[<v 2>CapTP state:@,%a@]" P.dump t.p
+      Fmt.pf f "@[<v 2>CapTP state:@,%a@,@[<2>Embargos:@,%a@]@]" P.dump t.p pp_embargoes t.embargoes
   end
 end

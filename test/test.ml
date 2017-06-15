@@ -113,19 +113,39 @@ let test_local_embargo () =
   CS.flush c s;
   CS.check_finished c s
 
-(* As above, but we call finish earlier. *)
+let cap x = (x :> Core_types.cap)
+
+(* As above, but this time it resolves to a promised answer. *)
 let test_local_embargo_2 () =
   let open CS in
-  let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
+  let server_main = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:(cap server_main) in
   let local = Services.logger () in
-  let q = call bs "Get service" [(local :> Core_types.cap)] in
-  let service = q#cap 0 in
-  q#finish;
-  let _ = service#call "Message-1" empty in
-  S.handle_msg s ~expect:"call:Get service";
-  C.handle_msg c ~expect:"return:got:Get service";
-  (* We've received the bootstrap reply, so we know that [service] is local,
-     but the pipelined message we sent to it via [s] hasn't arrived yet. *)
+  let local_reg = Services.manual () in    (* A registry that provides access to [local]. *)
+  let q1 = call bs "q1" [cap local_reg] in (* Give the server our registry and get back [local]. *)
+  let service = q1#cap 0 in                (* Service is a promise for local *)
+  q1#finish;
+  let _ = service#call "Message-1" empty in             (* First message to service *)
+  S.handle_msg s ~expect:"call:q1";
+  let (_, q1_args, a1) = server_main#pop in
+  let proxy_to_local_reg = RO_array.get q1_args 0 in
+  (* The server will now make a call on the client registry, and then tell the client
+     to use the (unknown) result of that for [service]. *)
+  let q2 = call proxy_to_local_reg "q2" [] in
+  proxy_to_local_reg#dec_ref;
+  let proxy_to_local = q2#cap 0 in
+  a1#resolve (Ok ("a1", RO_array.of_list [proxy_to_local]));
+  (* [proxy_to_local] is now owned by [a1]. *)
+  q2#finish;
+  C.handle_msg c ~expect:"call:q2";
+  let (_, _q2_args, a2) = local_reg#pop in
+  C.handle_msg c ~expect:"release";
+  C.handle_msg c ~expect:"return:a1";
+  (* The client now knows that [a1/0] is a local promise, but it can't use it directly yet because
+     of the pipelined messages. It sends a disembargo request down the old [q1/0] path and waits for
+     it to arrive back at the local promise. *)
+  a2#resolve (Ok ("a2", RO_array.of_list [cap local]));
+  (* Message-2 must be embargoed so that it arrives after Message-1. *)
   let _ = service#call "Message-2" empty in
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)

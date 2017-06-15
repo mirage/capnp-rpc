@@ -12,6 +12,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
 
   module PathSet = Set.Make(C.Path)
   module EmbargoId = EmbargoId
+  module Embargoes = Table.Allocating(EmbargoId)
 
   type ('third, 'export) generic_third_party_desc = {
     id : 'third;
@@ -84,7 +85,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       | `Finish of (T.QuestionId.t * bool)      (* bool is release-caps *)
       | `Release of T.ImportId.t * int
       | `Disembargo_request of disembargo_request
-      | `Disembargo_reply of [`ReceiverHosted of T.ImportId.t] * EmbargoId.t
+      | `Disembargo_reply of message_target * EmbargoId.t
       | `Return of (T.AnswerId.t * return)
     ]
   end
@@ -166,7 +167,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       val release : t -> In.ImportId.t -> referenceCount:int -> unit
       val disembargo_request : t -> In.disembargo_request ->
         [ `ReturnToSender of (C.struct_resolver * C.Path.t) * EmbargoId.t]
-      val disembargo_reply : t -> [`ReceiverHosted of In.ImportId.t] -> C.cap
+      val disembargo_reply : t -> In.message_target -> EmbargoId.t -> unit
       val provide : t -> In.QuestionId.t -> In.message_target -> N.recipient_id -> unit
       val accept : t -> In.QuestionId.t -> N.provision_id -> embargo:bool -> unit
       val join : t -> In.QuestionId.t -> In.message_target -> N.join_key_part -> unit
@@ -189,7 +190,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       (** [finish t qid] tells the system that we're about to send a Finish message
           (with [releaseResultCaps=false]). *)
 
-      val disembargo_reply : t -> [`ReceiverHosted of import] -> [`ReceiverHosted of Out.ImportId.t]
+      val disembargo_reply : t -> message_target_cap -> Out.message_target
     end
 
     val dump : t Fmt.t
@@ -237,7 +238,6 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       export_id : T.ExportId.t;
       mutable export_count : int; (* Number of times sent to remote and not yet released *)
       export_service : C.cap;
-      mutable export_next_embargo : EmbargoId.t; (* Next unused ID *)
     }
 
     type import = {
@@ -290,6 +290,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
       answers : answer Answers.t;
       exports : export Exports.t;
       imports : import Imports.t;
+      embargoes : EmbargoId.t Embargoes.t;
       wrapper : (C.cap, T.ExportId.t) Hashtbl.t;
     }
 
@@ -300,6 +301,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         answers = Answers.make ();
         imports = Imports.make ();
         exports = Exports.make ();
+        embargoes = Embargoes.make ();
         wrapper = Hashtbl.create 30;
       }
 
@@ -351,7 +353,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
           `SenderHosted id, [id]
         | exception Not_found ->
           let export = Exports.alloc t.exports (fun export_id ->
-              { export_count = 1; export_service = service; export_id; export_next_embargo = EmbargoId.zero }
+              { export_count = 1; export_service = service; export_id }
             )
           in
           let id = export.export_id in
@@ -376,12 +378,13 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         `Export export
       | `ReceiverAnswer (id, path) ->
         let answer = Answers.find_exn t.answers id in
-        (`Local (answer.answer_promise#cap path))
+        `Answer (answer, path)
       | _ -> failwith "TODO: import"
 
     let import_simple t desc : [> recv_cap] =
       match import t desc with
       | `Export e -> `Local e.export_service
+      | `Answer (answer, path) -> `Local (answer.answer_promise#cap path)
       | #recv_cap as x -> x
 
     let answer_promise answer = answer.answer_promise
@@ -445,6 +448,10 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         let question = return_generic t id ~releaseParamCaps in
         question.question_data
 
+      let service = function
+        | `Export e -> e.export_service
+        | `Answer (answer, path) -> answer.answer_promise#cap path
+
       let return_results t id ~releaseParamCaps msg descrs : C.struct_resolver * recv_cap_with_embargo RO_array.t =
         let question = return_generic t id ~releaseParamCaps in
         let caps_used = (* Maps used cap indexes to their paths *)
@@ -455,13 +462,13 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         let import_with_embargo i d =
           match import t d with
           | #recv_cap as x -> x
-          | `Export e ->
+          | `Export _ | `Answer _ as x ->
             match IntMap.find i caps_used with
+            | None -> `Local (service x)        (* Not used, so no embargo needed *)
             | Some path ->
-              let embargo_id = e.export_next_embargo in
-              e.export_next_embargo <- EmbargoId.succ e.export_next_embargo;
-              `LocalEmbargo (e.export_service, `Loopback ((id, path), embargo_id))
-            | None -> `Local e.export_service
+              let cap = service x in
+              let embargo_id = Embargoes.alloc t.embargoes (fun id -> id) in
+              `LocalEmbargo (cap, `Loopback ((id, path), embargo_id))
         in
         let caps = RO_array.mapi import_with_embargo descrs in
         question.question_data, caps
@@ -502,9 +509,8 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
           (* TODO: move the struct_ref logic here so we can do the check here? *)
           `ReturnToSender ((answer.answer_promise, i), id)
 
-      let disembargo_reply t (`ReceiverHosted export_id) =
-        let export = Exports.find_exn t.exports export_id in
-        export.export_service
+      let disembargo_reply t target embargo_id =
+        Embargoes.release t.embargoes embargo_id
 
       let provide t question_id message_target recipient_id = ()
       let accept t question_id provision_id ~embargo = ()
@@ -577,8 +583,9 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         maybe_release_question t question;
         question.question_id
 
-      let disembargo_reply t (`ReceiverHosted import) =
-        `ReceiverHosted import.import_id
+      let disembargo_reply _t = function
+        | `ReceiverHosted import -> `ReceiverHosted import.import_id
+        | `ReceiverAnswer (question, path) -> `ReceiverAnswer (question.question_id, path)
     end
 
     let stats t =

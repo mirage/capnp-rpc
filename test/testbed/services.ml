@@ -23,7 +23,7 @@ let manual () = object (self : #cap)
     Queue.add (x, caps, result) queue;
     (result :> struct_ref)
 
-  method pop = Queue.pop queue
+  method pop = Queue.pop queue  (* Caller takes ownership of caps *)
 
   method private release = ()
   method pp f = Fmt.string f "manual"
