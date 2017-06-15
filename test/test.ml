@@ -64,6 +64,7 @@ let test_return_error () =
   (* Server echos args back *)
   CS.flush c s;
   Alcotest.(check response_promise) "Client got response" (Some (Error (`Exception "test-error"))) q#response;
+  q#finish;
   bs#dec_ref;
   CS.flush c s;
   CS.check_finished c s

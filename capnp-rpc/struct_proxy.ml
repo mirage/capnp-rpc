@@ -20,9 +20,14 @@ module Make (C : S.CORE_TYPES) = struct
     method resolve : cap -> unit
   end
 
+  type field = {
+    cap : field_cap;
+    mutable ref_count : int;
+  }
+
   type 'a unresolved = {
     mutable target : 'a;
-    mutable fields : field_cap Field_map.t;
+    mutable fields : field Field_map.t;
     when_resolved : (struct_ref -> unit) Queue.t;
     mutable cancelling : bool;    (* User called [finish], but results may still arrive. *)
   }
@@ -32,9 +37,11 @@ module Make (C : S.CORE_TYPES) = struct
     | Forwarding of struct_ref
     | Finished
 
+  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:rc=%d" Path.pp k v.ref_count)
+
   let pp_state ~pp_promise f = function
     | Unresolved {target; cancelling = true; _} -> Fmt.pf f "%a (cancelling)" pp_promise target
-    | Unresolved {target; _} -> pp_promise f target
+    | Unresolved {target; _} -> Fmt.pf f "%a" pp_promise target
     | Forwarding p -> p#pp f
     | Finished -> Fmt.pf f "(finished)"
 
@@ -118,15 +125,17 @@ module Make (C : S.CORE_TYPES) = struct
       dispatch state
         ~cancelling_ok:false
         ~unresolved:(fun u ->
-            let cap =
+            let field =
               match Field_map.find path u.fields with
-              | Some cap -> cap#inc_ref; cap
+              | Some f -> f
               | None ->
                 let cap = field path (self :> struct_ref_internal) in
-                u.fields <- Field_map.add path cap u.fields;
-                cap
+                let field = {cap; ref_count = 1} in
+                u.fields <- Field_map.add path field u.fields; (* Map takes initial ref *)
+                field
             in
-            (cap :> cap)
+            field.ref_count <- field.ref_count + 1;  (* Ref for user *)
+            (field.cap :> cap)
           )
         ~forwarding:(fun x -> x#cap path)
 
@@ -141,7 +150,14 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:true
         ~unresolved:(fun u ->
             state <- Forwarding x;
-            Field_map.iter (fun path f -> f#resolve (x#cap path)) u.fields;
+            u.fields |> Field_map.iter (fun path f ->
+                if f.ref_count > 1 then (
+                  let c = x#cap path in   (* Increases ref by one *)
+                  f.cap#resolve c;
+                  (* We drop our ref, and [f.cap] took one above. The rest we pass on. *)
+                  for _ = 3 to f.ref_count do c#inc_ref done
+                )
+              );
             self#on_resolve u.target x;
             Queue.iter (fun fn -> fn x) u.when_resolved;
             if u.cancelling then self#finish
@@ -158,7 +174,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun u ->
             u.cancelling <- true;
             if Field_map.is_empty u.fields then
-              self#do_finish u.target
+              self#do_finish u.target;
             (* else disable locally but don't send a cancel because we still
                want the caps. *)
           )
@@ -179,7 +195,9 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun u ->
             (* When we resolve, we'll be holding references to all the caps in the resolution, so
                so they must still be alive by the time we pass on any extra inc or dec refs. *)
-            Queue.add (fun p -> (p#cap path)#inc_ref) u.when_resolved
+            let f = Field_map.get path u.fields in
+            assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
+            f.ref_count <- f.ref_count + 1
           )
         ~forwarding:(fun x -> (x#cap path)#inc_ref)
 
@@ -187,12 +205,9 @@ module Make (C : S.CORE_TYPES) = struct
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
-            let dec_ref_when_resolved p =
-              let cap = p#cap path in
-              cap#dec_ref;      (* The dec_ref we're passing on *)
-              cap#dec_ref       (* The dec_ref for the #cap we just did *)
-            in
-            Queue.add dec_ref_when_resolved u.when_resolved
+            let f = Field_map.get path u.fields in
+            assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
+            f.ref_count <- f.ref_count - 1
           )
         ~forwarding:(fun x -> (x#cap path)#dec_ref)
 
