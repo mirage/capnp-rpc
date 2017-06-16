@@ -96,6 +96,14 @@ let test_calculator switch =
   Client.evaluate c expr |> Client.read >|= Alcotest.(check float) "Complex with remote fn" 3. >>= fun () ->
   Lwt.return ()
 
+let test_indexing switch =
+  let registry_impl = Registry.service () in
+  let registry = run_server ~switch ~service:registry_impl () in
+  let echo_service, version = Registry.Client.complex registry in
+  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  Registry.Version.read version >|= Alcotest.(check string) "Version response" "0.1" >>= fun () ->
+  Lwt.return ()
+
 let rpc_tests = [
   "Simple",     `Quick, run_lwt test_simple;
   "Parallel",   `Quick, run_lwt test_parallel;
@@ -103,6 +111,7 @@ let rpc_tests = [
   "Registry",   `Quick, run_lwt test_registry;
   "Calculator", `Quick, run_lwt test_calculator;
   "Cancel",     `Quick, run_lwt test_cancel;
+  "Indexing",   `Quick, run_lwt test_indexing;
 ]
 
 let () =

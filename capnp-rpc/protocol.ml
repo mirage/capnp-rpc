@@ -8,6 +8,13 @@ module IntMap = Map.Make(struct type t = int let compare (a:int) b = compare a b
 
 module EmbargoId = Id.Make ( )
 
+let rec filter_map f = function
+  | [] -> []
+  | x :: xs ->
+    match f x with
+    | None -> filter_map f xs
+    | Some y -> y :: filter_map f xs
+
 module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
 
   module PathSet = Set.Make(C.Path)
@@ -456,7 +463,11 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         let question = return_generic t id ~releaseParamCaps in
         let caps_used = (* Maps used cap indexes to their paths *)
           PathSet.elements question.question_pipelined_fields
-          |> List.map (fun path -> C.Response.cap_index msg path, path)
+          |> filter_map (fun path ->
+              match C.Response.cap_index msg path with
+              | None -> None
+              | Some i -> Some (i, path)
+            )
           |> IntMap.of_list
         in
         let import_with_embargo i d =
