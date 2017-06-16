@@ -14,13 +14,13 @@ module String_content = struct
   module Request = struct
     type t = string
     let pp = Fmt.string
-    let cap_index _ i = i
+    let cap_index _ i = Some i
   end
 
   module Response = struct
     type t = string
     let pp = Fmt.string
-    let cap_index _ i = i
+    let cap_index _ i = Some i
     let bootstrap = "(boot)"
   end
 end

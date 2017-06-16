@@ -71,8 +71,10 @@ module Make(C : S.CONCRETE) = struct
   let cap_failf msg = msg |> Fmt.kstrf broken_cap
 
   let cap_in_cap_list i caps =
-    if i < 0 || i >= RO_array.length caps then cap_failf "Invalid cap index %d in %a" i pp_cap_list caps
-    else RO_array.get caps i
+    match i with
+    | None -> null
+    | Some i when i < 0 || i >= RO_array.length caps -> cap_failf "Invalid cap index %d in %a" i pp_cap_list caps
+    | Some i -> RO_array.get caps i
 
   let cap_in_payload i (_, caps) = cap_in_cap_list i caps
 

@@ -20,7 +20,7 @@ module type CONCRETE = sig
 
     val pp : t Fmt.t
 
-    val cap_index : t -> Path.t -> int
+    val cap_index : t -> Path.t -> int option
     (** [cap_index msg path] is the capability index at [path]. *)
   end
 
@@ -34,7 +34,7 @@ module type CONCRETE = sig
 
     val pp : t Fmt.t
 
-    val cap_index : t -> Path.t -> int
+    val cap_index : t -> Path.t -> int option
     (** [cap_index msg path] is the capability index at [path]. *)
   end
 end

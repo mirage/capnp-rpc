@@ -84,15 +84,24 @@ let test_cancel switch =
   Echo.Client.unblock service
 
 let test_calculator switch =
-  let c = Calc.client @@ run_server ~switch ~service:Calc.service () in
-  (c#evaluate (`Float 1.))#read >|= Alcotest.(check float) "Simple calc" 1. >>= fun () ->
+  let open Calc in
+  let c = run_server ~switch ~service:Calc.service () in
+  Client.evaluate c (Float 1.) |> Client.read >|= Alcotest.(check float) "Simple calc" 1. >>= fun () ->
   let local_add = Calc.add in
-  let expr = `Call (local_add, [`Float 1.; `Float 2.]) in
-  (c#evaluate expr)#read >|= Alcotest.(check float) "Complex with local fn" 3. >>= fun () ->
-  let remote_add = c#getOperator `Add in
-  (Calc.fn_client remote_add)#call [5.; 3.] >|= Alcotest.(check float) "Check fn" 8. >>= fun () ->
-  let expr = `Call (remote_add, [`Float 1.; `Float 2.]) in
-  (c#evaluate expr)#read >|= Alcotest.(check float) "Complex with remote fn" 3. >>= fun () ->
+  let expr = Call (local_add, [Float 1.; Float 2.]) in
+  Client.evaluate c expr |> Client.read >|= Alcotest.(check float) "Complex with local fn" 3. >>= fun () ->
+  let remote_add = Calc.Client.getOperator c `Add in
+  Calc.Client.call remote_add [5.; 3.] >|= Alcotest.(check float) "Check fn" 8. >>= fun () ->
+  let expr = Call (remote_add, [Float 1.; Float 2.]) in
+  Client.evaluate c expr |> Client.read >|= Alcotest.(check float) "Complex with remote fn" 3. >>= fun () ->
+  Lwt.return ()
+
+let test_indexing switch =
+  let registry_impl = Registry.service () in
+  let registry = run_server ~switch ~service:registry_impl () in
+  let echo_service, version = Registry.Client.complex registry in
+  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  Registry.Version.read version >|= Alcotest.(check string) "Version response" "0.1" >>= fun () ->
   Lwt.return ()
 
 let rpc_tests = [
@@ -102,6 +111,7 @@ let rpc_tests = [
   "Registry",   `Quick, run_lwt test_registry;
   "Calculator", `Quick, run_lwt test_calculator;
   "Cancel",     `Quick, run_lwt test_cancel;
+  "Indexing",   `Quick, run_lwt test_indexing;
 ]
 
 let () =

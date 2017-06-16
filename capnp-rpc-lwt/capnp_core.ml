@@ -9,13 +9,23 @@ module Capnp_content = struct
   module Request = struct
     type t = Rpc.req_msg
     let pp f _ = Fmt.string f "(request content)"
-    let cap_index _ _ = 0       (* TODO *)
+
+    let cap_index t path =
+      let open Schema.Reader in
+      let call = Rpc.readable_req t in
+      Xform.resolve (Call.params_get call) path
   end
 
   module Response = struct
     type t = Rpc.resp_msg
     let pp f _ = Fmt.string f "(response content)"
-    let cap_index _ _ = 0       (* TODO *)
+
+    let cap_index t path =
+      let open Schema.Reader in
+      let ret = Rpc.readable_resp t in
+      match Return.get ret with
+      | Return.Results results -> Xform.resolve results path
+      | _ -> failwith "Not results!"
 
     let bootstrap =
       let open Schema.Builder in
