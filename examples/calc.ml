@@ -15,70 +15,63 @@ let or_fail msg = function
   | Some x -> x
   | None -> failwith msg
 
-(* A more user-friendly API for the Value interface *)
-let value_client proxy =
-  object
-    method read =
-      let module P = Api.Reader.Calculator.Value.Read_params in
-      let module R = Api.Reader.Calculator.Value.Read_results in
-      let req = Capability.Request.create_no_args () in
-      Capability.call_for_value_exn proxy Api.Reader.Calculator.Value.read_method req >|= fun resp ->
-      R.of_payload resp |> R.value_get
-  end
-
-(* A more user-friendly API for the Function interface *)
-let fn_client proxy =
-  object
-    method call args =
-      let module P = Api.Builder.Calculator.Function.Call_params in
-      let module R = Api.Reader.Calculator.Function.Call_results in
-      let req, p = Capability.Request.create P.init_pointer in
-      ignore (P.params_set_list p args);
-      Capability.call_for_value_exn proxy Api.Reader.Calculator.Function.call_method req >|= fun resp ->
-      R.of_payload resp |> R.value_get
-  end
-
 (* Write an expression into a message, exporting function capabilities. *)
-let rec write_expr ~export b expr =
+let rec write_expr ~req b expr =
   let open Api.Builder.Calculator in
+  let export x = Capability.Request.export req x in
   match expr with
-  | `Float f -> Expression.literal_set b f
-  | `Prev v -> Expression.previous_result_set b v
-  | `Param i -> Expression.parameter_set b (Uint32.of_int i)
-  | `Call (f, args) ->
+  | Float f -> Expression.literal_set b f
+  | Prev v ->
+    let i = export v in
+    Expression.previous_result_set b (Some i)
+  | Param i -> Expression.parameter_set b (Uint32.of_int i)
+  | Call (f, args) ->
     let c = Expression.call_init b in
     Expression.Call.function_set c (Some (export f));
     let args_b = Expression.Call.params_init c (List.length args) in
     args |> List.iteri (fun i arg ->
-        write_expr ~export (Capnp.Array.get args_b i) arg
+        write_expr ~req (Capnp.Array.get args_b i) arg
       )
 
 (* A more user-friendly API for the Calculator interface *)
-let client proxy =
-  object
-    method evaluate expr =
-      let module P = Api.Builder.Calculator.Evaluate_params in
-      let module R = Api.Reader.Calculator.Evaluate_results in
-      let req, p = Capability.Request.create P.init_pointer in
-      write_expr ~export:(Capability.Request.export req) (P.expression_init p) expr;
-      Capability.call proxy Api.Reader.Calculator.evaluate_method req
-      |> R.value_get_pipelined
-      |> value_client
+module Client = struct
+  let evaluate t expr =
+    let module P = Api.Builder.Calculator.Evaluate_params in
+    let module R = Api.Reader.Calculator.Evaluate_results in
+    let req, p = Capability.Request.create P.init_pointer in
+    write_expr ~req (P.expression_init p) expr;
+    Capability.call t Api.Reader.Calculator.evaluate_method req
+    |> R.value_get_pipelined
 
-    method getOperator op =
-      let module P = Api.Builder.Calculator.GetOperator_params in
-      let module R = Api.Reader.Calculator.GetOperator_results in
-      let module O = Api.Builder.Calculator.Operator in
-      let req, p = Capability.Request.create P.init_pointer in
-      P.op_set p (match op with
-          | `Add -> O.Add
-          | `Subtract -> O.Subtract
-          | `Multiply -> O.Multiply
-          | `Divide -> O.Divide
-        );
-      Capability.call proxy Api.Reader.Calculator.get_operator_method req
-      |> R.func_get_pipelined
-  end
+  let getOperator t op =
+    let module P = Api.Builder.Calculator.GetOperator_params in
+    let module R = Api.Reader.Calculator.GetOperator_results in
+    let module O = Api.Builder.Calculator.Operator in
+    let req, p = Capability.Request.create P.init_pointer in
+    P.op_set p (match op with
+        | `Add -> O.Add
+        | `Subtract -> O.Subtract
+        | `Multiply -> O.Multiply
+        | `Divide -> O.Divide
+      );
+    Capability.call t Api.Reader.Calculator.get_operator_method req
+    |> R.func_get_pipelined
+
+  let read v =
+    let module P = Api.Reader.Calculator.Value.Read_params in
+    let module R = Api.Reader.Calculator.Value.Read_results in
+    let req = Capability.Request.create_no_args () in
+    Capability.call_for_value_exn v Api.Reader.Calculator.Value.read_method req >|= fun resp ->
+    R.of_payload resp |> R.value_get
+
+  let call fn args =
+    let module P = Api.Builder.Calculator.Function.Call_params in
+    let module R = Api.Reader.Calculator.Function.Call_results in
+    let req, p = Capability.Request.create P.init_pointer in
+    ignore (P.params_set_list p args);
+    Capability.call_for_value_exn fn Api.Reader.Calculator.Function.call_method req >|= fun resp ->
+    R.of_payload resp |> R.value_get
+end
 
 (* Export a literal float as a service with a [read] method. *)
 let literal f =
@@ -97,20 +90,19 @@ let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t = fu
   | Param p -> literal args.(p)
   | Call (f, params) ->
     let params = params |> Lwt_list.map_p (fun p ->
-        let value = value_client (eval ~args p) in
-        value#read
+        let value = eval ~args p in
+        Client.read value
       ) in
-    let f = fn_client f in
-    let result = params >>= f#call in
+    let result = params >>= Client.call f in
     let open Api.Builder.Calculator in
     Value.local @@ object (_ : Value.service)
       method read _ =
         Service.return_lwt (fun () ->
-          result >|= fun result ->
-          let resp, c = Service.Response.create Value.Read_results.init_pointer in
-          Value.Read_results.value_set c result;
-          Ok resp
-        )
+            result >|= fun result ->
+            let resp, c = Service.Response.create Value.Read_results.init_pointer in
+            Value.Read_results.value_set c result;
+            Ok resp
+          )
     end
 
 (* A local service that provides the function [body]. *)
@@ -123,14 +115,14 @@ let fn n_args body =
       let params = P.of_payload req in
       let args = P.params_get_array params in
       assert (Array.length args = n_args);
-      let value = value_client (eval ~args body) in
+      let value = eval ~args body in
       (* Functions return floats, not Value objects, so we have to wait here. *)
       Service.return_lwt (fun () ->
-        value#read >|= fun value ->
-        let resp, r = Service.Response.create R.init_pointer in
-        R.value_set r value;
-        Ok resp
-      )
+          Client.read value >|= fun value ->
+          let resp, r = Service.Response.create R.init_pointer in
+          R.value_set r value;
+          Ok resp
+        )
   end
 
 (* A local service exporting function [op] (of two arguments). *)
