@@ -1,4 +1,47 @@
-open Testbed.Capnp_direct
+(* We want to check that messages sent over a reference arrive in order. *)
+type cap_ref_counters = {
+  mutable next_to_send : int;
+  mutable next_expected : int;
+}
+
+let pp_counters f {next_to_send; next_expected} = Fmt.pf f "{send=%d; expect=%d}" next_to_send next_expected
+
+module Msg = struct
+  module Path = struct
+    type t = int
+    let compare = compare
+    let pp = Fmt.int
+    let root = 0
+  end
+
+  module Request = struct
+    type t = {
+      seq : int;
+      counters : cap_ref_counters;
+    }
+    let pp f {seq; counters} = Fmt.pf f "{seq=%d; cap_ref=%a}" seq pp_counters counters
+
+    let cap_index _ i = Some i
+  end
+
+  module Response = struct
+    type t = string
+    let pp = Fmt.string
+    let cap_index _ i = Some i
+    let bootstrap = "(boot)"
+  end
+end
+
+module Network_types = struct
+  type sturdy_ref
+  type provision_id
+  type recipient_id
+  type third_party_cap_id
+  type join_key_part
+end
+
+module RPC = Capnp_rpc.Make(Msg)(Network_types)
+module Core_types = RPC.Core_types
 
 module Client_types = struct
   module QuestionId = Capnp_rpc.Id.Make ( )
@@ -7,8 +50,39 @@ module Client_types = struct
   module ExportId = ImportId
 end
 
-module Proto = Protocol.Make(Client_types)
-module Endpoint = Testbed.Connection.Endpoint(Proto)(Proto)
+module Proto = RPC.Protocol.Make(Client_types)
+
+module Endpoint = struct
+  module RO_array = Capnp_rpc.RO_array
+
+  module Conn = RPC.CapTP.Make(Proto)
+
+  type t = {
+    conn : Conn.t;
+    recv_queue : Proto.In.t Queue.t;
+  }
+
+  let dump f t =
+    Conn.dump f t.conn
+
+  let create ?bootstrap ~tags xmit_queue recv_queue =
+    let queue_send x = Queue.add x xmit_queue in
+    let conn = Conn.create ?bootstrap ~tags ~queue_send in
+    {
+      conn;
+      recv_queue;
+    }
+
+  let handle_msg t =
+    match Queue.pop t.recv_queue with
+    | exception Queue.Empty -> Alcotest.fail "No messages found!"
+    | msg -> Conn.handle_msg t.conn msg
+
+  let maybe_handle_msg t =
+    if Queue.length t.recv_queue > 0 then handle_msg t
+
+  let bootstrap t = Conn.bootstrap t.conn
+end
 
 module RO_array = Capnp_rpc.RO_array
 module Test_utils = Testbed.Test_utils
@@ -84,7 +158,7 @@ end
 type vat = {
   id : int;
   bootstrap : Core_types.cap option;
-  caps : Core_types.cap DynArray.t;
+  caps : (Core_types.cap * cap_ref_counters) DynArray.t;
   structs : Core_types.struct_ref DynArray.t;
   actions : (unit -> unit) DynArray.t;
   mutable connections : (int * Endpoint.t) list;
@@ -99,39 +173,47 @@ let pp_vat f t =
 
 let do_action state () = DynArray.pick state.actions ()
 
-(* Call a random cap, passing random arguments. *)
-let do_call state () =
-  let cap = DynArray.pick state.caps in
-  let n_args = choose_int 3 in
+let n_caps state n =
   let rec caps = function
     | 0 -> []
     | i -> DynArray.pick state.caps :: caps (i - 1)
   in
-  let args = RO_array.of_list (caps (n_args)) in
+  let pairs = caps n in
+  let args = RO_array.of_list @@ List.map fst pairs in
+  let cap_refs = List.map snd pairs in
+  args, cap_refs
+
+(* Call a random cap, passing random arguments. *)
+let do_call state () =
+  let cap, counters = DynArray.pick state.caps in
+  let n_args = choose_int 3 in
+  let args, _arg_refs = n_caps state (n_args) in
   RO_array.iter (fun c -> c#inc_ref) args;
   Logs.info (fun f -> f "Call %t(%a)" cap#pp (RO_array.pp Core_types.pp_cap) args);
-  DynArray.add state.structs (cap#call "call" args)
+  let msg = { Msg.Request.counters; seq = counters.next_to_send } in
+  counters.next_to_send <- succ counters.next_to_send;
+  DynArray.add state.structs (cap#call msg args)
 
 (* Reply to a random question. *)
 let do_answer state () =
   let answer = DynArray.pop state.answers_needed in
   let n_args = choose_int 3 in
-  let rec caps = function
-    | 0 -> []
-    | i -> DynArray.pick state.caps :: caps (i - 1)
-  in
-  let args = RO_array.of_list (caps (n_args)) in
+  let args, _arg_refs = n_caps state (n_args) in
   RO_array.iter (fun c -> c#inc_ref) args;
   Logs.info (fun f -> f "Return %a" (RO_array.pp Core_types.pp_cap) args);
   answer#resolve (Ok ("reply", args))
   (* TODO: reply with another promise or with an error *)
+
+let make_cap_ref () =
+  { next_to_send = 0; next_expected = 0 }
 
 (* Pick a random cap from an answer. *)
 let do_struct state () =
   let s = DynArray.pick state.structs in
   let i = choose_int 3 in
   Logs.info (fun f -> f "Get %t/%d" s#pp i);
-  DynArray.add state.caps (s#cap i)
+  let cap = s#cap i in
+  DynArray.add state.caps (cap, make_cap_ref ())
 
 (* Finish an answer *)
 let do_finish state () =
@@ -140,7 +222,7 @@ let do_finish state () =
   s#finish
 
 let do_release state () =
-  let c = DynArray.pop state.caps in
+  let c, _ = DynArray.pop state.caps in
   Logs.info (fun f -> f "Release %t" c#pp);
   c#dec_ref
 
@@ -154,9 +236,12 @@ let test_service vat =
 
     method shortest = self
 
-    method call _ caps =
-      caps |> RO_array.iter (fun c -> DynArray.add vat.caps c);
-      let answer = Local_struct_promise.make () in
+    method call msg caps =
+      let counters = msg.Msg.Request.counters in
+      assert (msg.Msg.Request.seq = counters.next_expected);
+      counters.next_expected <- succ counters.next_expected;
+      caps |> RO_array.iter (fun c -> DynArray.add vat.caps (c, make_cap_ref ()));
+      let answer = RPC.Local_struct_promise.make () in
       DynArray.add vat.answers_needed answer;
       (answer :> Core_types.struct_ref)
   end
@@ -174,8 +259,8 @@ let make_connection v1 v2 =
   let v2_tags = tags_for_id v2.id in
   let c = Endpoint.create ~tags:v1_tags q1 q2 ?bootstrap:v1.bootstrap in
   let s = Endpoint.create ~tags:v2_tags q2 q1 ?bootstrap:v2.bootstrap in
-  DynArray.add v1.actions (fun () -> DynArray.add v1.caps (Endpoint.bootstrap c));
-  DynArray.add v2.actions (fun () -> DynArray.add v2.caps (Endpoint.bootstrap s));
+  DynArray.add v1.actions (fun () -> DynArray.add v1.caps (Endpoint.bootstrap c, make_cap_ref ()));
+  DynArray.add v2.actions (fun () -> DynArray.add v2.caps (Endpoint.bootstrap s, make_cap_ref ()));
   DynArray.add v1.actions (fun () -> Logs.info (fun f -> f ~tags:v1_tags "Handle"); Endpoint.maybe_handle_msg c);
   DynArray.add v2.actions (fun () -> Logs.info (fun f -> f ~tags:v2_tags "Handle"); Endpoint.maybe_handle_msg s);
   v1.connections <- (v2.id, c) :: v1.connections;
@@ -186,10 +271,11 @@ let next_id = ref 0
 let make_vat () =
   let id = !next_id in
   next_id := succ !next_id;
+  let null = Core_types.null, make_cap_ref () in
   let t = {
     id;
     bootstrap = None;
-    caps = DynArray.create Core_types.null;
+    caps = DynArray.create null;
     structs = DynArray.create (Core_types.broken `Cancelled);
     actions = DynArray.create ignore;
     connections = [];
