@@ -1,6 +1,6 @@
 .PHONY: all fuzz clean test
 
-default: build-fuzz
+default: test
 
 all:
 	jbuilder build --dev @install test/test.bc test-lwt/test.bc

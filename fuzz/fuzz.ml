@@ -1,6 +1,13 @@
 module RO_array = Capnp_rpc.RO_array
+module Test_utils = Testbed.Test_utils
 
 let failf msg = Fmt.kstrf failwith msg
+
+let styles = [| `Red; `Green; `Blue |]
+
+let tags_for_id id =
+  let style = styles.(id mod Array.length styles) in
+  Logs.Tag.empty |> Logs.Tag.add Test_utils.actor_tag (style, Fmt.strf "vat-%d" id)
 
 module Direct : sig
   (* For each capability and struct_ref in the real system, we make a corresponding
@@ -65,14 +72,6 @@ end = struct
     | Id i -> i
     | See y -> target y
 
-  let rec unify a b =
-    match a.target with
-    | See a' -> unify a' b
-    | Id 0 when target b = 0 -> ()        (* null *)
-    | Id old ->
-      Logs.info (fun f -> f "Unify: %d is now an alias for %d" old (target b));
-      a.target <- See b
-
   let rec pp f t =
     match t.target with
     | See t' -> pp f t'
@@ -81,6 +80,16 @@ end = struct
 
   let pp_struct f s = Fmt.pf f "s-%d" s.struct_id
   let pp_struct = Fmt.styled `Blue (Fmt.styled `Bold pp_struct)
+
+  let rec unify a b =
+    match a.target with
+    | See a' -> unify a' b
+    | Id 0 when target b = 0 -> ()        (* null *)
+    | Id old ->
+      Logs.info (fun f -> f "Unify: %a is now an alias for %a" pp a pp b);
+      if old <> target b then
+        a.target <- See b
+      (* else cycle *)
 
   let equal a b =
     target a = target b
@@ -189,8 +198,6 @@ module Endpoint = struct
   let bootstrap t = Conn.bootstrap t.conn
 end
 
-module Test_utils = Testbed.Test_utils
-
 exception End_of_fuzz_data
 
 let () =
@@ -235,17 +242,17 @@ module DynArray = struct
     t.len <- t.len + 1
 
   let pick t =
-    if t.len = 0 then t.default
-    else t.items.(choose_int t.len)
+    if t.len = 0 then None
+    else Some (t.items.(choose_int t.len))
 
   let pop t =
-    if t.len = 0 then t.default
+    if t.len = 0 then None
     else (
       let i = choose_int t.len in
       let v = t.items.(i) in
       t.len <- t.len - 1;
       t.items.(i) <- t.items.(t.len);
-      v
+      Some v
     )
 end
 
@@ -276,18 +283,26 @@ type vat = {
   answers_needed : (Core_types.struct_resolver * Direct.struct_ref) DynArray.t;
 }
 
+let tags v = tags_for_id v.id
+
 let pp_vat f t =
   let pp_connection f (id, endpoint) =
-    Fmt.pf f "@[<2>Connection to %d@,%a@]" id Endpoint.dump endpoint
+    Fmt.pf f "@[<v2>Connection to %d@,%a@]" id Endpoint.dump endpoint
   in
   Fmt.Dump.list pp_connection f t.connections
 
-let do_action state () = DynArray.pick state.actions ()
+let do_action state =
+  match DynArray.pick state.actions with
+  | Some fn -> fn ()
+  | None -> assert false        (* There should always be some actions *)
 
 let n_caps state n =
   let rec caps = function
     | 0 -> []
-    | i -> DynArray.pick state.caps :: caps (i - 1)
+    | i ->
+      match DynArray.pick state.caps with
+      | Some c -> c :: caps (i - 1)
+      | None -> []
   in
   let cap_refs = caps n in
   let args = RO_array.of_list @@ List.map (fun cr -> cr.cr_cap) cap_refs in
@@ -295,34 +310,39 @@ let n_caps state n =
 
 (* Call a random cap, passing random arguments. *)
 let do_call state () =
-  let cap_ref = DynArray.pick state.caps in
-  let cap = cap_ref.cr_cap in
-  let counters = cap_ref.cr_counters in
-  let target = cap_ref.cr_target in
-  let n_args = choose_int 3 in
-  let args, arg_refs = n_caps state (n_args) in
-  let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs |> RO_array.of_list in
-  RO_array.iter (fun c -> c#inc_ref) args;
-  let answer = Direct.make_struct () in
-  Logs.info (fun f -> f "Call %a=%t(%a) (answer %a)"
-                Direct.pp target cap#pp
-                (RO_array.pp Core_types.pp_cap) args
-                Direct.pp_struct answer);
-  let msg = { Msg.Request.target; counters; seq = counters.next_to_send; answer; arg_ids } in
-  counters.next_to_send <- succ counters.next_to_send;
-  DynArray.add state.structs (cap#call msg args, answer)
+  match DynArray.pick state.caps with
+  | None -> ()
+  | Some cap_ref ->
+    let cap = cap_ref.cr_cap in
+    let counters = cap_ref.cr_counters in
+    let target = cap_ref.cr_target in
+    let n_args = choose_int 3 in
+    let args, arg_refs = n_caps state (n_args) in
+    let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs |> RO_array.of_list in
+    RO_array.iter (fun c -> c#inc_ref) args;
+    let answer = Direct.make_struct () in
+    Logs.info (fun f -> f ~tags:(tags state) "Call %a=%t(%a) (answer %a)"
+                  Direct.pp target cap#pp
+                  (RO_array.pp Core_types.pp_cap) args
+                  Direct.pp_struct answer);
+    let msg = { Msg.Request.target; counters; seq = counters.next_to_send; answer; arg_ids } in
+    counters.next_to_send <- succ counters.next_to_send;
+    DynArray.add state.structs (cap#call msg args, answer)
 
 (* Reply to a random question. *)
 let do_answer state () =
-  let answer, answer_id = DynArray.pop state.answers_needed in
-  let n_args = choose_int 3 in
-  let args, arg_refs = n_caps state (n_args) in
-  let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
-  RO_array.iter (fun c -> c#inc_ref) args;
-  Logs.info (fun f -> f "Return %a (%a)" (RO_array.pp Core_types.pp_cap) args Direct.pp_struct answer_id);
-  Direct.return answer_id (RO_array.of_list arg_ids);
-  answer#resolve (Ok ("reply", args))
-  (* TODO: reply with another promise or with an error *)
+  match DynArray.pop state.answers_needed with
+  | None -> ()
+  | Some (answer, answer_id) ->
+    let n_args = choose_int 3 in
+    let args, arg_refs = n_caps state (n_args) in
+    let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
+    RO_array.iter (fun c -> c#inc_ref) args;
+    Logs.info (fun f -> f ~tags:(tags state)
+                  "Return %a (%a)" (RO_array.pp Core_types.pp_cap) args Direct.pp_struct answer_id);
+    Direct.return answer_id (RO_array.of_list arg_ids);
+    answer#resolve (Ok ("reply", args))
+    (* TODO: reply with another promise or with an error *)
 
 let make_cap_ref ~target cap =
   {
@@ -331,27 +351,6 @@ let make_cap_ref ~target cap =
     cr_counters = { next_to_send = 0; next_expected = 0 };
   }
 
-(* Pick a random cap from an answer. *)
-let do_struct state () =
-  let s, s_id = DynArray.pick state.structs in
-  let i = choose_int 3 in
-  Logs.info (fun f -> f "Get %t/%d" s#pp i);
-  let cap = s#cap i in
-  let target = Direct.cap s_id i in
-  DynArray.add state.caps (make_cap_ref ~target cap)
-
-(* Finish an answer *)
-let do_finish state () =
-  let s, _id = DynArray.pop state.structs in
-  Logs.info (fun f -> f "Finish %t" s#pp);
-  s#finish
-
-let do_release state () =
-  let cr = DynArray.pop state.caps in
-  let c = cr.cr_cap in
-  Logs.info (fun f -> f "Release %t" c#pp);
-  c#dec_ref
-
 let test_service ~target:self_id vat =
   object (_ : Core_types.cap)
     inherit Core_types.service
@@ -359,6 +358,7 @@ let test_service ~target:self_id vat =
     method! pp f = Fmt.pf f "test-service %a" Direct.pp self_id
 
     method call msg caps =
+      assert (ref_count > 0);
       let {Msg.Request.target; counters; seq; arg_ids; answer} = msg in
       if not (Direct.equal target self_id) then
         failf "Call received by %a, but expected target was %a (answer %a)"
@@ -376,11 +376,39 @@ let test_service ~target:self_id vat =
       (answer_promise :> Core_types.struct_ref)
   end
 
-let styles = [| `Red; `Green; `Blue |]
+(* Pick a random cap from an answer. *)
+let do_struct state () =
+  match DynArray.pick state.structs with
+  | None -> ()
+  | Some (s, s_id) ->
+    let i = choose_int 3 in
+    Logs.info (fun f -> f ~tags:(tags state) "Get %t/%d" s#pp i);
+    let cap = s#cap i in
+    let target = Direct.cap s_id i in
+    DynArray.add state.caps (make_cap_ref ~target cap)
 
-let tags_for_id id =
-  let style = styles.(id mod Array.length styles) in
-  Logs.Tag.empty |> Logs.Tag.add Test_utils.actor_tag (style, Fmt.strf "vat-%d" id)
+(* Finish an answer *)
+let do_finish state () =
+  match DynArray.pop state.structs with
+  | None -> ()
+  | Some (s, _id) ->
+    Logs.info (fun f -> f ~tags:(tags state) "Finish %t" s#pp);
+    s#finish
+
+let do_release state () =
+  match DynArray.pop state.caps with
+  | None -> ()
+  | Some cr ->
+    let c = cr.cr_cap in
+    Logs.info (fun f -> f ~tags:(tags state) "Release %t" c#pp);
+    c#dec_ref
+
+(* Create a new local service *)
+let do_create state () =
+  let target = Direct.make_cap () in
+  let ts = test_service ~target state in
+  Logs.info (fun f -> f ~tags:(tags state) "Created %t" ts#pp);
+  DynArray.add state.caps (make_cap_ref ~target ts)
 
 let make_connection v1 v2 =
   let q1 = Queue.create () in
@@ -397,16 +425,18 @@ let make_connection v1 v2 =
   in
   let c = Endpoint.create ~tags:v1_tags q1 q2 ?bootstrap:(cap v1.bootstrap) in
   let s = Endpoint.create ~tags:v2_tags q2 q1 ?bootstrap:(cap v2.bootstrap) in
-  let bs_action v conn ~target =
+  let add_actions v conn ~target =
     DynArray.add v.actions (fun () ->
         Logs.info (fun f -> f "Expecting bootstrap reply to be target %a" Direct.pp target);
         DynArray.add v1.caps (make_cap_ref ~target @@ Endpoint.bootstrap conn)
-      )
+      );
+    DynArray.add v.actions (fun () ->
+        Logs.info (fun f -> f ~tags:(tags_for_id v.id) "Handle");
+        Endpoint.maybe_handle_msg conn
+      );
   in
-  bs_action v1 c ~target:(target v2.bootstrap);
-  bs_action v2 s ~target:(target v1.bootstrap);
-  DynArray.add v1.actions (fun () -> Logs.info (fun f -> f ~tags:v1_tags "Handle"); Endpoint.maybe_handle_msg c);
-  DynArray.add v2.actions (fun () -> Logs.info (fun f -> f ~tags:v2_tags "Handle"); Endpoint.maybe_handle_msg s);
+  add_actions v1 c ~target:(target v2.bootstrap);
+  add_actions v2 s ~target:(target v1.bootstrap);
   v1.connections <- (v2.id, c) :: v1.connections;
   v2.connections <- (v1.id, s) :: v2.connections
 
@@ -427,16 +457,13 @@ let make_vat () =
   } in
   let bs_id = Direct.make_cap () in
   let t = {t with bootstrap = Some (test_service ~target:bs_id t, bs_id)} in
-  DynArray.add t.actions (do_action t);
   DynArray.add t.actions (do_call t);
   DynArray.add t.actions (do_struct t);
   DynArray.add t.actions (do_finish t);
+  DynArray.add t.actions (do_create t);
   DynArray.add t.actions (do_release t);
   DynArray.add t.actions (do_answer t);
   t
-
-let step v =
-  DynArray.pick v.actions ()
 
 let () =
   (* Logs.set_level (Some Logs.Error); *)
@@ -455,12 +482,12 @@ let () =
   try
     let rec loop () =
       let v = choose vats in
-      step v;
+      do_action v;
       loop ()
     in
     try loop ()
     with End_of_fuzz_data -> () (* TODO: try releasing everything *)
-  with Exit as ex ->
+  with ex ->
     let bt = Printexc.get_raw_backtrace () in
     Logs.err (fun f -> f "%a" Fmt.exn_backtrace (ex, bt));
     Logs.err (fun f -> f "Got error - dumping state:");
