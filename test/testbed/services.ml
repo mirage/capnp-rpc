@@ -2,19 +2,17 @@ open Capnp_direct.Core_types
 
 module RO_array = Capnp_rpc.RO_array
 
-let echo_service () = object (self : cap)
-  inherit ref_counted
+let echo_service () = object
+  inherit service
   method call x caps =
     assert (ref_count > 0);
     return ("got:" ^ x, caps)
-  method private release = ()
-  method pp f = Fmt.string f "echo-service"
-  method shortest = (self :> cap)
+  method! pp f = Fmt.string f "echo-service"
 end
 
 (* A service which just queues incoming messages and lets the test driver handle them. *)
-let manual () = object (self : #cap)
-  inherit ref_counted
+let manual () = object
+  inherit service
   val queue = Queue.create ()
 
   method call x caps =
@@ -25,14 +23,12 @@ let manual () = object (self : #cap)
 
   method pop = Queue.pop queue  (* Caller takes ownership of caps *)
 
-  method private release = ()
-  method pp f = Fmt.string f "manual"
-  method shortest = (self :> cap)
+  method! pp f = Fmt.string f "manual"
 end
 
 (* Callers can swap their arguments for the slot's contents. *)
-let swap_service slot = object (self : cap)
-  inherit ref_counted
+let swap_service slot = object
+  inherit service
 
   method call x caps =
     assert (ref_count > 0);
@@ -40,15 +36,11 @@ let swap_service slot = object (self : cap)
     slot := (x, caps);
     return (old_msg, old_caps)
 
-  method private release = ()
-
-  method pp f = Fmt.string f "swap-service"
-
-  method shortest = (self :> cap)
+  method! pp f = Fmt.string f "swap-service"
 end
 
-let logger () = object (self : #cap)
-  inherit ref_counted
+let logger () = object
+  inherit service
 
   val log = Queue.create ()
 
@@ -58,13 +50,9 @@ let logger () = object (self : #cap)
     Queue.add x log;
     return ("logged", RO_array.empty)
 
-  method private release = ()
-
-  method pp f = Fmt.string f "logger-service"
+  method! pp f = Fmt.string f "logger-service"
 
   method pop =
     try Queue.pop log
     with Queue.Empty -> "(queue empty)"
-
-  method shortest = (self :> cap)
 end

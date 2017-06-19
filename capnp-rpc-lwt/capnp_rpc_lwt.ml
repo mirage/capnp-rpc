@@ -79,6 +79,7 @@ module Untyped = struct
       method response = failwith "Can't use response on a sub-struct"
       method finish = failwith "Can't use finish on a sub-struct"
       method pp f = Fmt.pf f "pointer %d in %t" i t#pp
+      method blocker = failwith "struct_field: blocker"
     end
 
   let capability_field t f = t#cap [Xform.Field f]
@@ -98,10 +99,10 @@ module Untyped = struct
   let cap_index x = x
 
   let unknown_interface ~interface_id _req =
-    Service.fail "Unknown interface %a" Uint64.printer interface_id
+    Core_types.fail "Unknown interface %a" Uint64.printer interface_id
 
   let unknown_method ~interface_id ~method_id _req =
-    Service.fail "Unknown method %a.%d" Uint64.printer interface_id method_id
+    Core_types.fail "Unknown method %a.%d" Uint64.printer interface_id method_id
 end
 
 module Service = Service

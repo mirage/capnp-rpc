@@ -153,6 +153,7 @@ let dummy_answer = object (self : Core_types.struct_resolver)
   method resolve x = self#connect (Core_types.resolved x)
   method response = failwith "dummy_answer"
   method when_resolved _ = failwith "when_resolved"
+  method blocker = None
 end
 
 type vat = {
@@ -227,14 +228,10 @@ let do_release state () =
   c#dec_ref
 
 let test_service vat =
-  object (self : Core_types.cap)
-    inherit Core_types.ref_counted
+  object (_ : Core_types.cap)
+    inherit Core_types.service
 
-    method private release = failwith "test_service: release"
-
-    method pp f = Fmt.string f "test-service"
-
-    method shortest = self
+    method! pp f = Fmt.string f "test-service"
 
     method call msg caps =
       let counters = msg.Msg.Request.counters in
@@ -276,7 +273,7 @@ let make_vat () =
     id;
     bootstrap = None;
     caps = DynArray.create null;
-    structs = DynArray.create (Core_types.broken `Cancelled);
+    structs = DynArray.create (Core_types.broken_struct `Cancelled);
     actions = DynArray.create ignore;
     connections = [];
     answers_needed = DynArray.create dummy_answer;
@@ -315,7 +312,9 @@ let () =
     in
     try loop ()
     with End_of_fuzz_data -> () (* TODO: try releasing everything *)
-  with ex ->
+  with Exit as ex ->
+    let bt = Printexc.get_raw_backtrace () in
+    Logs.err (fun f -> f "%a" Fmt.exn_backtrace (ex, bt));
     Logs.err (fun f -> f "Got error - dumping state:");
     vats |> Array.iter (fun v ->
         let tags = tags_for_id v.id in

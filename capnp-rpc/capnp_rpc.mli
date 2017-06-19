@@ -9,6 +9,7 @@ module Make (C : S.CONCRETE) (N : S.NETWORK_TYPES) : sig
   module Core_types : module type of Core_types.Make(C)
   module Protocol : module type of Protocol.Make(Core_types)(N)
   module Local_struct_promise : module type of Local_struct_promise.Make(Core_types)
+  module Cap_proxy : module type of Cap_proxy.Make(Core_types)
   module CapTP : sig
     module Make (P : Protocol.S) : sig
       type t

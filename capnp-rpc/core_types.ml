@@ -3,16 +3,21 @@ module Make(C : S.CONCRETE) = struct
 
   type 'a or_error = ('a, Error.t) result
 
+  class type base_ref = object
+    method pp : Format.formatter -> unit
+    method blocker : base_ref option
+  end
+
   class type struct_ref = object
+    inherit base_ref
     method when_resolved : ((Response.t * cap RO_array.t) or_error -> unit) -> unit
     method response : (Response.t * cap RO_array.t) or_error option
-    method pp : Format.formatter -> unit
     method finish : unit
     method cap : Path.t -> cap
   end
   and cap = object
+    inherit base_ref
     method call : Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
-    method pp : Format.formatter -> unit
     method inc_ref : unit
     method dec_ref : unit
     method shortest : cap
@@ -49,13 +54,14 @@ module Make(C : S.CONCRETE) = struct
   let rec broken_cap msg = object (self : cap)
     method call _ caps =
       RO_array.iter (fun c -> c#dec_ref) caps;
-      broken (`Exception msg)
+      broken_struct (`Exception msg)
     method inc_ref = ()
     method dec_ref = ()
     method pp f = Fmt.pf f "broken:%s" msg
     method shortest = self
+    method blocker = None
   end
-  and broken err = object (_ : struct_ref)
+  and broken_struct err = object (_ : struct_ref)
     method response = Some (Error err)
     method when_resolved fn = fn (Error err)
     method cap _ =
@@ -64,6 +70,7 @@ module Make(C : S.CONCRETE) = struct
       | `Cancelled -> broken_cap "Cancelled"
     method pp f = Fmt.pf f "broken:%a" Error.pp err
     method finish = ()
+    method blocker = None
   end
 
   let null = broken_cap "null"
@@ -122,9 +129,25 @@ module Make(C : S.CONCRETE) = struct
     method finish =
       RO_array.iter (fun c -> c#dec_ref) caps;
       caps <- RO_array.empty
+
+    method blocker = None
   end
+
+  class virtual service = object (self)
+    inherit ref_counted
+
+    method virtual call : Request.t -> cap RO_array.t -> struct_ref
+    method private release = ()
+    method pp f = Fmt.string f "<service>"
+    method shortest = (self :> cap)
+    method blocker : base_ref option = None
+  end
+
+  let fail msg =
+    msg |> Fmt.kstrf @@ fun msg ->
+    broken_struct (`Exception msg)
 
   let resolved = function
     | Ok x -> return x
-    | Error msg -> broken msg
+    | Error msg -> broken_struct msg
 end

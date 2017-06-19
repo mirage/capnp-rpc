@@ -67,7 +67,17 @@ module type CORE_TYPES = sig
 
   type 'a or_error = ('a, Error.t) result
 
+  class type base_ref = object
+    method pp : Format.formatter -> unit
+
+    method blocker : base_ref option
+    (** [c#blocker] is the unresolved [cap] or [struct_ref] promise that must resolve for [c] to resolve.
+        This is used to help detect cycles. *)
+  end
+
   class type struct_ref = object
+    inherit base_ref
+
     method when_resolved : ((Response.t * cap RO_array.t) or_error -> unit) -> unit
     (** [r#when_resolved fn] queues up [fn] to be called on the result, when it arrives.
         If the result has already arrived, [fn] is called immediately. *)
@@ -75,8 +85,6 @@ module type CORE_TYPES = sig
     method response : (Response.t * cap RO_array.t) or_error option
     (** [r#response] is [Some payload] if the response has arrived,
         or [None] if we're still waiting. *)
-
-    method pp : Format.formatter -> unit
 
     method finish : unit
     (** [r#finish] indicates that this object will never be used again.
@@ -97,6 +105,8 @@ module type CORE_TYPES = sig
 
   and cap =
     object
+      inherit base_ref
+
       method call : Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
       (** [c#call msg args] invokes a method on [c]'s target and returns a promise for the result. *)
 
@@ -110,8 +120,6 @@ module type CORE_TYPES = sig
       method shortest : cap
       (** [c#shortest] is the shortest known path to [cap]. i.e. if [c] is forwarding to another cap, we
           return that, recursively. *)
-
-      method pp : Format.formatter -> unit
     end
   (** A capability reference to an object that can handle calls.
       We might not yet know its final location, but we may be able
@@ -159,12 +167,31 @@ module type CORE_TYPES = sig
   (** A mix-in to help with writing reference-counted objects.
       It will call [self#release] when the ref-count reaches zero. *)
 
+  class virtual service : object
+    inherit base_ref
+    inherit ref_counted
+    method virtual call : Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
+    method shortest : cap
+    method private release : unit
+  end
+  (** A convenience base class for creating local services.
+      The capability is always resolved, and the default [release] method does nothing. *)
+
   val null : cap
   (** A (broken) capability representing a missing pointer.
       Any attempt to call it will return an error. *)
 
   val return : Response_payload.t -> struct_ref
   (** [return x] is a resolved [struct_ref] with successful resolution [x]. *)
+
+  val fail : ('a, Format.formatter, unit, struct_ref) format4 -> 'a
+  (** [fail fmt] is a [struct_ref] that is broken with the given capnp exception message. *)
+
+  val broken_cap : string -> cap
+  (** [broken_cap msg] is a [cap] that is broken with the given message. *)
+
+  val broken_struct : Error.t -> struct_ref
+  (** [broken_struct err] is a [struct_ref] that is broken with the given error. *)
 
   val resolved : Response_payload.t or_error -> struct_ref
   (** [resolved x] is a resolved [struct_ref] with resolution [x]. *)
