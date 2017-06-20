@@ -7,6 +7,18 @@ let map = Array.map
 let mapi = Array.mapi
 let iter = Array.iter
 let iteri = Array.iteri
+
+let find fn t =
+  let rec loop i =
+    if i = Array.length t then None
+    else (
+      let item = t.(i) in
+      if fn item then Some item
+      else loop (i + 1)
+    )
+  in
+  loop 0
+
 let empty = [| |]
 let pp x = Fmt.(brackets (array ~sep:(const string ", ") x))
 

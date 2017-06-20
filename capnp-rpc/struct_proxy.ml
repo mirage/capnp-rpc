@@ -2,8 +2,15 @@ open Asetmap
 
 module Log = Debug.Log
 
+let last_id = ref 0
+
 module Make (C : S.CORE_TYPES) = struct
   open C
+
+  let cycle_err fmt =
+    "@[<v>Attempt to create a cycle detected:@," ^^ fmt ^^ "@]" |> Fmt.kstrf @@ fun msg ->
+    Log.info (fun f -> f "%s" msg);
+    C.broken_struct (`Exception msg)
 
   class type struct_ref_internal = object
     inherit struct_resolver
@@ -91,6 +98,11 @@ module Make (C : S.CORE_TYPES) = struct
         match state with
         | ForwardingField c -> c#shortest
         | PromiseField _ -> (self :> cap)
+
+      method blocker =
+        match state with
+        | ForwardingField c -> c#blocker
+        | PromiseField (p, _) -> p#blocker
     end
 
   class virtual ['promise] t init = object (self : #struct_resolver)
@@ -101,6 +113,8 @@ module Make (C : S.CORE_TYPES) = struct
         when_resolved = Queue.create ();
         cancelling = false
       }
+
+    val id = incr last_id; !last_id
 
     method private virtual do_pipeline : 'promise -> Path.t -> Request.t -> cap RO_array.t -> struct_ref
 
@@ -120,6 +134,14 @@ module Make (C : S.CORE_TYPES) = struct
       | Unresolved {cancelling = true; _} | Finished -> Some (Error `Cancelled)
       | Unresolved _ -> None
       | Forwarding x -> x#response
+
+    method blocker =
+      (* It's OK to have a cancelling struct_ref here. Although the struct_ref itself
+         can't be used by users, it is still available to its fields, which may call this. *)
+      dispatch state
+        ~cancelling_ok:true
+        ~unresolved:(fun _ -> Some (self :> base_ref))
+        ~forwarding:(fun x -> x#blocker)
 
     method cap path =
       dispatch state
@@ -141,7 +163,9 @@ module Make (C : S.CORE_TYPES) = struct
 
     method pp f =
       let pp_promise f _ = Fmt.string f "(unresolved)" in
-      Fmt.pf f "proxy -> %a" (pp_state ~pp_promise) state
+      Fmt.pf f "proxy[%a] -> %a"
+        (Fmt.styled `Bold Fmt.int) id
+        (pp_state ~pp_promise) state
 
     method connect x =
       Log.info (fun f -> f "@[Updating: %t@\n\
@@ -149,6 +173,21 @@ module Make (C : S.CORE_TYPES) = struct
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
+            (* Check for cycles *)
+            let x =
+              let blocked_on_us r = r#blocker = Some (self :> base_ref) in
+              if blocked_on_us x then
+                cycle_err "Resolving:@,  %t@,with:@,  %t" self#pp x#pp
+              else match x#response with
+                | Some (Error _) | None -> x
+                | Some (Ok (_, caps)) ->
+                  match RO_array.find blocked_on_us caps with
+                  | None -> x
+                  | Some c ->
+                    let x = cycle_err "Resolving:@,  %t@,with:@,  %t@,due to:@,  %t@]" self#pp x#pp c#pp in
+                    RO_array.iter (fun c -> c#dec_ref) caps;
+                    x
+            in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->
                 if f.ref_count > 1 then (
@@ -216,5 +255,8 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:false
         ~unresolved:(fun u -> u.target <- target)
         ~forwarding:(fun _ -> failwith "Already forwarding!")
+
+    initializer
+      Log.info (fun f -> f "Created %t" self#pp)
   end
 end

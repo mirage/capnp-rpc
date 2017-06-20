@@ -16,17 +16,11 @@ type ('a, 'b) method_t = abstract_method_t
 
 let pp_method = Capnp.RPC.Registry.pp_method
 
-let fail fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
-  Core_types.broken (`Exception msg)
-
 let local s =
-  object (self : Core_types.cap)
-    inherit Core_types.ref_counted
+  object
+    inherit Core_types.service
 
-    method private release = ()
-
-    method pp f = Fmt.string f "local-service"
+    method! pp f = Fmt.string f "local-service"
 
     method call call caps =
       let open Schema.Reader in
@@ -39,9 +33,7 @@ let local s =
       try m (p, caps)
       with ex ->
         Log.warn (fun f -> f "Uncaught exception handling %a: %a" pp_method (interface_id, method_id) Fmt.exn ex);
-        fail "Internal error from %a" pp_method (interface_id, method_id)
-
-    method shortest = self
+        Core_types.fail "Internal error from %a" pp_method (interface_id, method_id)
   end
 
 (* The simple case for returning a message (rather than another value). *)

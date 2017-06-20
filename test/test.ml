@@ -1,3 +1,5 @@
+open Astring
+
 module Core_types = Testbed.Capnp_direct.Core_types
 module Test_utils = Testbed.Test_utils
 module Services = Testbed.Services
@@ -227,6 +229,40 @@ let test_duplicates () =
   S.handle_msg s ~expect:"finish";              (* c1 *)
   CS.check_finished c s
 
+let ensure_is_cycle_error (x:#Core_types.struct_ref) : unit =
+  match x#response with
+  | Some (Error (`Exception msg))
+    when (String.is_prefix ~affix:"Attempt to create a cycle detected:" msg) -> ()
+  | _ -> Alcotest.fail (Fmt.strf "Not a cycle error: %t" x#pp)
+
+let test_cycle () =
+  (* Cap cycles *)
+  let module P = Testbed.Capnp_direct.Cap_proxy in
+  let p1 = new P.local_promise in
+  let p2 = new P.local_promise in
+  p1#resolve (p2 :> Core_types.cap);
+  p2#resolve (p1 :> Core_types.cap);
+  ensure_is_cycle_error (call p2 "test" []);
+  (* Connect struct to its own field *)
+  let module S = Testbed.Capnp_direct.Local_struct_promise in
+  let p1 = S.make () in
+  let c = p1#cap 0 in
+  p1#resolve (Ok ("msg", RO_array.of_list [c]));
+  ensure_is_cycle_error p1;
+  (* Connect struct to itself *)
+  let p1 = S.make () in
+  p1#connect (p1 :> Core_types.struct_ref);
+  ensure_is_cycle_error p1
+
+(* Resolve a promise with an answer that includes the result of a pipelined
+   call on the promise itself. *)
+let test_cycle_2 () =
+  let module S = Testbed.Capnp_direct.Local_struct_promise in
+  let s1 = S.make () in
+  let s2 = call (s1#cap 0) "get-s2" [] in
+  s1#resolve (Ok ("a7", RO_array.of_list [s2#cap 0]));
+  ensure_is_cycle_error s1
+
 let tests = [
   "Return",     `Quick, test_return;
   "Return error", `Quick, test_return_error;
@@ -237,6 +273,8 @@ let tests = [
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
   "Duplicates", `Quick, test_duplicates;
+  "Cycle", `Quick, test_cycle;
+  "Cycle 2", `Quick, test_cycle_2;
 ]
 
 let () =

@@ -152,6 +152,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
                       t.queue_send (`Release (id, count))
 
                     method shortest = self
+                    method blocker = None   (* Can't detect cycles over the network *)
                   end
                 in
                 register t cap message_target;
