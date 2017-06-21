@@ -1,5 +1,3 @@
-[@@@ocaml.warning "-27"]        (* TODO *)
-
 module Log = Debug.Log
 
 open Asetmap
@@ -324,7 +322,7 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
     let dump_export f x =
       Fmt.pf f "%t" x.export_service#pp
 
-    let dump_import f x =
+    let dump_import f _x =
       Fmt.pf f "import"
 
     let dump f t =
@@ -484,8 +482,8 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         let caps = RO_array.mapi import_with_embargo descrs in
         question.question_data, caps
 
-      let resolve t export_id = function
-        | `Cap desc -> ()
+      let resolve _t _export_id = function
+        | `Cap _desc -> ()
         | `Exception -> ()
 
       let release t export_id ~referenceCount =
@@ -520,12 +518,12 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
           (* TODO: move the struct_ref logic here so we can do the check here? *)
           `ReturnToSender ((answer.answer_promise, i), id)
 
-      let disembargo_reply t target embargo_id =
+      let disembargo_reply t _target embargo_id =
         Embargoes.release t.embargoes embargo_id
 
-      let provide t question_id message_target recipient_id = ()
-      let accept t question_id provision_id ~embargo = ()
-      let join t question_id message_target join_key_part = ()
+      let provide _t _question_id _message_target _recipient_id = ()
+      let accept _t _question_id _provision_id ~embargo:_ = ()
+      let join _t _question_id _message_target _join_key_part = ()
     end
 
     module Send = struct
@@ -574,10 +572,10 @@ module Make (C : S.CORE_TYPES) (N : S.NETWORK_TYPES) = struct
         in
         answer.answer_id, result
 
-      let return_error t answer msg =
+      let return_error _t answer msg =
         answer.answer_id, `Exception msg
 
-      let return_cancelled t answer =
+      let return_cancelled _t answer =
         answer.answer_id, `Cancelled
 
       let release t import =
