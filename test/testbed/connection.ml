@@ -1,5 +1,3 @@
-open Capnp_direct.Core_types
-
 module RO_array = Capnp_rpc.RO_array
 
 let src = Logs.Src.create "test-net" ~doc:"Cap'n Proto RPC tests"
@@ -8,28 +6,12 @@ module Log = (val Logs.src_log src: Logs.LOG)
 module Stats = Capnp_rpc.Stats
 let stats = Alcotest.of_pp Stats.pp
 
-module Endpoint
-    (P : Capnp_direct.Protocol.S)
-    (Other : Capnp_direct.Protocol.S with
-      module T.QuestionId = P.T.AnswerId and
-      module T.AnswerId = P.T.QuestionId and
-      module T.ExportId = P.T.ImportId and
-      module T.ImportId = P.T.ExportId
-    )
-= struct
-  module Out = P.Out
-  module In = Other.Out
-
-  module Conn = Capnp_direct.CapTP.Make(P)
-
-  type request = [ (* Waiting for test code to deal with it *)
-    | `Bootstrap of P.answer
-    | `Call of P.answer * cap * Request.t * cap RO_array.t
-  ]
+module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
+  module Conn = Capnp_rpc.CapTP.Make(EP)
 
   type t = {
     conn : Conn.t;
-    recv_queue : In.t Queue.t;
+    recv_queue : EP.In.t Queue.t;
   }
 
   let dump f t =
@@ -78,18 +60,16 @@ module Endpoint
 end
 
 module Make ( ) = struct
-  module Client_types = struct
-    module QuestionId = Capnp_rpc.Id.Make ( )
-    module AnswerId = Capnp_rpc.Id.Make ( )
-    module ImportId = Capnp_rpc.Id.Make ( )
-    module ExportId = Capnp_rpc.Id.Make ( )
+  module ProtoC = Capnp_rpc.Message_types.Endpoint(Capnp_direct.Core_types) ( )
+  module ProtoS = struct
+    module Core_types = Capnp_direct.Core_types
+    module Table = Capnp_rpc.Message_types.Flip(ProtoC.Table)
+    module In = ProtoC.Out
+    module Out = ProtoC.In
   end
 
-  module ProtoC = Capnp_direct.Protocol.Make(Client_types)
-  module ProtoS = Capnp_direct.Protocol.Make(ProtoC.In)
-
-  module C = Endpoint(ProtoC)(ProtoS)
-  module S = Endpoint(ProtoS)(ProtoC)
+  module C = Endpoint(ProtoC)
+  module S = Endpoint(ProtoS)
 
   let create ~client_tags ~server_tags bootstrap =
     let q1 = Queue.create () in

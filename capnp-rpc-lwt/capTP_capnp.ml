@@ -1,21 +1,16 @@
 open Lwt.Infix
 open Capnp_core
 
+module EmbargoId = Capnp_rpc.EmbargoId
+
 module Log = Rpc.Log
 
 module Builder = Schema.Builder
 module Reader = Schema.Reader
 module RO_array = Capnp_rpc.RO_array
 
-module Table_types = struct
-  module QuestionId = Capnp_rpc.Id.Make ( )
-  module AnswerId = Capnp_rpc.Id.Make ( )
-  module ExportId = Capnp_rpc.Id.Make ( )
-  module ImportId = Capnp_rpc.Id.Make ( )
-end
-module Proto = Protocol.Make(Table_types)
-module Conn = CapTP.Make(Proto)
-include Table_types
+module Conn = Capnp_rpc.CapTP.Make(Capnp_core.Endpoint_types)
+include Capnp_core.Endpoint_types.Table
 
 type t = {
   endpoint : Endpoint.t;
@@ -89,7 +84,7 @@ let parse_desc d =
     let vine_id = ThirdPartyCapDescriptor.vine_id_get tp |> ImportId.of_uint32 in
     (* todo: for level 3, we should establish a direct connection rather than proxying
        through the vine *)
-    `ThirdPartyHosted {Protocol.id = `TODO_3rd_party; vine_id}
+    `ThirdPartyHosted (`TODO_3rd_party, vine_id)
   | CapDescriptor.Undefined _ -> failwith "Unknown cap descriptor type"
 
 let parse_descs = RO_array.map parse_desc
@@ -154,7 +149,7 @@ let handle_disembargo t x =
   let ctx = Disembargo.context_get x in
   match Disembargo.Context.get ctx with
   | Disembargo.Context.SenderLoopback embargo_id ->
-    let embargo_id = Protocol.EmbargoId.of_uint32 embargo_id in
+    let embargo_id = EmbargoId.of_uint32 embargo_id in
     begin match target with
     | `ReceiverAnswer (aid, path) ->
       let req = `Loopback ((aid, path), embargo_id) in
@@ -162,7 +157,7 @@ let handle_disembargo t x =
     | `ReceiverHosted _ -> failwith "TODO: handle_disembargo: ReceiverHosted"   (* Can this happen? *)
     end
   | Disembargo.Context.ReceiverLoopback embargo_id ->
-    let embargo_id = Protocol.EmbargoId.of_uint32 embargo_id in
+    let embargo_id = EmbargoId.of_uint32 embargo_id in
     begin match target with
     | `ReceiverHosted id ->
       Conn.handle_msg t.conn (`Disembargo_reply ((`ReceiverHosted id), embargo_id))
@@ -199,7 +194,7 @@ let set_target b target =
   | `ReceiverHosted id ->
     MessageTarget.imported_cap_set b (ImportId.uint32 id)
 
-let serialise ~tags : Proto.Out.t -> _ =
+let serialise ~tags : Endpoint_types.Out.t -> _ =
   let open Builder in
   function
   | `Bootstrap qid ->
@@ -237,7 +232,7 @@ let serialise ~tags : Proto.Out.t -> _ =
     begin match disembargo_request with
       | `Loopback ((qid, path), embargo_id) ->
         set_target (Disembargo.target_init dis) (`ReceiverAnswer (qid, path));
-        Disembargo.Context.sender_loopback_set ctx (Protocol.EmbargoId.uint32 embargo_id)
+        Disembargo.Context.sender_loopback_set ctx (EmbargoId.uint32 embargo_id)
     end;
     Message.to_message m
   | `Disembargo_reply (target, embargo_id) ->
@@ -245,7 +240,7 @@ let serialise ~tags : Proto.Out.t -> _ =
     let dis = Message.disembargo_init m in
     let ctx = Disembargo.context_init dis in
     set_target (Disembargo.target_init dis) target;
-    Disembargo.Context.receiver_loopback_set ctx (Protocol.EmbargoId.uint32 embargo_id);
+    Disembargo.Context.receiver_loopback_set ctx (EmbargoId.uint32 embargo_id);
     Message.to_message m
   | `Return (aid, return) ->
     let ret =
