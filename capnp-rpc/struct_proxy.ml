@@ -15,12 +15,12 @@ module Make (C : S.CORE_TYPES) = struct
   class type struct_ref_internal = object
     inherit struct_resolver
 
-    method pipeline : Path.t -> Request.t -> cap RO_array.t -> struct_ref
-    method inc_ref : Path.t -> unit
-    method dec_ref : Path.t -> unit
+    method pipeline : Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
+    method inc_ref : Wire.Path.t -> unit
+    method dec_ref : Wire.Path.t -> unit
   end
 
-  module Field_map = Map.Make(Path)
+  module Field_map = Map.Make(Wire.Path)
 
   class type field_cap = object
     inherit cap
@@ -44,7 +44,7 @@ module Make (C : S.CORE_TYPES) = struct
     | Forwarding of struct_ref
     | Finished
 
-  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:rc=%d" Path.pp k v.ref_count)
+  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:rc=%d" Wire.Path.pp k v.ref_count)
 
   let pp_state ~pp_promise f = function
     | Unresolved {target; cancelling = true; _} -> Fmt.pf f "%a (cancelling)" pp_promise target
@@ -60,7 +60,7 @@ module Make (C : S.CORE_TYPES) = struct
     | Forwarding x -> forwarding x
 
   type field_state =
-    | PromiseField of struct_ref_internal * C.Path.t
+    | PromiseField of struct_ref_internal * Wire.Path.t
     | ForwardingField of cap
 
   let field path (p:#struct_ref_internal) =
@@ -74,7 +74,7 @@ module Make (C : S.CORE_TYPES) = struct
 
       method pp f =
         match state with
-        | PromiseField (p, path) -> Fmt.pf f "field:%a -> %t" Path.pp path p#pp
+        | PromiseField (p, path) -> Fmt.pf f "field:%a -> %t" Wire.Path.pp path p#pp
         | ForwardingField c -> Fmt.pf f "field -> %t" c#pp
 
       method inc_ref =
@@ -116,7 +116,7 @@ module Make (C : S.CORE_TYPES) = struct
 
     val id = incr last_id; !last_id
 
-    method private virtual do_pipeline : 'promise -> Path.t -> Request.t -> cap RO_array.t -> struct_ref
+    method private virtual do_pipeline : 'promise -> Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
 
     method private virtual on_resolve : 'promise -> struct_ref -> unit
     (* We have just started forwarding. Send any queued data onwards. *)

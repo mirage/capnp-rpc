@@ -10,7 +10,7 @@ module Make(C : S.CORE_TYPES) = struct
   end
 
   type cap_promise_state =
-    | Unresolved of (struct_resolver * Request.t * cap RO_array.t) Queue.t
+    | Unresolved of (struct_resolver * Wire.Request.t * cap RO_array.t) Queue.t
     | Resolved of cap
 
   class local_promise =

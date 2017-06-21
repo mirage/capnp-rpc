@@ -148,7 +148,8 @@ module Msg = struct
   end
 end
 
-module Network_types = struct
+module Core_types = struct
+  include Capnp_rpc.Core_types(Msg)
   type sturdy_ref
   type provision_id
   type recipient_id
@@ -156,24 +157,28 @@ module Network_types = struct
   type join_key_part
 end
 
-module RPC = Capnp_rpc.Make(Msg)(Network_types)
-module Core_types = RPC.Core_types
+module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)
 
-module Client_types = struct
-  module QuestionId = Capnp_rpc.Id.Make ( )
-  module AnswerId = QuestionId
-  module ImportId = Capnp_rpc.Id.Make ( )
-  module ExportId = ImportId
+module EP = struct
+  module Core_types = Core_types
+
+  module Table = struct
+    module QuestionId = Capnp_rpc.Id.Make ( )
+    module AnswerId = QuestionId
+    module ImportId = Capnp_rpc.Id.Make ( )
+    module ExportId = ImportId
+  end
+
+  module Out = Capnp_rpc.Message_types.Make(Core_types)(Table)
+  module In = Capnp_rpc.Message_types.Make(Core_types)(Table)
 end
 
-module Proto = RPC.Protocol.Make(Client_types)
-
 module Endpoint = struct
-  module Conn = RPC.CapTP.Make(Proto)
+  module Conn = Capnp_rpc.CapTP.Make(EP)
 
   type t = {
     conn : Conn.t;
-    recv_queue : Proto.In.t Queue.t;
+    recv_queue : EP.In.t Queue.t;
   }
 
   let dump f t =
@@ -323,7 +328,7 @@ let do_call state () =
     let answer = Direct.make_struct () in
     Logs.info (fun f -> f ~tags:(tags state) "Call %a=%t(%a) (answer %a)"
                   Direct.pp target cap#pp
-                  (RO_array.pp Core_types.pp_cap) args
+                  (RO_array.pp Core_types.pp) args
                   Direct.pp_struct answer);
     let msg = { Msg.Request.target; counters; seq = counters.next_to_send; answer; arg_ids } in
     counters.next_to_send <- succ counters.next_to_send;
@@ -339,7 +344,7 @@ let do_answer state () =
     let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
     RO_array.iter (fun c -> c#inc_ref) args;
     Logs.info (fun f -> f ~tags:(tags state)
-                  "Return %a (%a)" (RO_array.pp Core_types.pp_cap) args Direct.pp_struct answer_id);
+                  "Return %a (%a)" (RO_array.pp Core_types.pp) args Direct.pp_struct answer_id);
     Direct.return answer_id (RO_array.of_list arg_ids);
     answer#resolve (Ok ("reply", args))
     (* TODO: reply with another promise or with an error *)
@@ -371,7 +376,7 @@ let test_service ~target:self_id vat =
           let target = RO_array.get arg_ids i in
           DynArray.add vat.caps (make_cap_ref ~target c)
         );
-      let answer_promise = RPC.Local_struct_promise.make () in
+      let answer_promise = Local_struct_promise.make () in
       DynArray.add vat.answers_needed (answer_promise, answer);
       (answer_promise :> Core_types.struct_ref)
   end

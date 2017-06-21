@@ -11,7 +11,7 @@ module Make (C : S.CORE_TYPES) = struct
     method private do_pipeline q i msg caps =
       let result = local_promise ~parent:self () in
       q |> Queue.add (fun p ->
-          Logs.info (fun f -> f "%d:%a forwarding %t" id Path.pp i p#pp);
+          Logs.info (fun f -> f "%d:%a forwarding %t" id Wire.Path.pp i p#pp);
           result#connect ((p#cap i)#call msg caps)      (* XXX: dec_ref? *)
         );
       (result :> struct_ref)

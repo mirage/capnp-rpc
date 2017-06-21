@@ -1,5 +1,7 @@
-module Make(C : S.CONCRETE) = struct
-  include  C
+module Make(Wire : S.WIRE) = struct
+  module Wire = Wire
+
+  open Wire
 
   type 'a or_error = ('a, Error.t) result
 
@@ -7,6 +9,8 @@ module Make(C : S.CONCRETE) = struct
     method pp : Format.formatter -> unit
     method blocker : base_ref option
   end
+
+  let pp f x = x#pp f
 
   class type struct_ref = object
     inherit base_ref
@@ -29,8 +33,7 @@ module Make(C : S.CONCRETE) = struct
     method connect : struct_ref -> unit
   end
 
-  let pp_cap f x = x#pp f
-  let pp_cap_list f caps = RO_array.pp pp_cap f caps
+  let pp_cap_list f caps = RO_array.pp pp f caps
 
   class virtual ref_counted = object (self)
     val mutable ref_count = 1

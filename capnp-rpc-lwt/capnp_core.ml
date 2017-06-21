@@ -37,7 +37,9 @@ module Capnp_content = struct
   end
 end
 
-module Network_types = struct
+module Core_types = struct
+  include Capnp_rpc.Core_types(Capnp_content)
+
   type sturdy_ref
   type provision_id
   type recipient_id
@@ -45,4 +47,5 @@ module Network_types = struct
   type join_key_part
 end
 
-include Capnp_rpc.Make(Capnp_content)(Network_types)
+module Endpoint_types = Capnp_rpc.Message_types.Endpoint(Core_types)( )
+module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)

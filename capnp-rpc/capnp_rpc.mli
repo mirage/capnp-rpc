@@ -4,27 +4,28 @@ module Stats = Stats
 module Id = Id
 module Debug = Debug
 module Error = Error
+module EmbargoId = Protocol.EmbargoId
+module Message_types = Message_types
+module Core_types (W : S.WIRE) : S.CORE_TYPES with module Wire = W
+module Local_struct_promise = Local_struct_promise
+module Cap_proxy = Cap_proxy
 
-module Make (C : S.CONCRETE) (N : S.NETWORK_TYPES) : sig
-  module Core_types : module type of Core_types.Make(C)
-  module Protocol : module type of Protocol.Make(Core_types)(N)
-  module Local_struct_promise : module type of Local_struct_promise.Make(Core_types)
-  module Cap_proxy : module type of Cap_proxy.Make(Core_types)
-  module CapTP : sig
-    module Make (P : Protocol.S) : sig
-      type t
+module CapTP : sig
+  module Make (EP : Message_types.ENDPOINT) : sig
+    type t
 
-      val tags : ?qid:P.T.QuestionId.t -> ?aid:P.T.AnswerId.t -> t -> Logs.Tag.set
+    module P : module type of Protocol.Make(EP)
 
-      val bootstrap : t -> Core_types.cap
+    val tags : ?qid:EP.Out.QuestionId.t -> ?aid:EP.Out.AnswerId.t -> t -> Logs.Tag.set
 
-      val handle_msg : t -> P.In.t -> unit
+    val bootstrap : t -> EP.Core_types.cap
 
-      val stats : t -> Stats.t
+    val handle_msg : t -> EP.In.t -> unit
 
-      val create : ?bootstrap:Core_types.cap -> tags:Logs.Tag.set -> queue_send:(P.Out.t -> unit) -> t
+    val stats : t -> Stats.t
 
-      val dump : t Fmt.t
-    end
+    val create : ?bootstrap:EP.Core_types.cap -> tags:Logs.Tag.set -> queue_send:(EP.Out.t -> unit) -> t
+
+    val dump : t Fmt.t
   end
 end
