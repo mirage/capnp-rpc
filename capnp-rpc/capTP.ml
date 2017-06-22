@@ -134,7 +134,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
        cap for users. If the resulting cap is remote, our wrapper forwards it to Other.
        This will add a ref count to the cap if it already exists, or create a new
        one with [ref_count = 1]. *)
-    let from_cap_desc t (desc:P.recv_cap) : Core_types.cap =
+    let from_cap_desc t (desc:P.recv_descr) : Core_types.cap =
       match desc with
       | `Local c -> c#inc_ref; c
       | `ReceiverHosted import as message_target ->
@@ -257,7 +257,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
              Hashtbl.add t.embargoes embargo_id embargo;
              Self_proxy.disembargo t disembargo_request;
              (embargo :> Core_types.cap)
-           | #P.recv_cap as x -> Self_proxy.from_cap_desc t x
+           | #P.recv_descr as x -> Self_proxy.from_cap_desc t x
          in
          let caps = RO_array.map from_cap_desc caps in
          Log.info (fun f -> f ~tags:(tags ~qid t) "Got results: %a"

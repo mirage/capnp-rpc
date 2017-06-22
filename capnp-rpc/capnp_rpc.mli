@@ -4,7 +4,6 @@ module Stats = Stats
 module Id = Id
 module Debug = Debug
 module Error = Error
-module EmbargoId = Protocol.EmbargoId
 module Message_types = Message_types
 module Core_types (W : S.WIRE) : S.CORE_TYPES with module Wire = W
 module Local_struct_promise = Local_struct_promise

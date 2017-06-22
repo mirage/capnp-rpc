@@ -1,7 +1,7 @@
 open Lwt.Infix
 open Capnp_core
 
-module EmbargoId = Capnp_rpc.EmbargoId
+module EmbargoId = Capnp_rpc.Message_types.EmbargoId
 
 module Log = Rpc.Log
 

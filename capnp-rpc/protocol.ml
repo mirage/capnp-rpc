@@ -21,102 +21,6 @@ module Make (EP: Message_types.ENDPOINT) = struct
 
   open EP.Table
 
-  module type S = sig
-    type t
-
-    type question
-    type answer
-    type export
-    type import
-
-    type message_target_cap = [
-      | `ReceiverHosted of import
-      | `ReceiverAnswer of question * Wire.Path.t
-    ]
-
-    type cap = [
-      message_target_cap
-      | `None
-      | `SenderHosted of export
-      | `SenderPromise of export
-      | `ThirdPartyHosted of Out.third_party_desc (* TODO *)
-      | `Local of C.cap
-    ]
-
-    type recv_cap = [
-      message_target_cap
-      | `None
-      | `ThirdPartyHosted of Out.third_party_desc
-      | `Local of C.cap
-      | `LocalPromise of C.struct_resolver * Wire.Path.t
-    ]
-
-    type recv_cap_with_embargo = [
-      recv_cap
-      | `LocalEmbargo of C.cap * Out.disembargo_request   (* Send a Disembargo, and queue messages until it returns *)
-    ]
-
-    val pp_cap : [< cap | recv_cap_with_embargo] Fmt.t
-        
-    val create : tags:Logs.Tag.set -> unit -> t
-
-    val answer_promise : answer -> C.struct_resolver
-
-    val import_proxy : import ->
-      create:(unit -> C.cap) ->
-      inc_ref:(C.cap -> unit) ->
-      C.cap
-    (* Get (and inc_rec) the proxy associated with [import], or create (and store) a new one. *)
-
-    module Input : sig
-      val call : t ->
-        In.QuestionId.t -> In.message_target -> allowThirdPartyTailCall:bool -> In.desc RO_array.t ->
-        In.sendResultsTo -> answer:C.struct_resolver ->
-        answer * recv_cap * recv_cap RO_array.t
-      val bootstrap : t -> In.QuestionId.t -> answer:C.struct_resolver -> answer
-      val return_results : t -> In.AnswerId.t -> releaseParamCaps:bool -> Wire.Response.t -> In.desc RO_array.t -> C.struct_resolver * recv_cap_with_embargo RO_array.t
-      val return_cancelled : t -> In.AnswerId.t -> releaseParamCaps:bool -> C.struct_resolver
-      val return_exception : t -> In.AnswerId.t -> releaseParamCaps:bool -> C.struct_resolver
-
-      val finish : t -> In.QuestionId.t -> releaseResultCaps:bool -> C.struct_resolver
-      (* Returns the answer promise so that its caps can be released. *)
-
-      val resolve : t -> In.ExportId.t -> [`Cap of In.desc | `Exception] -> unit
-      val release : t -> In.ImportId.t -> referenceCount:int -> unit
-      val disembargo_request : t -> In.disembargo_request ->
-        [ `ReturnToSender of (C.struct_resolver * Wire.Path.t) * EmbargoId.t]
-      val disembargo_reply : t -> In.message_target -> EmbargoId.t -> unit
-      val provide : t -> In.QuestionId.t -> In.message_target -> C.recipient_id -> unit
-      val accept : t -> In.QuestionId.t -> C.provision_id -> embargo:bool -> unit
-      val join : t -> In.QuestionId.t -> In.message_target -> C.join_key_part -> unit
-    end
-
-    module Send : sig
-      val bootstrap : t -> C.struct_resolver -> question * Out.QuestionId.t
-      val call : t -> C.struct_resolver -> message_target_cap -> [< cap] RO_array.t ->
-        question * Out.QuestionId.t * Out.message_target * Out.desc RO_array.t
-
-      val return_results : t -> answer -> Wire.Response.t -> [< cap] RO_array.t -> Out.AnswerId.t * Out.return
-      val return_error : t -> answer -> string -> Out.AnswerId.t * Out.return
-      val return_cancelled : t -> answer -> Out.AnswerId.t * Out.return
-
-      val release : t -> import -> Out.ImportId.t * int
-      (** [release t i] indicates that [i] is no longer used by the client.
-          Returns the [referenceCount] for the Release message. *)
-
-      val finish : t -> question -> Out.QuestionId.t
-      (** [finish t qid] tells the system that we're about to send a Finish message
-          (with [releaseResultCaps=false]). *)
-
-      val disembargo_reply : t -> message_target_cap -> Out.message_target
-    end
-
-    val dump : t Fmt.t
-
-    val stats : t -> Stats.t
-    val pp_question : question Fmt.t
-  end
-
   module PathSet = Set.Make(Wire.Path)
   module Embargoes = Table.Allocating(EmbargoId)
 
@@ -160,7 +64,7 @@ module Make (EP: Message_types.ENDPOINT) = struct
     | `ReceiverAnswer of question * Wire.Path.t
   ]
 
-  type cap = [
+  type descr = [
     message_target_cap
     | `None
     | `SenderHosted of export
@@ -169,7 +73,7 @@ module Make (EP: Message_types.ENDPOINT) = struct
     | `Local of C.cap
   ]
 
-  type recv_cap = [
+  type recv_descr = [
     message_target_cap
     | `None
     | `ThirdPartyHosted of Out.third_party_desc
@@ -178,11 +82,11 @@ module Make (EP: Message_types.ENDPOINT) = struct
   ]
 
   type recv_cap_with_embargo = [
-    recv_cap
+    recv_descr
     | `LocalEmbargo of C.cap * Out.disembargo_request   (* Send a Disembargo, and queue messages until it returns *)
   ]
 
-  let pp_cap : [< cap | recv_cap_with_embargo] Fmt.t = fun f -> function
+  let pp_cap : [< descr | recv_cap_with_embargo] Fmt.t = fun f -> function
     | `None -> Fmt.pf f "null"
     | `ReceiverHosted import -> Fmt.pf f "ReceiverHosted:%a" ImportId.pp import.import_id
     | `ReceiverAnswer (question, p) -> Fmt.pf f "ReceiverAnswer:%a[%a]" QuestionId.pp question.question_id Wire.Path.pp p
@@ -247,7 +151,7 @@ module Make (EP: Message_types.ENDPOINT) = struct
   (** [export t target] is a descriptor for [target], plus a list of exports that
       should be freed if we get a request to free all capabilities associated with
       the request. *)
-  let export t : [< cap] -> Out.desc * ExportId.t list = function
+  let export t : [< descr] -> Out.desc * ExportId.t list = function
     | `ReceiverHosted import ->
       (* Any ref-counting needed here? *)
       `ReceiverHosted import.import_id, []
@@ -290,11 +194,11 @@ module Make (EP: Message_types.ENDPOINT) = struct
       `Answer (answer, path)
     | _ -> failwith "TODO: import"
 
-  let import_simple t desc : [> recv_cap] =
+  let import_simple t desc : [> recv_descr] =
     match import t desc with
     | `Export e -> `Local e.export_service
     | `Answer (answer, path) -> `Local (answer.answer_promise#cap path)
-    | #recv_cap as x -> x
+    | #recv_descr as x -> x
 
   let answer_promise answer = answer.answer_promise
 
@@ -317,7 +221,7 @@ module Make (EP: Message_types.ENDPOINT) = struct
         finished = false;
       } in
       Answers.set t.answers id answer;
-      let target : recv_cap =
+      let target : recv_descr =
         match message_target with
         | `ReceiverHosted id ->
           let export = Exports.find_exn t.exports id in
@@ -374,7 +278,7 @@ module Make (EP: Message_types.ENDPOINT) = struct
       in
       let import_with_embargo i d =
         match import t d with
-        | #recv_cap as x -> x
+        | #recv_descr as x -> x
         | `Export _ | `Answer _ as x ->
           match IntMap.find i caps_used with
           | None -> `Local (service x)        (* Not used, so no embargo needed *)
@@ -460,7 +364,7 @@ module Make (EP: Message_types.ENDPOINT) = struct
       in
       question, question.question_id, target, descrs
 
-    let return_results t answer msg (caps : [< cap] RO_array.t) =
+    let return_results t answer msg (caps : [< descr] RO_array.t) =
       let result =
         if answer.finished then `Cancelled
         else (
