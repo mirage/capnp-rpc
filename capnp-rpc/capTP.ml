@@ -62,8 +62,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
   }
 
   type message_target_cap = [
-    | `ReceiverHosted of import
-    | `ReceiverAnswer of question * Wire.Path.t
+    | `Import of import
+    | `QuestionCap of question * Wire.Path.t    (* TODO: merge with `Answer? *)
   ]
 
   type descr = [
@@ -83,21 +83,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `LocalPromise of Core_types.struct_resolver * Wire.Path.t
   ]
 
-  type recv_cap_with_embargo = [
-    recv_descr
-    | `LocalEmbargo of Core_types.cap * Out.disembargo_request   (* Send a Disembargo, and queue messages until it returns *)
-  ]
-
-  let pp_cap : [< descr | recv_cap_with_embargo] Fmt.t = fun f -> function
+  let pp_cap : [< descr | recv_descr] Fmt.t = fun f -> function
     | `None -> Fmt.pf f "null"
-    | `ReceiverHosted import -> Fmt.pf f "ReceiverHosted:%a" ImportId.pp import.import_id
-    | `ReceiverAnswer (question, p) -> Fmt.pf f "ReceiverAnswer:%a[%a]" QuestionId.pp question.question_id Wire.Path.pp p
+    | `Import import -> Fmt.pf f "Import:%a" ImportId.pp import.import_id
+    | `QuestionCap (question, p) -> Fmt.pf f "QuestionCap:%a[%a]" QuestionId.pp question.question_id Wire.Path.pp p
     | `ThirdPartyHosted _third_party_desc -> Fmt.pf f "ThirdPartyHosted"
     | `SenderHosted export -> Fmt.pf f "SenderHosted:%a" ExportId.pp export.export_id
     | `SenderPromise export -> Fmt.pf f "SenderPromise:%a" ExportId.pp export.export_id
     | `Local local -> Fmt.pf f "Local:%t" local#pp
     | `LocalPromise (_promise, path) -> Fmt.pf f "LocalPromise:<p>%a" Wire.Path.pp path
-    | `LocalEmbargo (local_service, req) -> Fmt.pf f "LocalEmbargo:%t:%a" local_service#pp Out.pp_disembargo_request req
 
   type t = {
     queue_send : (EP.Out.t -> unit);
@@ -177,8 +171,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
      to it later. *)
   let release_remote_caps caps con_caps =
     con_caps |> RO_array.iteri (fun i -> function
-        | `ReceiverHosted _
-        | `ReceiverAnswer _ -> (RO_array.get caps i)#dec_ref
+        | `Import _
+        | `QuestionCap _ -> (RO_array.get caps i)#dec_ref
         | `Local _ -> ()
       )
 
@@ -219,10 +213,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
         should be freed if we get a request to free all capabilities associated with
         the request. *)
     let export t : [< descr] -> Out.desc * ExportId.t list = function
-      | `ReceiverHosted import ->
+      | `Import import ->
         (* Any ref-counting needed here? *)
         `ReceiverHosted import.import_id, []
-      | `ReceiverAnswer (question, i) ->
+      | `QuestionCap (question, i) ->
         `ReceiverAnswer (question.question_id, i), []
       | `ThirdPartyHosted _ |`None |`SenderHosted _|`SenderPromise _ -> failwith "TODO: export"
       | `Local service ->
@@ -262,8 +256,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       in
       let target =
         match target with
-        | `ReceiverHosted import -> `ReceiverHosted import.import_id
-        | `ReceiverAnswer (question, i) ->
+        | `Import import -> `ReceiverHosted import.import_id
+        | `QuestionCap (question, i) ->
           question.question_pipelined_fields <- PathSet.add i question.question_pipelined_fields;
           `ReceiverAnswer (question.question_id, i)
       in
@@ -306,8 +300,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       question.question_id
 
     let disembargo_reply _t = function
-      | `ReceiverHosted import -> `ReceiverHosted import.import_id
-      | `ReceiverAnswer (question, path) -> `ReceiverAnswer (question.question_id, path)
+      | `Import import -> `ReceiverHosted import.import_id
+      | `QuestionCap (question, path) -> `ReceiverAnswer (question.question_id, path)
   end
 
   type target = (question * unit Lazy.t) option  (* question, finish *)
@@ -332,7 +326,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       method do_pipeline question i msg caps =
         match question with
         | Some (target_q, _) ->
-          let target = `ReceiverAnswer (target_q, i) in
+          let target = `QuestionCap (target_q, i) in
           send_call t target msg caps
         | None -> failwith "Not initialised!"
 
@@ -359,7 +353,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             begin match u.target with
               | None -> failwith "Not intialised!"
               | Some (target_q, _) ->
-                register t field (`ReceiverAnswer (target_q, path));        (* TODO: unregister *)
+                register t field (`QuestionCap (target_q, path));        (* TODO: unregister *)
             end
           | _ -> ()
         end;
@@ -469,11 +463,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
         begin match Imports.find t.imports id with
           | Some import ->
             import.import_count <- import.import_count + 1;
-            `ReceiverHosted import
+            `Import import
           | None ->
             let import = { import_count = 1; import_id = id; import_proxy = None } in
             Imports.set t.imports id import;
-            `ReceiverHosted import
+            `Import import
         end
       | `ReceiverHosted id ->
         let export = Exports.find_exn t.exports id in
@@ -501,10 +495,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
        cap for users. If the resulting cap is remote, our wrapper forwards it to Other.
        This will add a ref count to the cap if it already exists, or create a new
        one with [ref_count = 1]. *)
-    let from_cap_desc t (desc:[< recv_cap_with_embargo]) : Core_types.cap =
+    let from_cap_desc t (desc:recv_descr) : Core_types.cap =
       match desc with
       | `Local c -> c#inc_ref; c
-      | `ReceiverHosted import as message_target ->
+      | `Import import as message_target ->
         import_proxy import
           ~inc_ref:(fun c -> c#inc_ref)
           ~create:(fun () ->
@@ -527,7 +521,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
               cap
             )
       | `None -> Core_types.null
-      | `ReceiverAnswer _ -> failwith "TODO: from_cap_desc ReceiverAnswer"
+      | `QuestionCap _ -> failwith "TODO: from_cap_desc QuestionCap"
       | `ThirdPartyHosted _ -> failwith "TODO: from_cap_desc ThirdPartyHosted"
       | `LocalPromise (p, i) -> p#cap i
 
@@ -715,7 +709,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | Some (Ok payload) ->
         let cap = Core_types.Response_payload.field payload path in
         match unwrap t cap with
-        | Some (`ReceiverHosted _ | `ReceiverAnswer _ as target) -> reply_to_disembargo t target id
+        | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
         | None -> failwith "Protocol error: disembargo for invalid target"
 
   let handle_disembargo_reply t (target, embargo_id) =
