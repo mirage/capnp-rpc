@@ -10,7 +10,7 @@ module Make (C : S.CORE_TYPES) = struct
   let cycle_err fmt =
     "@[<v>Attempt to create a cycle detected:@," ^^ fmt ^^ "@]" |> Fmt.kstrf @@ fun msg ->
     Log.info (fun f -> f "%s" msg);
-    C.broken_struct (`Exception msg)
+    C.broken_struct (`Exception (Exception.v msg))
 
   class type struct_ref_internal = object
     inherit struct_resolver
@@ -18,6 +18,9 @@ module Make (C : S.CORE_TYPES) = struct
     method pipeline : Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
     method inc_ref : Wire.Path.t -> unit
     method dec_ref : Wire.Path.t -> unit
+
+    method field_when_resolved : Wire.Path.t -> (cap -> unit) -> unit
+    (* (can't use [when_resolved] because that checks the promise isn't finished) *)
   end
 
   module Field_map = Map.Make(Wire.Path)
@@ -103,6 +106,12 @@ module Make (C : S.CORE_TYPES) = struct
         match state with
         | ForwardingField c -> c#blocker
         | PromiseField (p, _) -> p#blocker
+
+      method when_more_resolved fn =
+        match state with
+        | ForwardingField c -> c#when_more_resolved fn
+        | PromiseField (p, i) -> p#field_when_resolved i fn
+
     end
 
   class virtual ['promise] t init = object (self : #struct_resolver)
@@ -225,6 +234,17 @@ module Make (C : S.CORE_TYPES) = struct
     method when_resolved fn =
       dispatch state
         ~cancelling_ok:false
+        ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)
+        ~forwarding:(fun x -> x#when_resolved fn)
+
+    method field_when_resolved i fn =
+      let fn : Response_payload.t or_error -> unit = function
+        | Error (`Exception e) -> fn (C.broken_cap e)
+        | Error `Cancelled -> fn (C.broken_cap Exception.cancelled)
+        | Ok payload -> fn (C.Response_payload.field_or_err payload i)
+      in
+      dispatch state
+        ~cancelling_ok:true
         ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)
         ~forwarding:(fun x -> x#when_resolved fn)
 

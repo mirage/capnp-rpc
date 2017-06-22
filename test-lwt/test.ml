@@ -27,7 +27,19 @@ let run_lwt fn () =
       Lwt.wakeup_exn async_waker ex
   in
   Lwt.async_exception_hook := handle_exn;
-  Lwt_main.run (Lwt_switch.with_switch (fun sw -> Lwt.pick [fn sw; async_ex]))
+  Lwt_main.run begin
+  Lwt_switch.with_switch (fun sw ->
+        let finished = ref false in
+        Lwt_switch.add_hook (Some sw) (fun () ->
+          if not !finished then handle_exn (Failure "Switch turned off early");
+          Lwt.return_unit
+        );
+        Lwt.pick [
+          async_ex;
+          fn sw >|= fun () -> finished := true;
+        ]
+      )
+  end
 
 let test_simple switch =
   let service = run_server ~switch ~service:(Echo.service ()) () in

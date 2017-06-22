@@ -1,6 +1,8 @@
 module RO_array = Capnp_rpc.RO_array
 module Test_utils = Testbed.Test_utils
 
+let three_vats = false
+
 let failf msg = Fmt.kstrf failwith msg
 
 let styles = [| `Red; `Green; `Blue |]
@@ -360,7 +362,7 @@ let test_service ~target:self_id vat =
   object (_ : Core_types.cap)
     inherit Core_types.service
 
-    method! pp f = Fmt.pf f "test-service %a" Direct.pp self_id
+    method! pp f = Fmt.pf f "test-service(rc=%d) %a" ref_count Direct.pp self_id
 
     method call msg caps =
       assert (ref_count > 0);
@@ -370,7 +372,8 @@ let test_service ~target:self_id vat =
           Direct.pp self_id
           Direct.pp target
           Direct.pp_struct answer;
-      assert (seq = counters.next_expected);
+      if seq <> counters.next_expected then
+        failf "Expecting message number %d, but got %d (target %a)" counters.next_expected seq Direct.pp target;
       counters.next_expected <- succ counters.next_expected;
       caps |> RO_array.iteri (fun i c ->
           let target = RO_array.get arg_ids i in
@@ -415,6 +418,16 @@ let do_create state () =
   Logs.info (fun f -> f ~tags:(tags state) "Created %t" ts#pp);
   DynArray.add state.caps (make_cap_ref ~target ts)
 
+let add_actions v conn ~target =
+  DynArray.add v.actions (fun () ->
+      Logs.info (fun f -> f ~tags:(tags v) "Expecting bootstrap reply to be target %a" Direct.pp target);
+      DynArray.add v.caps (make_cap_ref ~target @@ Endpoint.bootstrap conn)
+    );
+  DynArray.add v.actions (fun () ->
+      Logs.info (fun f -> f ~tags:(tags_for_id v.id) "Handle next message");
+      Endpoint.maybe_handle_msg conn
+    )
+
 let make_connection v1 v2 =
   let q1 = Queue.create () in
   let q2 = Queue.create () in
@@ -430,16 +443,6 @@ let make_connection v1 v2 =
   in
   let c = Endpoint.create ~tags:v1_tags q1 q2 ?bootstrap:(cap v1.bootstrap) in
   let s = Endpoint.create ~tags:v2_tags q2 q1 ?bootstrap:(cap v2.bootstrap) in
-  let add_actions v conn ~target =
-    DynArray.add v.actions (fun () ->
-        Logs.info (fun f -> f "Expecting bootstrap reply to be target %a" Direct.pp target);
-        DynArray.add v1.caps (make_cap_ref ~target @@ Endpoint.bootstrap conn)
-      );
-    DynArray.add v.actions (fun () ->
-        Logs.info (fun f -> f ~tags:(tags_for_id v.id) "Handle");
-        Endpoint.maybe_handle_msg conn
-      );
-  in
   add_actions v1 c ~target:(target v2.bootstrap);
   add_actions v2 s ~target:(target v1.bootstrap);
   v1.connections <- (v2.id, c) :: v1.connections;
@@ -477,12 +480,18 @@ let () =
 
   let v1 = make_vat () in
   let v2 = make_vat () in
-  let v3 = make_vat () in
-
-  let vats = [| v1; v2; v3|] in
 
   make_connection v1 v2;
-  make_connection v1 v3;
+
+  let vats =
+    if three_vats then (
+      let v3 = make_vat () in
+      make_connection v1 v3;
+      [| v1; v2; v3 |]
+    ) else (
+      [| v1; v2 |]
+    )
+  in
 
   try
     let rec loop () =

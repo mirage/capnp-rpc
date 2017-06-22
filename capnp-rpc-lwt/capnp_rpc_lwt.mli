@@ -102,7 +102,7 @@ module Service : sig
       If [fn ()] fails, the error is logged and an "Internal error" returned to the caller.
       Note that this does not support pipelining. *)
 
-  val fail : ('a, Format.formatter, unit, 'b StructRef.t) format4 -> 'a
+  val fail : ?ty:Capnp_rpc.Exception.ty -> ('a, Format.formatter, unit, 'b StructRef.t) format4 -> 'a
   (** [fail msg] is an exception with reason [msg]. *)
 end
 

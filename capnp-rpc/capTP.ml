@@ -3,12 +3,16 @@ open Asetmap
 module Log = Debug.Log
 module IntMap = Map.Make(struct type t = int let compare (a:int) b = compare a b end)
 
+let failf msg = Fmt.kstrf failwith msg
+
 let rec filter_map f = function
   | [] -> []
   | x :: xs ->
     match f x with
     | None -> filter_map f xs
     | Some y -> y :: filter_map f xs
+
+let dec_ref x = x#dec_ref
 
 module EmbargoId = Message_types.EmbargoId
 
@@ -58,7 +62,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
   type import = {
     import_id : ImportId.t;
     mutable import_count : int; (* Number of times remote sent us this *)
-    mutable import_proxy : Core_types.cap option;
+    mutable import_used : bool; (* We have send a message to this target *)
+    mutable import_proxy : [
+      | `Uninitialised
+      | `Settled of Core_types.cap
+      | `Unsettled of Cap_proxy.local_promise   (* Note: might be resolved to a settled value *)
+    ]
   }
 
   type message_target_cap = [
@@ -92,6 +101,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
     wrapper : (Core_types.cap, ExportId.t) Hashtbl.t;
   }
 
+  let get_import_proxy import =
+    match import.import_proxy with
+    | `Uninitialised -> assert false
+    | `Settled p -> p
+    | `Unsettled p -> (p :> Core_types.cap)
+
   let pp_question f q =
     Fmt.pf f "q%a" QuestionId.pp q.question_id
 
@@ -104,8 +119,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let dump_export f x =
     Fmt.pf f "%t" x.export_service#pp
 
-  let dump_import f _x =
-    Fmt.pf f "import"
+  let dump_import f x =
+    Fmt.pf f "%t" (get_import_proxy x)#pp
 
   let stats t =
     { Stats.
@@ -120,7 +135,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       queue_send;
       ours = Hashtbl.create 10;
       tags;
-      bootstrap;
+      bootstrap = (bootstrap :> Core_types.cap option);
       questions = Questions.make ();
       answers = Answers.make ();
       imports = Imports.make ();
@@ -142,7 +157,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | existing -> assert (y = existing)
 
   let unwrap t x =
-    try Some (Hashtbl.find t.ours x)
+    try Some (Hashtbl.find t.ours x#shortest)
     with Not_found -> None
 
   let to_cap_desc t (cap : Core_types.cap) =
@@ -150,16 +165,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
     match unwrap t cap with
     | None -> `Local cap
     | Some x -> (x :> [`Local of Core_types.cap | message_target_cap])
-
-  (* We've just converted [caps] to [con_caps] and transmitted them.
-     [dec_ref] each [cap], unless we need to keep it around so the peer can refer
-     to it later. *)
-  let release_remote_caps caps con_caps =
-    con_caps |> RO_array.iteri (fun i -> function
-        | `Import _
-        | `QuestionCap _ -> (RO_array.get caps i)#dec_ref
-        | `Local _ -> ()
-      )
 
   let pp_promise f = function
     | Some (q, _) -> pp_question f q
@@ -181,8 +186,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       question * Out.QuestionId.t * Out.message_target * Out.desc RO_array.t
 
     val return_results : t -> answer -> Wire.Response.t -> [< descr] RO_array.t -> Out.AnswerId.t * Out.return
-    val return_error : t -> answer -> string -> Out.AnswerId.t * Out.return
-    val return_cancelled : t -> answer -> Out.AnswerId.t * Out.return
+    val return_error : t -> answer -> Error.t -> Out.AnswerId.t * Out.return
 
     val release : t -> import -> Out.ImportId.t * int
     (** [release t i] indicates that [i] is no longer used by the client.
@@ -194,10 +198,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     val disembargo_reply : t -> message_target_cap -> Out.message_target
   end = struct
+
     (** [export t target] is a descriptor for [target], plus a list of exports that
         should be freed if we get a request to free all capabilities associated with
-        the request. *)
-    let export t : [< descr] -> Out.desc * ExportId.t list = function
+        the request.
+        TODO: do we need this? The [answer] record presumably holds the things we need. *)
+    let rec export : 'a. t -> ([< descr] as 'a) -> Out.desc * ExportId.t list = fun t -> function
       | `Import import ->
         (* Any ref-counting needed here? *)
         `ReceiverHosted import.import_id, []
@@ -205,19 +211,46 @@ module Make (EP : Message_types.ENDPOINT) = struct
         `ReceiverAnswer (question.question_id, i), []
       | `ThirdPartyHosted _ -> failwith "TODO: export ThirdPartyHosted"
       | `Local service ->
-        match Hashtbl.find t.wrapper service with
-        | id ->
-          let export = Exports.find_exn t.exports id in
-          export.export_count <- export.export_count + 1;
-          `SenderHosted id, [id]
-        | exception Not_found ->
-          let export = Exports.alloc t.exports (fun export_id ->
-              { export_count = 1; export_service = service; export_id }
-            )
-          in
-          let id = export.export_id in
-          Hashtbl.add t.wrapper service id;
-          `SenderHosted id, [id]
+        let service = service#shortest in
+        let settled = service#blocker = None in
+        let ex =
+          match Hashtbl.find t.wrapper service with
+          | id ->
+            let ex = Exports.find_exn t.exports id in
+            ex.export_count <- ex.export_count + 1;
+            ex
+          | exception Not_found ->
+            service#inc_ref;
+            let ex = Exports.alloc t.exports (fun export_id ->
+                { export_count = 1; export_service = service; export_id }
+              )
+            in
+            let id = ex.export_id in
+            Hashtbl.add t.wrapper service id;
+            if not settled then (
+              Log.info (fun f -> f ~tags:t.tags "Monitoring promise export %a -> %a" ExportId.pp ex.export_id dump_export ex);
+              service#when_more_resolved (fun x ->
+                  if ex.export_count > 0 then (
+                    (* TODO: resolves to broken? *)
+                    let new_export, _ = export t (to_cap_desc t x) in
+                    Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending notification to use %a"
+                                 ExportId.pp ex.export_id
+                                 x#pp
+                                 Out.pp_desc new_export
+                             );
+                    t.queue_send (`Resolve (ex.export_id, Ok new_export));
+                    x#dec_ref
+                  ) (* else: no longer an export *)
+                );
+            );
+            ex
+        in
+        let id = ex.export_id in
+        let descr =
+          if settled then `SenderHosted id
+          else `SenderPromise id
+        in
+        descr, [id]
 
     let bootstrap t question_data =
       let question =
@@ -241,7 +274,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       in
       let target =
         match target with
-        | `Import import -> `ReceiverHosted import.import_id
+        | `Import import ->
+          import.import_used <- true;
+          `ReceiverHosted import.import_id
         | `QuestionCap (question, i) ->
           question.question_pipelined_fields <- PathSet.add i question.question_pipelined_fields;
           `ReceiverAnswer (question.question_id, i)
@@ -264,11 +299,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       in
       answer.answer_id, result
 
-    let return_error _t answer msg =
-      answer.answer_id, `Exception msg
-
-    let return_cancelled _t answer =
-      answer.answer_id, `Cancelled
+    let return_error _t answer err =
+      answer.answer_id, (err : Error.t :> Out.return)
 
     let release t import =
       Imports.release t.imports import.import_id;
@@ -291,6 +323,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   type target = (question * unit Lazy.t) option  (* question, finish *)
 
+  (* Note: takes ownership of [caps] *)
   let rec send_call t target msg caps =
     let result = make_remote_promise t in
     let con_caps = RO_array.map (to_cap_desc t) caps in
@@ -300,7 +333,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                  Core_types.Request_payload.pp (msg, caps));
     result#set_question question;
     t.queue_send (`Call (qid, message_target, msg, descs));
-    release_remote_caps caps con_caps;
+    RO_array.iter dec_ref caps;
     (result :> Core_types.struct_ref)
 
   (* A cap that sends to a promised answer's cap at other *)
@@ -381,15 +414,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
         let aid, ret = Send.return_results t answer msg con_caps in
         Log.info (fun f -> f ~tags:(tags ~aid t) "Returning results: %a"
                      Core_types.Response_payload.pp (msg, caps));
-        release_remote_caps caps con_caps;
+        RO_array.iter dec_ref caps;
+        Log.info (fun f -> f ~tags:(tags ~aid t) "Wire results: %a" Out.pp_return ret);
         aid, ret
-      | Some (Error (`Exception msg)) ->
-        let aid, ret = Send.return_error t answer msg in
-        Log.info (fun f -> f ~tags:(tags ~aid t) "Returning error: %s" msg);
-        aid, ret
-      | Some (Error `Cancelled) ->
-        let aid, ret = Send.return_cancelled t answer in
-        Log.info (fun f -> f ~tags:(tags ~aid t) "Returning cancelled");
+      | Some (Error err) ->
+        let aid, ret = Send.return_error t answer err in
+        Log.info (fun f -> f ~tags:(tags ~aid t) "Returning error: %a" Error.pp err);
         aid, ret
     in
     t.queue_send (`Return (aid, ret))
@@ -402,7 +432,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           service#inc_ref;
           promise#resolve (Ok (Wire.Response.bootstrap, RO_array.of_list [service]));
         | None ->
-          promise#resolve (Error (`Exception "No bootstrap service available"));
+          promise#resolve (Error (Error.exn "No bootstrap service available"));
       end;
       return_results t answer
     | `Call (answer, target, msg, caps) ->
@@ -425,18 +455,16 @@ module Make (EP : Message_types.ENDPOINT) = struct
       answer * Core_types.cap * Core_types.cap RO_array.t
     val bootstrap : t -> In.QuestionId.t -> answer:struct_resolver -> answer
     val return_results : t -> In.AnswerId.t -> releaseParamCaps:bool -> Wire.Response.t -> In.desc RO_array.t -> struct_resolver * Core_types.cap RO_array.t
-    val return_cancelled : t -> In.AnswerId.t -> releaseParamCaps:bool -> struct_resolver
-    val return_exception : t -> In.AnswerId.t -> releaseParamCaps:bool -> struct_resolver
+    val return_error : t -> In.AnswerId.t -> releaseParamCaps:bool -> struct_resolver
 
     val finish : t -> In.QuestionId.t -> releaseResultCaps:bool -> struct_resolver
     (* Returns the answer promise so that its caps can be released. *)
 
     val release : t -> In.ImportId.t -> referenceCount:int -> unit
-    val disembargo_request : t -> In.disembargo_request ->
-      [ `ReturnToSender of (struct_resolver * Wire.Path.t) * Message_types.EmbargoId.t]
+    val disembargo_request : t -> In.disembargo_request -> unit
     val disembargo_reply : t -> In.message_target -> Message_types.EmbargoId.t -> Cap_proxy.embargo_cap
+    val resolve : t -> In.ExportId.t -> (In.desc, Exception.t) result -> unit
 (*
-    val resolve : t -> In.ExportId.t -> [`Cap of In.desc | `Exception] -> unit
     val provide : t -> In.QuestionId.t -> In.message_target -> recipient_id -> unit
     val accept : t -> In.QuestionId.t -> provision_id -> embargo:bool -> unit
     val join : t -> In.QuestionId.t -> In.message_target -> join_key_part -> unit
@@ -446,74 +474,125 @@ module Make (EP : Message_types.ENDPOINT) = struct
       x#inc_ref;
       x
 
-    let get_import_proxy t import =
+    let set_import_proxy t ~settled import =
       let message_target = `Import import in
-      match import.import_proxy with
-      | Some p -> with_inc_ref p
+      let cap =
+        object (self : #Core_types.cap)
+          inherit Core_types.ref_counted
+
+          method call msg caps = send_call t message_target msg caps
+
+          method pp f =
+            if settled then
+              Fmt.pf f "far-ref(rc=%d) -> %a" ref_count pp_cap message_target
+            else
+              Fmt.pf f "remote-promise(rc=%d) -> %a" ref_count pp_cap message_target
+
+          method private release =
+            Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
+            let id, count = Send.release t import in
+            t.queue_send (`Release (id, count))
+
+          method shortest = self
+
+          method blocker =
+            if settled then None
+            else Some (self :> Core_types.base_ref)
+
+          method when_more_resolved _ =
+            assert settled      (* Otherwise, our switchable should have intercepted this *)
+        end
+      in
+      register t cap message_target;
+      if settled then
+        import.import_proxy <- `Settled cap
+      else
+        import.import_proxy <- `Unsettled (new Cap_proxy.switchable cap)
+
+    let import_sender t ~mark_dirty ~settled id =
+      match Imports.find t.imports id with
+      | Some import ->
+        import.import_count <- import.import_count + 1;
+        if mark_dirty then import.import_used <- true;
+        let proxy = get_import_proxy import in
+        proxy#inc_ref;
+        proxy
       | None ->
-        let cap =
-          object (self : #Core_types.cap)
-            inherit Core_types.ref_counted
+        let import = { import_count = 1; import_id = id; import_proxy = `Uninitialised; import_used = mark_dirty } in
+        Imports.set t.imports id import;
+        set_import_proxy t ~settled import;
+        get_import_proxy import
 
-            method call msg caps = send_call t message_target msg caps
-            method pp f = Fmt.pf f "far-ref(rc=%d) -> %a" ref_count pp_cap message_target
-            method private release =
-              Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
-              let id, count = Send.release t import in
-              t.queue_send (`Release (id, count))
+    (* Create an embargo proxy for [x] and send a disembargo for it down [old_path]. *)
+    let local_embargo t ~old_path x =
+      let embargo = Cap_proxy.embargo x in
+      let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
+      let disembargo_request = `Loopback (old_path, embargo_id) in
+      x#inc_ref;
+      Log.info (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
+                   x#pp
+                   EP.Out.pp_disembargo_request disembargo_request
+               );
+      (* We previously pipelined messages to [old_path], which now turns out to be
+         local service [x]. We need to send a disembargo to clear the pipeline before
+         using [x]. *)
+      disembargo t disembargo_request;
+      (embargo :> Core_types.cap)
 
-            method shortest = self
-            method blocker = None   (* Can't detect cycles over the network *)
-          end
-        in
-        register t cap message_target;
-        import.import_proxy <- Some cap;
-        cap
+    let maybe_embargo t ~old_path x =
+      match old_path with
+      | None -> x
+      | Some old_path -> local_embargo t ~old_path x
 
     (* Turn a connection-scoped cap reference received from our peer into a general-purpose
-       cap for users. The caller owns the new reference and should [dec_ref] it when done. *)
-    let import t ~maybe_embargo : In.desc -> Core_types.cap = function
+       cap for users. The caller owns the new reference and should [dec_ref] it when done.
+       If [embargo_path] is passed then we have already pipelined messages over this cap, and
+       may therefore need to embargo it (sending the disembargo via the old [embargo_path]).
+    *)
+    let import t ?embargo_path : In.desc -> Core_types.cap = function
+      | `SenderPromise id ->
+        import_sender t id ~settled:false ~mark_dirty:(embargo_path <> None)
       | `SenderHosted id ->
-        (* Spec says this is "newly exported", so how does the remote indicate an existing, settled export? *)
-        begin match Imports.find t.imports id with
-          | Some import ->
-            import.import_count <- import.import_count + 1;
-            get_import_proxy t import
-          | None ->
-            let import = { import_count = 1; import_id = id; import_proxy = None } in
-            Imports.set t.imports id import;
-            get_import_proxy t import
-        end
+        (* Spec says this is "newly exported", so how does the remote indicate an existing, settled export?
+           We don't have to worry about embargoes here because anything we've already send to the peer will
+           arrive before anything we send in the future, and it can't change. *)
+        import_sender t id ~settled:true ~mark_dirty:false
       | `ReceiverHosted id ->
         let export = Exports.find_exn t.exports id in
-        maybe_embargo export.export_service |> with_inc_ref
+        (* The sender's best guess at the time of sending was that we hosted the target.
+           However, we may have since resolved it to point elsewhere. We only send one
+           Resolve per export, so the cases are:
+           - We didn't send a Resolve yet -> send a local embargo
+           - We did send a Resolve -> find out what we said the new target was TODO
+         *)
+        maybe_embargo t ~old_path:embargo_path export.export_service |> with_inc_ref
       | `ReceiverAnswer (id, path) ->
-        let answer = Answers.find_exn t.answers id in
-        maybe_embargo (answer.answer_promise#cap path) |> with_inc_ref
+        let answer = (Answers.find_exn t.answers id).answer_promise in
+        begin match answer#response with
+          | None ->
+            (* We don't know the answer, so we can't have replied yet.
+               We can send a disembargo request now and the peer will get it before
+               any answer and return it to us. *)
+            maybe_embargo t ~old_path:embargo_path (answer#cap path) |> with_inc_ref
+          | Some (Error _) -> answer#cap path (* No need to embargo errors *)
+          | Some (Ok payload) ->
+            (* We've already replied to this question. Decide what to do about embargoes.
+               The cases are:
+               - The field is hosted here. Treat as for ReceiverHosted. TODO
+               - The field we want isn't in the payload. We can't embargo, because
+                 the peer has no way to return the response, but we don't need to for errors.
+               - The field is hosted at the peer. No need to embargo; any messages pipelined to it
+                 will be delivered before anything we send in the future. TODO
+               - The field is hosted elsewhere (level 3 only). TODO
+            *)
+            match Core_types.Response_payload.field payload path with
+            | Ok cap -> maybe_embargo t ~old_path:embargo_path cap |> with_inc_ref
+            | Error (`Invalid_index _) -> answer#cap path (* Don't embargo errors *)
+        end
       | `None -> Core_types.null
-      | `SenderPromise _ | `ThirdPartyHosted _ -> failwith "TODO: import"
-
-    let no_embargos_needed = fun x -> x
+      | `ThirdPartyHosted _ -> failwith "TODO: import"
 
     (* Embargo [x] if [cap_index] is in [caps_used], sending the disembargo request via [qid]. *)
-    let embargo_if_used t ~qid ~cap_index ~caps_used x =
-      match IntMap.find cap_index caps_used with
-        | None -> x        (* Not used, so no embargo needed *)
-        | Some path ->
-          let embargo = Cap_proxy.embargo x in
-          let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
-          let disembargo_request = `Loopback ((qid, path), embargo_id) in
-          x#inc_ref;
-          Log.info (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
-                       x#pp
-                       EP.Out.pp_disembargo_request disembargo_request
-                   );
-          (* We previously pipelined messages to [qid, index], which now turns out to be
-             local service [x]. We need to send a disembargo to clear the pipeline before
-             using [x]. *)
-          disembargo t disembargo_request;
-          (embargo :> Core_types.cap)
-
     let call t id (message_target : In.message_target) ~allowThirdPartyTailCall descrs sendResultsTo ~answer =
       ignore allowThirdPartyTailCall; (* TODO *)
       ignore sendResultsTo; (* TODO *)
@@ -533,7 +612,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           let answer = Answers.find_exn t.answers id in
           answer.answer_promise#cap path
       in
-      let caps = RO_array.map (import t ~maybe_embargo:no_embargos_needed) descrs in
+      let caps = RO_array.map (import t) descrs in
       answer, target, caps
 
     let bootstrap t id ~answer =
@@ -556,11 +635,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       maybe_release_question t question;
       question
 
-    let return_cancelled t id ~releaseParamCaps =
-      let question = return_generic t id ~releaseParamCaps in
-      question.question_data
-
-    let return_exception t id ~releaseParamCaps =
+    let return_error t id ~releaseParamCaps =
       let question = return_generic t id ~releaseParamCaps in
       question.question_data
 
@@ -576,7 +651,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
         |> IntMap.of_list
       in
       let import_with_embargoes cap_index d =
-        import t d ~maybe_embargo:(embargo_if_used t ~qid ~cap_index ~caps_used)
+        let embargo_path =
+          match IntMap.find cap_index caps_used with
+          | None -> None
+          | Some path -> Some (`ReceiverAnswer (qid, path))
+        in
+        import t d ?embargo_path
       in
       let caps = RO_array.mapi import_with_embargoes descrs in
       question.question_data, caps
@@ -590,7 +670,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       if count = 0 then (
         Log.info (fun f -> f ~tags:t.tags "Releasing export %a" ExportId.pp export_id);
         Hashtbl.remove t.wrapper export.export_service;
-        Exports.release t.exports export_id
+        Exports.release t.exports export_id;
+        export.export_service#dec_ref
       )
 
     let finish t answer_id ~releaseResultCaps =
@@ -606,22 +687,61 @@ module Make (EP : Message_types.ENDPOINT) = struct
       );
       answer.answer_promise
 
-    let disembargo_request t : In.disembargo_request -> _ = function
-      | `Loopback ((aid, i), id) ->
-        let answer = Answers.find_exn t.answers aid in
-        (* Check that [answer:i] points back at sender. *)
-        (* TODO: move the struct_ref logic here so we can do the check here? *)
-        `ReturnToSender ((answer.answer_promise, i), id)
+    let disembargo_request t = function
+      | `Loopback (old_path, id) ->
+        let cap =
+          match old_path with
+          | `ReceiverHosted eid -> (Exports.find_exn t.exports eid).export_service
+          | `ReceiverAnswer (aid, path) ->
+            let answer = Answers.find_exn t.answers aid in
+            let answer_promise = answer.answer_promise in
+            begin match answer_promise#response with
+              | None -> failwith "Got disembargo for unresolved promise!"
+              | Some (Error _) -> failwith "Got disembargo for exception!"
+              | Some (Ok payload) ->
+                match Core_types.Response_payload.field payload path with
+                | Ok cap -> cap
+                | Error (`Invalid_index i) ->
+                  (* The peer must have sent the answer before the disembargo request. *)
+                  failf "Protocol error: peer asked to disembargo a capability index (%d) knew didn't exist" i
+            end
+        in
+        (* Check that [cap] points back at sender. *)
+        match unwrap t cap with
+        | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
+        | None -> failf "Protocol error: disembargo for invalid target %t" cap#pp
 
     let disembargo_reply t _target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
       Embargoes.release t.embargoes embargo_id;
       embargo
 
+    let resolve t import_id new_target =
+      let new_target ~embargo_path =
+        match new_target with
+        | Error e -> Core_types.broken_cap e
+        | Ok desc -> import t desc ?embargo_path
+      in
+      match Imports.find t.imports import_id with
+      | None ->
+        let new_target = new_target ~embargo_path:None in
+        Log.info (fun f -> f ~tags:t.tags "Import %a no longer used - releasing new resolve target %t"
+                     ImportId.pp import_id new_target#pp);
+        new_target#dec_ref
+      | Some im ->
+        let new_target =
+          if im.import_used
+          then new_target ~embargo_path:(Some (`ReceiverHosted import_id))
+          else new_target ~embargo_path:None
+        in
+        match im.import_proxy with
+        | `Uninitialised -> assert false
+        | `Settled x -> failf "Got a Resolve (to %t) for settled import %t!" new_target#pp x#pp
+        | `Unsettled x ->
+          (* This will also dec_ref the old remote-promise, releasing the import. *)
+          x#resolve new_target
+
 (* TODO:
-    let resolve _t _export_id = function
-      | `Cap _desc -> ()
-      | `Exception -> ()
     let provide _t _question_id _message_target _recipient_id = ()
     let accept _t _question_id _provision_id ~embargo:_ = ()
     let join _t _question_id _message_target _join_key_part = ()
@@ -643,19 +763,18 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let handle_return t (qid, ret) =
     match ret with
     | `Results (msg, descs) ->
+      Log.info (fun f -> f ~tags:(tags ~qid t) "Received return results: %a"
+                   (RO_array.pp In.pp_desc) descs
+               );
       let result, caps = Input.return_results t qid msg descs ~releaseParamCaps:false in
       Log.info (fun f -> f ~tags:(tags ~qid t) "Got results: %a"
                    Core_types.Response_payload.pp (msg, caps)
                );
       result#resolve (Ok (msg, caps))
-    | `Exception msg ->
-      let result = Input.return_exception t qid ~releaseParamCaps:false in
-      Log.info (fun f -> f ~tags:(tags ~qid t) "Got exception: %s" msg);
-      result#resolve (Error (`Exception msg))
-    | `Cancelled ->
-      let result = Input.return_cancelled t qid ~releaseParamCaps:false in
-      Log.info (fun f -> f ~tags:(tags ~qid t) "Got cancelled");
-      result#resolve (Error `Cancelled)
+    | #Error.t as err ->
+      let result = Input.return_error t qid ~releaseParamCaps:false in
+      Log.info (fun f -> f ~tags:(tags ~qid t) "Got error: %a" Error.pp err);
+      result#resolve (Error err)
     | _ -> failwith "TODO: other return"
 
   let handle_finish t (aid, releaseResultCaps) =
@@ -665,16 +784,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   let handle_disembargo_request t request =
     Log.info (fun f -> f ~tags:t.tags "Received disembargo %a" EP.In.pp_disembargo_request request);
-    match Input.disembargo_request t request with
-    | `ReturnToSender ((answer_promise, path), id) ->
-      match answer_promise#response with
-      | None -> failwith "Got disembargo for unresolved promise!"
-      | Some (Error _) -> failwith "Got disembargo for exception!"
-      | Some (Ok payload) ->
-        let cap = Core_types.Response_payload.field payload path in
-        match unwrap t cap with
-        | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
-        | None -> failwith "Protocol error: disembargo for invalid target"
+    Input.disembargo_request t request
 
   let handle_disembargo_reply t (target, embargo_id) =
     let embargo = Input.disembargo_reply t target embargo_id in
@@ -686,7 +796,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let handle_release t (id, referenceCount) =
     Input.release t id ~referenceCount
 
-  let handle_msg t = function
+  let handle_resolve t (id, new_target) =
+    Log.info (fun f -> f ~tags:t.tags "Received resolve of import %a to %a"
+                 ImportId.pp id
+                 (Fmt.result ~ok:In.pp_desc ~error:Exception.pp) new_target
+             );
+    Input.resolve t id new_target
+
+  let handle_msg t : EP.In.t -> unit = function
     | `Bootstrap x          -> handle_bootstrap t x
     | `Call x               -> handle_call t x
     | `Return x             -> handle_return t x
@@ -694,16 +811,17 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Release x            -> handle_release t x
     | `Disembargo_request x -> handle_disembargo_request t x
     | `Disembargo_reply x   -> handle_disembargo_reply t x
+    | `Resolve x            -> handle_resolve t x
 
   let dump_embargo f (id, proxy) =
     Fmt.pf f "%a: @[%t@]" EmbargoId.pp id proxy#pp
 
   let dump f t =
-    Fmt.pf f "@[<2>Questions:@,%a@]@,\
-              @[<2>Answers:@,%a@]@,\
-              @[<2>Exports:@,%a@]@,\
-              @[<2>Imports:@,%a@]@,\
-              @[<2>Embargoes:@,%a@]"
+    Fmt.pf f "@[<v2>Questions:@,%a@]@,\
+              @[<v2>Answers:@,%a@]@,\
+              @[<v2>Exports:@,%a@]@,\
+              @[<v2>Imports:@,%a@]@,\
+              @[<v2>Embargoes:@,%a@]"
       (Questions.dump dump_question) t.questions
       (Answers.dump dump_answer) t.answers
       (Exports.dump dump_export) t.exports

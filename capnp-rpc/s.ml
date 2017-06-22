@@ -104,6 +104,14 @@ module type CORE_TYPES = sig
       method shortest : cap
       (** [c#shortest] is the shortest known path to [cap]. i.e. if [c] is forwarding to another cap, we
           return that, recursively. *)
+
+      method when_more_resolved : (cap -> unit) -> unit
+      (** [c#when_more_resolved fn] calls [fn x] when this cap becomes more resolved.
+          [fn c] gets a reference to [c] and needs to [dec_ref] it.
+          Note that the new capability can be another promise.
+          If [c] is already resolved to a value, this does nothing.
+          If [c] is forwarding to another cap, it will forward this call. *)
+          
     end
   (** A capability reference to an object that can handle calls.
       We might not yet know its final location, but we may be able
@@ -113,8 +121,9 @@ module type CORE_TYPES = sig
     type t = Wire.Request.t * cap RO_array.t
     (** The payload of a request or response message. *)
 
-    val field : t -> Wire.Path.t -> cap
-    (** [field t path] looks up [path] in the message and returns the capability at that index. *)
+    val field : t -> Wire.Path.t -> (cap, [`Invalid_index of int]) result
+    (** [field t path] looks up [path] in the message and returns the capability at that index.
+        Returns [Ok null] if the field wasn't set. *)
 
     val pp : t Fmt.t
   end
@@ -123,8 +132,12 @@ module type CORE_TYPES = sig
     type t = Wire.Response.t * cap RO_array.t
     (** The payload of a request or response message. *)
 
-    val field : t -> Wire.Path.t -> cap
-    (** [field t path] looks up [path] in the message and returns the capability at that index. *)
+    val field : t -> Wire.Path.t -> (cap, [`Invalid_index of int]) result
+    (** [field t path] looks up [path] in the message and returns the capability at that index.
+        Returns [Ok null] if the field wasn't set. *)
+
+    val field_or_err : t -> Wire.Path.t -> cap
+    (** Like [field], but returns a broken cap on error. *)
 
     val pp : t Fmt.t
   end
@@ -157,6 +170,7 @@ module type CORE_TYPES = sig
     method virtual call : Wire.Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
     method shortest : cap
     method private release : unit
+    method when_more_resolved : (cap -> unit) -> unit
   end
   (** A convenience base class for creating local services.
       The capability is always resolved, and the default [release] method does nothing. *)
@@ -168,11 +182,11 @@ module type CORE_TYPES = sig
   val return : Response_payload.t -> struct_ref
   (** [return x] is a resolved [struct_ref] with successful resolution [x]. *)
 
-  val fail : ('a, Format.formatter, unit, struct_ref) format4 -> 'a
+  val fail : ?ty:Exception.ty -> ('a, Format.formatter, unit, struct_ref) format4 -> 'a
   (** [fail fmt] is a [struct_ref] that is broken with the given capnp exception message. *)
 
-  val broken_cap : string -> cap
-  (** [broken_cap msg] is a [cap] that is broken with the given message. *)
+  val broken_cap : Exception.t -> cap
+  (** [broken_cap ex] is a [cap] that is broken with the given exception. *)
 
   val broken_struct : Error.t -> struct_ref
   (** [broken_struct err] is a [struct_ref] that is broken with the given error. *)

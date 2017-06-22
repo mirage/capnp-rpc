@@ -1,8 +1,12 @@
 type t = [
-  | `Exception of string
+  | `Exception of Exception.t
   | `Cancelled
 ]
 
 let pp f = function
-  | `Exception msg -> Fmt.pf f "exn:%s" msg
+  | `Exception ex -> Exception.pp f ex
   | `Cancelled -> Fmt.pf f "cancelled"
+
+let exn ?ty msg =
+  msg |> Fmt.kstrf @@ fun reason ->
+  `Exception (Exception.v ?ty reason)
