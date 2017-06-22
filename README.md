@@ -1,6 +1,6 @@
 ## OCaml Cap'n'Proto RPC library
 
-Status: **experimental** and **unfinished**
+Status: RPC Level 1 with two-party networking is now usable.
 
 Copyright 2017 Docker, Inc.
 Released under the [Apache 2.0 license](LICENSE).
@@ -28,7 +28,20 @@ This library should be used with the [capnp-ocaml][] schema compiler, which gene
 Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces> branch, which adds support for compiling interface definitions.
 
 
-This library is new and unfinished. Check the issues page for some of the known bugs.
+### Status
+
+This library is new and unfinished, but it is usable.
+It has been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
+
+Currently, level 1 support is mostly complete, though some optimisations are missing.
+In particular, the `Resolve` message is not yet implemented.
+Check the issues page for some of the known bugs.
+
+The library does not currently provide support for establishing new network connections or for any kind of crypto.
+Instead, the user of the library is responsible for creating a secure channel to the target service and then giving it to the library.
+For example, a channel could be a local Unix-domain socket (created with `socketpair`) or a TCP connection with a TLS wrapper.
+
+Level 3 support is not implemented yet, so if host Alice has connections to hosts Bob and Carol and passes an object hosted at Bob to Carol, the resulting messages between Carol and Bob will be routed via Alice.
 
 
 ### Quick start
