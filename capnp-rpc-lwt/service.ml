@@ -64,3 +64,5 @@ let return_lwt fn =
         );
     );
   (result :> Core_types.struct_ref)
+
+let fail = Core_types.fail
