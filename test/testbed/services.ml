@@ -23,6 +23,20 @@ let manual () = object
 
   method pop = Queue.pop queue  (* Caller takes ownership of caps *)
 
+  (* Expect a message with no caps *)
+  method pop0 msg =
+    let actual, args, answer = Queue.pop queue in
+    Alcotest.(check string) ("Expecting " ^ msg) msg actual;
+    Alcotest.(check int) "Has no args" 0 @@ RO_array.length args;
+    answer
+
+  (* Expect a message with one cap *)
+  method pop1 msg =
+    let actual, args, answer = Queue.pop queue in
+    Alcotest.(check string) ("Expecting " ^ msg) msg actual;
+    Alcotest.(check int) "Has one arg" 1 @@ RO_array.length args;
+    RO_array.get args 0, answer
+
   method! pp f = Fmt.string f "manual"
 end
 

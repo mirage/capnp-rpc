@@ -352,7 +352,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | None -> failwith "Not initialised!"
 
       method! pp f =
-        Fmt.pf f "remote-promise -> %a" (Struct_proxy.pp_state ~pp_promise) state
+        Fmt.pf f "remote-promise(%a) -> %a" Debug.OID.pp id (Struct_proxy.pp_state ~pp_promise) state
 
       method set_question q =
         let finish = lazy (
@@ -478,7 +478,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
         object (self : #Core_types.cap)
           inherit Core_types.ref_counted
 
-          method call msg caps = send_call t message_target msg caps
+          method call msg caps =
+            if ref_count < 1 then Debug.failf "%t already released!" self#pp;
+            send_call t message_target msg caps
 
           method pp f =
             if settled then

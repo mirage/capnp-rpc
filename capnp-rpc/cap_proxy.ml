@@ -23,7 +23,10 @@ module Make(C : S.CORE_TYPES) = struct
   class local_promise =
     object (self : #cap)
       inherit ref_counted as super
+
       val mutable state = Unresolved (Queue.create (), false)
+
+      val id = Debug.OID.next ()
 
       method call msg caps =
         match state with
@@ -90,8 +93,8 @@ module Make(C : S.CORE_TYPES) = struct
 
       method pp f =
         match state with
-        | Unresolved _ -> Fmt.pf f "local-cap-promise(rc=%d) -> (unresolved)" ref_count
-        | Resolved cap -> Fmt.pf f "local-cap-promise(rc=%d) -> %t" ref_count cap#pp
+        | Unresolved _ -> Fmt.pf f "local-cap-promise(%a, rc=%d) -> (unresolved)" Debug.OID.pp id ref_count
+        | Resolved cap -> Fmt.pf f "local-cap-promise(%a, rc=%d) -> %t" Debug.OID.pp id ref_count cap#pp
 
       method! check_invariants =
         super#check_invariants;
@@ -110,8 +113,8 @@ module Make(C : S.CORE_TYPES) = struct
 
         method! pp f =
           match state with
-          | Unresolved _ -> Fmt.pf f "embargoed -> %t" underlying#pp
-          | Resolved cap -> Fmt.pf f "disembargoed -> %t" cap#pp
+          | Unresolved _ -> Fmt.pf f "embargoed(%a, rc=%d) -> %t" Debug.OID.pp id ref_count underlying#pp
+          | Resolved cap -> Fmt.pf f "disembargoed(%a, rc=%d) -> %t" Debug.OID.pp id ref_count cap#pp
       end
     in
     (cap :> embargo_cap)

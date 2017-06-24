@@ -16,6 +16,10 @@ let cap : Core_types.cap Alcotest.testable = Alcotest.of_pp pp_cap
 let ro_array x = Alcotest.testable (RO_array.pp (Alcotest.pp x)) (RO_array.equal (Alcotest.equal x))
 let response_promise = Alcotest.(option (result (pair string (ro_array cap)) error))
 
+let resolve_ok (ans:#Core_types.struct_resolver) msg caps =
+  let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
+  ans#resolve (Ok (msg, RO_array.of_list caps))
+
 let test_simple_connection () =
   let open CS in
   let c, s = create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
@@ -41,6 +45,7 @@ let init_pair ~bootstrap_service =
   c, s, bs
 
 let call target msg caps =
+  let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
   List.iter (fun c -> c#inc_ref) caps;
   target#call msg (RO_array.of_list caps)
 
@@ -126,7 +131,7 @@ let test_local_embargo_2 () =
   let c, s, bs = init_pair ~bootstrap_service:(cap server_main) in
   let local = Services.logger () in
   let local_reg = Services.manual () in    (* A registry that provides access to [local]. *)
-  let q1 = call bs "q1" [cap local_reg] in (* Give the server our registry and get back [local]. *)
+  let q1 = call bs "q1" [local_reg] in (* Give the server our registry and get back [local]. *)
   let service = q1#cap 0 in                (* Service is a promise for local *)
   q1#finish;
   let _ = service#call "Message-1" empty in             (* First message to service *)
@@ -148,7 +153,7 @@ let test_local_embargo_2 () =
   (* The client now knows that [a1/0] is a local promise, but it can't use it directly yet because
      of the pipelined messages. It sends a disembargo request down the old [q1/0] path and waits for
      it to arrive back at the local promise. *)
-  a2#resolve (Ok ("a2", RO_array.of_list [cap local]));
+  resolve_ok a2 "a2" [local];
   (* Message-2 must be embargoed so that it arrives after Message-1. *)
   let _ = service#call "Message-2" empty in
   S.handle_msg s ~expect:"call:Message-1";
@@ -170,12 +175,12 @@ let test_local_embargo_3 () =
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
   let local = Services.logger () in
-  let q1 = call bs "q1" [cap local] in
+  let q1 = call bs "q1" [local] in
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_logger = RO_array.get q1_args 0 in
   let promise = new Proxy.local_promise in
-  a1#resolve (Ok ("a1", RO_array.of_list [cap promise]));
+  resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   let service = q1#cap 0 in
   let _ = service#call "Message-1" empty in
@@ -204,7 +209,7 @@ let test_local_embargo_4 () =
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
   let local = Services.echo_service () in
-  let q1 = call bs "q1" [cap local] in
+  let q1 = call bs "q1" [local] in
   let broken = q1#cap 0 in
   let _ = call broken "pipeline" [] in
   S.handle_msg s ~expect:"call:q1";
@@ -237,14 +242,14 @@ let test_local_embargo_5 () =
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
   let local = Services.logger () in
-  let q1 = call bs "q1" [cap local] in
+  let q1 = call bs "q1" [local] in
   let test = q1#cap 0 in
   let _ = call test "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_local = RO_array.get q1_args 0 in
   let server_promise = new Proxy.local_promise in
-  a1#resolve (Ok ("a1", RO_array.of_list [cap server_promise]));
+  resolve_ok a1 "a1" [server_promise];
   C.handle_msg c ~expect:"return:a1";
   (* [test] is now known to be at [service]; no embargo needed.
      The server now resolves it to a client service. *)
@@ -373,13 +378,13 @@ let test_resolve () =
   let client_logger = Services.logger () in
   let c, s, proxy_to_service = init_pair ~bootstrap_service:service in
   (* The client makes a call and gets a reply, but the reply contains a promise. *)
-  let q1 = call proxy_to_service "q1" [cap client_logger] in
+  let q1 = call proxy_to_service "q1" [client_logger] in
   proxy_to_service#dec_ref;
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_logger = RO_array.get q1_args 0 in
   let promise = new Proxy.local_promise in
-  a1#resolve (Ok ("a1", RO_array.of_list [cap promise]));
+  resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   (* The server now resolves the promise *)
   promise#resolve proxy_to_logger;
@@ -401,13 +406,13 @@ let test_resolve_2 () =
   let client_logger = Services.logger () in
   let c, s, proxy_to_service = init_pair ~bootstrap_service:service in
   (* The client makes a call and gets a reply, but the reply contains a promise. *)
-  let q1 = call proxy_to_service "q1" [cap client_logger] in
+  let q1 = call proxy_to_service "q1" [client_logger] in
   proxy_to_service#dec_ref;
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_logger = RO_array.get q1_args 0 in
   let promise = new Proxy.local_promise in
-  a1#resolve (Ok ("a1", RO_array.of_list [cap promise]));
+  resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   (* The client doesn't care about the result and releases it *)
   q1#finish;
@@ -428,7 +433,7 @@ let test_resolve_3 () =
   S.handle_msg s ~expect:"call:q1";
   let (_, _q1_args, a1) = service#pop in
   let a1_promise = new Proxy.local_promise in
-  a1#resolve (Ok ("a1", RO_array.of_list [cap a1_promise]));
+  resolve_ok a1 "a1" [a1_promise];
   C.handle_msg c ~expect:"return:a1";
   q1#finish;
   S.handle_msg s ~expect:"finish";
@@ -440,7 +445,7 @@ let test_resolve_3 () =
   let (_, _q2_args, a2) = service#pop in
   let echo = Services.echo_service () in
   echo#inc_ref;
-  a2#resolve (Ok ("a2", RO_array.of_list [cap echo]));
+  resolve_ok a2 "a2" [echo];
   C.handle_msg c ~expect:"return:a2";
   (* Service now resolves first answer *)
   a1_promise#resolve echo;

@@ -18,3 +18,19 @@ let () =
   Printexc.register_printer @@ function
   | Invariant_broken pp -> Some (Fmt.strf "%t" pp)
   | _ -> None
+
+module OID = struct
+  type t = int
+
+  let last_id = ref 0
+
+  let next () =
+    incr last_id;
+    !last_id
+
+  let pp f id =
+    Fmt.(styled `Bold (styled `Cyan int)) f id
+
+  let reset () =
+    last_id := 0
+end

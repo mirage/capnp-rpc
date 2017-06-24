@@ -2,8 +2,6 @@ open Asetmap
 
 module Log = Debug.Log
 
-let last_id = ref 0
-
 module Make (C : S.CORE_TYPES) = struct
   open C
 
@@ -23,6 +21,19 @@ module Make (C : S.CORE_TYPES) = struct
     (* (can't use [when_resolved] because that checks the promise isn't finished) *)
 
     method field_check_invariants : Wire.Path.t -> unit
+
+    method field_pp : Wire.Path.t -> Format.formatter -> unit
+  end
+
+  let invalid_cap = object (_ : C.cap)
+    method call _ _ = failwith "invalid_cap"
+    method inc_ref = failwith "invalid_cap"
+    method dec_ref = failwith "invalid_cap"
+    method shortest = failwith "invalid_cap"
+    method when_more_resolved _ = failwith "invalid_cap"
+    method pp f = Fmt.pf f "[%a]" Fmt.(styled `Red string) "INVALID CAP"
+    method blocker = failwith "invalid_cap"
+    method check_invariants = failwith "invalid_cap"
   end
 
   module Field_map = Map.Make(Wire.Path)
@@ -60,7 +71,7 @@ module Make (C : S.CORE_TYPES) = struct
   let dispatch state ~cancelling_ok ~unresolved ~forwarding =
     match state with
     | Finished -> failwith "Already finished"
-    | Unresolved { cancelling = true; _ } when not cancelling_ok -> failwith "Already finished"
+    | Unresolved { cancelling = true; _ } when not cancelling_ok -> failwith "Cancelling"
     | Unresolved x -> unresolved x
     | Forwarding x -> forwarding x
 
@@ -72,6 +83,8 @@ module Make (C : S.CORE_TYPES) = struct
     object (self : #field_cap)
       val mutable state = PromiseField (p, path)
 
+      val id = Debug.OID.next ()
+
       method call msg caps =
         match state with
         | PromiseField (p, path) -> p#pipeline path msg caps
@@ -79,8 +92,8 @@ module Make (C : S.CORE_TYPES) = struct
 
       method pp f =
         match state with
-        | PromiseField (p, path) -> Fmt.pf f "field:%a -> %t" Wire.Path.pp path p#pp
-        | ForwardingField c -> Fmt.pf f "field -> %t" c#pp
+        | PromiseField (p, path) -> Fmt.pf f "field(%a)%t" Debug.OID.pp id (p#field_pp path)
+        | ForwardingField c -> Fmt.pf f "field(%a) -> %t" Debug.OID.pp id c#pp
 
       method inc_ref =
         match state with
@@ -94,7 +107,7 @@ module Make (C : S.CORE_TYPES) = struct
         | ForwardingField c -> c#dec_ref
 
       method resolve cap =
-        Log.info (fun f -> f "resolve field");
+        Log.info (fun f -> f "Resolve field(%a) to %t" Debug.OID.pp id cap#pp);
         match state with
         | ForwardingField _ -> failwith "Field already resolved!"
         | PromiseField _ -> state <- ForwardingField cap
@@ -129,7 +142,7 @@ module Make (C : S.CORE_TYPES) = struct
         cancelling = false
       }
 
-    val id = incr last_id; !last_id
+    val id = Debug.OID.next ()
 
     method private virtual do_pipeline : 'promise -> Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
 
@@ -179,7 +192,7 @@ module Make (C : S.CORE_TYPES) = struct
     method pp f =
       let pp_promise f _ = Fmt.string f "(unresolved)" in
       Fmt.pf f "proxy[%a] -> %a"
-        (Fmt.styled `Bold Fmt.int) id
+        Debug.OID.pp id
         (pp_state ~pp_promise) state
 
     method connect x =
@@ -205,11 +218,16 @@ module Make (C : S.CORE_TYPES) = struct
             in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->
-                if f.ref_count > 1 then (
+                let ref_count = f.ref_count in
+                assert (ref_count > 0);
+                f.ref_count <- 0;
+                if ref_count > 1 then (   (* Someone else is using it too *)
                   let c = x#cap path in   (* Increases ref by one *)
-                  f.cap#resolve c;
-                  (* We drop our ref, and [f.cap] took one above. The rest we pass on. *)
-                  for _ = 3 to f.ref_count do c#inc_ref done
+                  (* We dropped our ref to [f], and [x#cap] added one above. The rest we pass on. *)
+                  for _ = 3 to ref_count do c#inc_ref done;
+                  f.cap#resolve c
+                ) else (
+                  f.cap#resolve invalid_cap
                 )
               );
             self#on_resolve u.target x;
@@ -290,6 +308,15 @@ module Make (C : S.CORE_TYPES) = struct
             assert (f.ref_count > 0)
           )
         ~forwarding:(fun _ -> Debug.failf "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
+
+    method field_pp path f =
+      match state with
+      | Finished -> Fmt.pf f "Promise is finished, but field %a isn't!" Wire.Path.pp path
+      | Forwarding _ -> Fmt.pf f "Promise is resolved, but field %a isn't!" Wire.Path.pp path
+      | Unresolved u ->
+        let field = Field_map.get path u.fields in
+        (* (exclude the ref-count that we hold on it) *)
+        Fmt.pf f "(rc=%d) -> #%a -> %t" (field.ref_count - 1) Wire.Path.pp path self#pp
 
     method check_invariants =
       dispatch state

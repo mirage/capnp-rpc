@@ -4,7 +4,7 @@ let pp_item ~check pp f (k, v) =
   match check v with
   | () -> pp f (k, v)
   | exception ex ->
-    Fmt.pf f "%a@,[%a] %a"
+    Fmt.pf f "%a@\n[%a] %a"
       pp (k, v)
       Fmt.(styled `Red string) "ERROR"
       Debug.pp_exn ex

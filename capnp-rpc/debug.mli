@@ -13,3 +13,16 @@ val failf : ('a, Format.formatter, unit, 'b) format4 -> 'a
 
 val invariant_broken : (Format.formatter -> unit) -> 'a
 (** [invariant_broken msg] raises [Invariant_broken msg]. *)
+
+module OID : sig
+  type t
+  (** A unique ID which can be attached to objects to aid debugging. *)
+
+  val next : unit -> t
+  (** [next ()] is a fresh ID, unique since the last [reset]. *)
+
+  val pp : t Fmt.t
+
+  val reset : unit -> unit
+  (** Reset the counter. Possibly useful in unit or fuzz tests. *)
+end
