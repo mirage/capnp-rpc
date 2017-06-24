@@ -8,6 +8,7 @@ module Make(Wire : S.WIRE) = struct
   class type base_ref = object
     method pp : Format.formatter -> unit
     method blocker : base_ref option
+    method check_invariants : unit
   end
 
   let pp f x = x#pp f
@@ -53,6 +54,14 @@ module Make(Wire : S.WIRE) = struct
       ref_count <- ref_count - 1;
       if ref_count = 0 then
         self#release
+
+    method check_invariants =
+      if ref_count <= 0 then (
+        Debug.invariant_broken @@ fun f ->
+        Fmt.pf f "%a for %t"
+          (Fmt.styled `Red (Fmt.fmt "ref_count=%d")) ref_count
+          self#pp
+      )
   end
 
   let rec broken_cap ex = object (self : cap)
@@ -65,6 +74,7 @@ module Make(Wire : S.WIRE) = struct
     method shortest = self
     method blocker = None
     method when_more_resolved _ = ()
+    method check_invariants = ()
   end
   and broken_struct err = object (_ : struct_ref)
     method response = Some (Error err)
@@ -76,6 +86,7 @@ module Make(Wire : S.WIRE) = struct
     method pp f = Error.pp f err
     method finish = ()
     method blocker = None
+    method check_invariants = ()
   end
 
   let null = broken_cap {Exception.ty = `Failed; reason = "null"}
@@ -149,6 +160,9 @@ module Make(Wire : S.WIRE) = struct
       caps <- RO_array.empty
 
     method blocker = None
+
+    method check_invariants =
+      RO_array.iter (fun c -> c#check_invariants) caps
   end
 
   class virtual service = object (self : #cap)

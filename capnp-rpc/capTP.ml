@@ -3,8 +3,6 @@ open Asetmap
 module Log = Debug.Log
 module IntMap = Map.Make(struct type t = int let compare (a:int) b = compare a b end)
 
-let failf msg = Fmt.kstrf failwith msg
-
 let rec filter_map f = function
   | [] -> []
   | x :: xs ->
@@ -703,13 +701,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
                 | Ok cap -> cap
                 | Error (`Invalid_index i) ->
                   (* The peer must have sent the answer before the disembargo request. *)
-                  failf "Protocol error: peer asked to disembargo a capability index (%d) knew didn't exist" i
+                  Debug.failf "Protocol error: peer asked to disembargo a capability index (%d) knew didn't exist" i
             end
         in
         (* Check that [cap] points back at sender. *)
         match unwrap t cap with
         | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
-        | None -> failf "Protocol error: disembargo for invalid target %t" cap#pp
+        | None -> Debug.failf "Protocol error: disembargo for invalid target %t" cap#pp
 
     let disembargo_reply t _target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
@@ -736,7 +734,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         in
         match im.import_proxy with
         | `Uninitialised -> assert false
-        | `Settled x -> failf "Got a Resolve (to %t) for settled import %t!" new_target#pp x#pp
+        | `Settled x -> Debug.failf "Got a Resolve (to %t) for settled import %t!" new_target#pp x#pp
         | `Unsettled x ->
           (* This will also dec_ref the old remote-promise, releasing the import. *)
           x#resolve new_target
@@ -816,15 +814,28 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let dump_embargo f (id, proxy) =
     Fmt.pf f "%a: @[%t@]" EmbargoId.pp id proxy#pp
 
+  let check_import   x = (get_import_proxy x)#check_invariants
+  let check_export   x = x.export_service#check_invariants
+  let check_question x = x.question_data#check_invariants
+  let check_answer   x = x.answer_promise#check_invariants
+  let check_embargo  x = (snd x)#check_invariants
+
   let dump f t =
     Fmt.pf f "@[<v2>Questions:@,%a@]@,\
               @[<v2>Answers:@,%a@]@,\
               @[<v2>Exports:@,%a@]@,\
               @[<v2>Imports:@,%a@]@,\
-              @[<v2>Embargoes:@,%a@]"
-      (Questions.dump dump_question) t.questions
-      (Answers.dump dump_answer) t.answers
-      (Exports.dump dump_export) t.exports
-      (Imports.dump dump_import) t.imports
-      (Embargoes.dump dump_embargo) t.embargoes
+              @[<v2>Embargoes:@,%a@]@,"
+      (Questions.dump ~check:check_question dump_question) t.questions
+      (Answers.dump   ~check:check_answer   dump_answer) t.answers
+      (Exports.dump   ~check:check_export   dump_export) t.exports
+      (Imports.dump   ~check:check_import   dump_import) t.imports
+      (Embargoes.dump ~check:check_embargo  dump_embargo) t.embargoes
+
+  let check t =
+    Questions.iter (fun _ -> check_question) t.questions;
+    Answers.iter   (fun _ -> check_answer)   t.answers;
+    Imports.iter   (fun _ -> check_import)   t.imports;
+    Exports.iter   (fun _ -> check_export)   t.exports;
+    Embargoes.iter (fun _ -> check_embargo)  t.embargoes
 end

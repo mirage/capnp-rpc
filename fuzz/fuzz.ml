@@ -3,6 +3,9 @@ module Test_utils = Testbed.Test_utils
 
 let three_vats = false
 
+(* Check that the state is valid after every step (slow). *)
+let sanity_checks = true
+
 let failf msg = Fmt.kstrf failwith msg
 
 let styles = [| `Red; `Green; `Blue |]
@@ -186,6 +189,9 @@ module Endpoint = struct
   let dump f t =
     Conn.dump f t.conn
 
+  let check t =
+    Conn.check t.conn
+
   let create ?bootstrap ~tags xmit_queue recv_queue =
     let queue_send x = Queue.add x xmit_queue in
     let conn = Conn.create ?bootstrap ~tags ~queue_send in
@@ -272,6 +278,7 @@ let dummy_answer = object (self : Core_types.struct_resolver)
   method response = failwith "dummy_answer"
   method when_resolved _ = failwith "when_resolved"
   method blocker = None
+  method check_invariants = ()
 end
 
 type cap_ref = {
@@ -282,7 +289,7 @@ type cap_ref = {
 
 type vat = {
   id : int;
-  bootstrap : (Core_types.cap * Direct.cap) option;
+  mutable bootstrap : (Core_types.cap * Direct.cap) option;
   caps : cap_ref DynArray.t;
   structs : (Core_types.struct_ref * Direct.struct_ref) DynArray.t;
   actions : (unit -> unit) DynArray.t;
@@ -294,7 +301,7 @@ let tags v = tags_for_id v.id
 
 let pp_vat f t =
   let pp_connection f (id, endpoint) =
-    Fmt.pf f "@[<v2>Connection to %d@,%a@]" id Endpoint.dump endpoint
+    Fmt.pf f "@[<v2>Connection to %d@,%a@]" id Endpoint.dump endpoint;
   in
   Fmt.Dump.list pp_connection f t.connections
 
@@ -464,7 +471,7 @@ let make_vat () =
     answers_needed = DynArray.create (dummy_answer, Direct.cancelled);
   } in
   let bs_id = Direct.make_cap () in
-  let t = {t with bootstrap = Some (test_service ~target:bs_id t, bs_id)} in
+  t.bootstrap <- Some (test_service ~target:bs_id t, bs_id);
   DynArray.add t.actions (do_call t);
   DynArray.add t.actions (do_struct t);
   DynArray.add t.actions (do_finish t);
@@ -496,6 +503,8 @@ let () =
   try
     let rec loop () =
       let v = choose vats in
+      if sanity_checks then
+        v.connections |> List.iter (fun (_, conn) -> Endpoint.check conn);
       do_action v;
       loop ()
     in
@@ -507,6 +516,6 @@ let () =
     Logs.err (fun f -> f "Got error - dumping state:");
     vats |> Array.iter (fun v ->
         let tags = tags_for_id v.id in
-        Logs.info (fun f -> f ~tags "%a" pp_vat v)
+        Logs.info (fun f -> f ~tags "%a" pp_vat v);
       );
     raise ex

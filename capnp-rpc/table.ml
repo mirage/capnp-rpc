@@ -1,5 +1,14 @@
 let failf fmt = Fmt.kstrf failwith fmt
 
+let pp_item ~check pp f (k, v) =
+  match check v with
+  | () -> pp f (k, v)
+  | exception ex ->
+    Fmt.pf f "%a@,[%a] %a"
+      pp (k, v)
+      Fmt.(styled `Red string) "ERROR"
+      Debug.pp_exn ex
+
 module Allocating (Key : Id.S) = struct
   type 'a t = {
     mutable next : Key.t;       (* The lowest ID we've never used *)
@@ -35,14 +44,16 @@ module Allocating (Key : Id.S) = struct
 
   let active t = Hashtbl.length t.used
 
-  let pp_item pp f (k, v) =
+  let pp_kv pp f (k, v) =
     Fmt.pf f "%a -> @[%a@]" Key.pp k pp v
 
-  let dump pp f t =
+  let dump ~check pp f t =
     let add k v acc = (k, v) :: acc in
     let items = Hashtbl.fold add t.used [] in
     let items = List.sort compare items in
-    (Fmt.Dump.list (pp_item pp)) f items
+    (Fmt.Dump.list (pp_item ~check (pp_kv pp))) f items
+
+  let iter fn t = Hashtbl.iter fn t.used
 end
 
 module Tracking (Key : Id.S) = struct
@@ -66,12 +77,14 @@ module Tracking (Key : Id.S) = struct
 
   let active = Hashtbl.length
 
-  let pp_item pp f (k, v) =
+  let pp_kv pp f (k, v) =
     Fmt.pf f "%a -> @[%a@]" Key.pp k pp v
 
-  let dump pp f t =
+  let dump pp ~check f t =
     let add k v acc = (k, v) :: acc in
     let items = Hashtbl.fold add t [] in
     let items = List.sort compare items in
-    (Fmt.Dump.list (pp_item pp)) f items
+    (Fmt.Dump.list (pp_item ~check (pp_kv pp))) f items
+
+  let iter fn t = Hashtbl.iter fn t
 end

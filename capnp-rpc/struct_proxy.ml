@@ -21,6 +21,8 @@ module Make (C : S.CORE_TYPES) = struct
 
     method field_when_resolved : Wire.Path.t -> (cap -> unit) -> unit
     (* (can't use [when_resolved] because that checks the promise isn't finished) *)
+
+    method field_check_invariants : Wire.Path.t -> unit
   end
 
   module Field_map = Map.Make(Wire.Path)
@@ -112,6 +114,10 @@ module Make (C : S.CORE_TYPES) = struct
         | ForwardingField c -> c#when_more_resolved fn
         | PromiseField (p, i) -> p#field_when_resolved i fn
 
+      method check_invariants =
+        match state with
+        | ForwardingField c -> c#check_invariants
+        | PromiseField (p, i) -> p#field_check_invariants i
     end
 
   class virtual ['promise] t init = object (self : #struct_resolver)
@@ -275,6 +281,21 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:false
         ~unresolved:(fun u -> u.target <- target)
         ~forwarding:(fun _ -> failwith "Already forwarding!")
+
+    method field_check_invariants i =
+      dispatch state
+        ~cancelling_ok:true
+        ~unresolved:(fun u ->
+            let f = Field_map.get i u.fields in
+            assert (f.ref_count > 0)
+          )
+        ~forwarding:(fun _ -> Debug.failf "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
+
+    method check_invariants =
+      dispatch state
+        ~cancelling_ok:true
+        ~unresolved:(fun u -> Field_map.iter (fun _ f -> f.cap#check_invariants) u.fields)
+        ~forwarding:(fun x -> x#check_invariants)
 
     initializer
       Log.info (fun f -> f "Created %t" self#pp)

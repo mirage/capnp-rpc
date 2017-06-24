@@ -29,4 +29,8 @@ module Make (EP : Message_types.ENDPOINT) : sig
 
   val dump : t Fmt.t
   (** [dump] formats a dump of the current state of the connection. *)
+
+  val check : t -> unit
+  (** [check t] performs some sanity checks on the state of the tables and raises an exception
+      if it finds a problem. *)
 end

@@ -22,7 +22,7 @@ module Make(C : S.CORE_TYPES) = struct
 
   class local_promise =
     object (self : #cap)
-      inherit ref_counted
+      inherit ref_counted as super
       val mutable state = Unresolved (Queue.create (), false)
 
       method call msg caps =
@@ -92,6 +92,12 @@ module Make(C : S.CORE_TYPES) = struct
         match state with
         | Unresolved _ -> Fmt.pf f "local-cap-promise(rc=%d) -> (unresolved)" ref_count
         | Resolved cap -> Fmt.pf f "local-cap-promise(rc=%d) -> %t" ref_count cap#pp
+
+      method! check_invariants =
+        super#check_invariants;
+        match state with
+        | Unresolved _ -> ()
+        | Resolved cap -> cap#check_invariants
     end
 
   let embargo underlying : embargo_cap =
@@ -117,7 +123,7 @@ module Make(C : S.CORE_TYPES) = struct
       | `Settled x -> Fmt.pf f "(settled) -> %t" x#pp
     in
     object (self : #cap)
-      inherit ref_counted
+      inherit ref_counted as super
 
       val mutable state =
         if is_settled init then `Settled init
@@ -162,6 +168,11 @@ module Make(C : S.CORE_TYPES) = struct
         match state with
         | `Unsettled (_, q) -> Queue.add fn q
         | `Settled x -> x#when_more_resolved fn
+
+      method! check_invariants =
+        super#check_invariants;
+        match state with
+        | `Unsettled (x, _) | `Settled x -> x#check_invariants
 
       method pp f =
         Fmt.pf f "switchable %a" pp_state state

@@ -55,6 +55,10 @@ module type CORE_TYPES = sig
     method blocker : base_ref option
     (** [c#blocker] is the unresolved [cap] or [struct_ref] promise that must resolve for [c] to resolve.
         This is used to help detect cycles. *)
+
+    method check_invariants : unit
+    (** This is for debugging. Checks its own invariants and those of other base_refs it holds.
+        Raises [Invariant_broken] if there is a problem. *)
   end
 
   val pp : #base_ref Fmt.t
@@ -160,6 +164,7 @@ module type CORE_TYPES = sig
     method virtual pp : Format.formatter -> unit
     method inc_ref : unit
     method dec_ref : unit
+    method check_invariants : unit
   end
   (** A mix-in to help with writing reference-counted objects.
       It will call [self#release] when the ref-count reaches zero. *)
