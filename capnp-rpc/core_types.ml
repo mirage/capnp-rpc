@@ -90,6 +90,7 @@ module Make(Wire : S.WIRE) = struct
   end
 
   let null = broken_cap {Exception.ty = `Failed; reason = "null"}
+  let cancelled = broken_cap Exception.cancelled
 
   let cap_failf ?(ty=`Failed) msg = msg |> Fmt.kstrf (fun reason -> broken_cap {Exception.ty; reason})
 
@@ -112,7 +113,7 @@ module Make(Wire : S.WIRE) = struct
 
   let cap_of_err = function
     | `Exception msg -> broken_cap msg
-    | `Cancelled -> broken_cap Exception.cancelled
+    | `Cancelled -> cancelled
 
   let cap_in_result i = function
     | Ok p -> cap_in_payload i p

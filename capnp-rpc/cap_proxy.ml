@@ -108,6 +108,10 @@ module Make(C : S.CORE_TYPES) = struct
       object
         inherit local_promise as super
 
+        method! release =
+          underlying#dec_ref;
+          state <- Resolved released
+
         method disembargo =
           super#resolve underlying
 
@@ -143,7 +147,7 @@ module Make(C : S.CORE_TYPES) = struct
         | `Unsettled (old, q) ->
           if is_settled cap then (
             state <- `Settled cap;
-            Queue.iter (fun f -> f cap) q
+            Queue.iter (fun f -> f (cap#inc_ref; cap)) q
           ) else (
             state <- `Unsettled (cap, q)
           );

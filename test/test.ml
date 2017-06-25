@@ -10,12 +10,15 @@ module Exception = Capnp_rpc.Exception
 
 let empty = RO_array.empty
 
+let dec_ref x = x#dec_ref
+
 let error = Alcotest.of_pp Capnp_rpc.Error.pp
 let pp_cap f p = p#pp f
 let cap : Core_types.cap Alcotest.testable = Alcotest.of_pp pp_cap
 let ro_array x = Alcotest.testable (RO_array.pp (Alcotest.pp x)) (RO_array.equal (Alcotest.equal x))
 let response_promise = Alcotest.(option (result (pair string (ro_array cap)) error))
 
+(* Takes ownership of caps *)
 let resolve_ok (ans:#Core_types.struct_resolver) msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
   ans#resolve (Ok (msg, RO_array.of_list caps))
@@ -455,6 +458,71 @@ let test_resolve_3 () =
   CS.flush c s;
   CS.check_finished c s
 
+let test_ref_counts () =
+  let module S = Testbed.Capnp_direct.Local_struct_promise in
+  let objects = Hashtbl.create 3 in
+  let make () =
+    let o = object (self)
+      inherit Core_types.service
+      val id = Capnp_rpc.Debug.OID.next ()
+      method call _ _  = failwith "call"
+      method! private release = Hashtbl.remove objects self
+      method! pp f = Fmt.pf f "Service(%a, rc=%d)" Capnp_rpc.Debug.OID.pp id ref_count
+    end in
+    Hashtbl.add objects o true;
+    o
+  in
+  let remote_promise () =
+    let o = object (self)
+      inherit Core_types.ref_counted
+      val id = Capnp_rpc.Debug.OID.next ()
+      method call _ _  = failwith "call"
+      method private release = Hashtbl.remove objects self
+      method pp f = Fmt.pf f "remote-promise(%a, rc=%d)" Capnp_rpc.Debug.OID.pp id ref_count
+      method blocker = Some (self :> Core_types.base_ref)
+      method shortest = (self :> Core_types.cap)
+      method when_more_resolved _ = ()
+    end in
+    Hashtbl.add objects o true;
+    o
+  in
+  (* Test structs and fields *)
+  let promise = S.make () in
+  let f0 = promise#cap 0 in
+  f0#when_more_resolved dec_ref;
+  let fields = [f0; promise#cap 1] in
+  resolve_ok promise "ok" [make (); make ()];
+  let fields2 = [promise#cap 0; promise#cap 2] in
+  promise#finish;
+  List.iter dec_ref fields;
+  List.iter dec_ref fields2;
+  Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
+  (* Test local promise *)
+  let module Proxy = Testbed.Capnp_direct.Cap_proxy in
+  let promise = new Proxy.local_promise in
+  promise#when_more_resolved dec_ref;
+  promise#resolve (make ());
+  promise#dec_ref;
+  Alcotest.(check int) "Local promise released" 0 (Hashtbl.length objects);
+  (* Test switchable promise *)
+  let promise = new Proxy.switchable (remote_promise ()) in
+  promise#when_more_resolved dec_ref;
+  promise#resolve (make ());
+  promise#dec_ref;
+  Alcotest.(check int) "Switchable released" 0 (Hashtbl.length objects);
+  (* Test embargo *)
+  let embargo = Proxy.embargo (make ()) in
+  embargo#when_more_resolved dec_ref;
+  embargo#disembargo;
+  embargo#dec_ref;
+  Alcotest.(check int) "Disembargo released" 0 (Hashtbl.length objects);
+  (* Test embargo without disembargo *)
+  let embargo = Proxy.embargo (make ()) in
+  embargo#when_more_resolved dec_ref;
+  embargo#dec_ref;
+  Alcotest.(check int) "Embargo released" 0 (Hashtbl.length objects);
+  ()
+
 let tests = [
   "Return",     `Quick, test_return;
   "Return error", `Quick, test_return_error;
@@ -473,6 +541,7 @@ let tests = [
   "Resolve", `Quick, test_resolve;
   "Resolve 2", `Quick, test_resolve_2;
   "Resolve 3", `Quick, test_resolve_3;
+  "Ref-counts", `Quick, test_ref_counts;
 ]
 
 let () =

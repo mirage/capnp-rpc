@@ -265,7 +265,10 @@ module Make (C : S.CORE_TYPES) = struct
       let fn : Response_payload.t or_error -> unit = function
         | Error (`Exception e) -> fn (C.broken_cap e)
         | Error `Cancelled -> fn (C.broken_cap Exception.cancelled)
-        | Ok payload -> fn (C.Response_payload.field_or_err payload i)
+        | Ok payload ->
+          let cap = C.Response_payload.field_or_err payload i in
+          cap#inc_ref;
+          fn cap
       in
       dispatch state
         ~cancelling_ok:true

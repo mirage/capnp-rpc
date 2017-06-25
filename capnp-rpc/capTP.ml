@@ -526,9 +526,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* Create an embargo proxy for [x] and send a disembargo for it down [old_path]. *)
     let local_embargo t ~old_path x =
       let embargo = Cap_proxy.embargo x in
+      (* Store in table *)
+      embargo#inc_ref;
       let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
+      (* Send disembargo request *)
       let disembargo_request = `Loopback (old_path, embargo_id) in
-      x#inc_ref;
       Log.info (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
                    x#pp
                    EP.Out.pp_disembargo_request disembargo_request
@@ -565,7 +567,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
            - We didn't send a Resolve yet -> send a local embargo
            - We did send a Resolve -> find out what we said the new target was TODO
          *)
-        maybe_embargo t ~old_path:embargo_path export.export_service |> with_inc_ref
+        maybe_embargo t ~old_path:embargo_path (with_inc_ref export.export_service)
       | `ReceiverAnswer (id, path) ->
         let answer = (Answers.find_exn t.answers id).answer_promise in
         begin match answer#response with
@@ -573,7 +575,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             (* We don't know the answer, so we can't have replied yet.
                We can send a disembargo request now and the peer will get it before
                any answer and return it to us. *)
-            maybe_embargo t ~old_path:embargo_path (answer#cap path) |> with_inc_ref
+            maybe_embargo t ~old_path:embargo_path (answer#cap path)
           | Some (Error _) -> answer#cap path (* No need to embargo errors *)
           | Some (Ok payload) ->
             (* We've already replied to this question. Decide what to do about embargoes.
@@ -586,7 +588,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                - The field is hosted elsewhere (level 3 only). TODO
             *)
             match Core_types.Response_payload.field payload path with
-            | Ok cap -> maybe_embargo t ~old_path:embargo_path cap |> with_inc_ref
+            | Ok cap -> maybe_embargo t ~old_path:embargo_path (with_inc_ref cap)
             | Error (`Invalid_index _) -> answer#cap path (* Don't embargo errors *)
         end
       | `None -> Core_types.null
