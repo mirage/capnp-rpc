@@ -262,11 +262,56 @@ let test_local_embargo_5 () =
   CS.flush c s;
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
-
   (* Clean up *)
   q1#finish;
   bs#dec_ref;
   service#dec_ref;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* We pipeline a message to a question, and then discover that it resolves
+   to a local answer, which points to a capability at the peer. As the peer
+   is already bouncing the pipelined message back to us, we need to embargo
+   the new cap until the server's question is finished. *)
+let test_local_embargo_6 () =
+  let open CS in
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let local = Services.manual () in
+  (* Client calls the server, giving it [local]. *)
+  let q1 = call bs "q1" [local] in
+  let target = q1#cap 0 in
+  q1#finish;
+  let _ = call target "Message-1" [] in
+  S.handle_msg s ~expect:"call:q1";
+  let proxy_to_local, a1 = service#pop1 "q1" in
+  (* Server makes a call on [local] and uses that promise to answer [q1]. *)
+  let q2 = call proxy_to_local "q2" [] in
+  resolve_ok a1 "a1" [q2#cap 0];
+  C.handle_msg c ~expect:"call:q2";
+  S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
+  (* Client resolves a2 to [service]. *)
+  let a2 = local#pop0 "q2" in
+  resolve_ok a2 "a2" [bs];
+  S.handle_msg s ~expect:"return:a2";
+  (* Client gets results from q1 - need to embargo it until we've forwarded the pipelined message
+     back to the server. *)
+  C.handle_msg c ~expect:"return:a1";
+  Logs.info (fun f -> f "target = %t" target#pp);
+  let _ = call target "Message-2" [] in         (* Client tries to send message-2, but it gets embargoed *)
+  target#dec_ref;
+  S.handle_msg s ~expect:"finish";              (* Finish for q1 *)
+  C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
+  C.handle_msg c ~expect:"disembargo-request";  (* (the server is doing its own embargo on q2) *)
+  C.handle_msg c ~expect:"finish";              (* Finish of q2 shows pipeline is clear; embargo lifted *)
+  S.handle_msg s ~expect:"call:Message-1";
+  S.handle_msg s ~expect:"disembargo-reply";    (* (the server is doing its own embargo on q2) *)
+  S.handle_msg s ~expect:"call:Message-2";
+  let m1 = service#pop0 "Message-1" in
+  let m2 = service#pop0 "Message-2" in
+  resolve_ok m1 "m1" [];
+  resolve_ok m2 "m2" [];
+  proxy_to_local#dec_ref;
   CS.flush c s;
   CS.check_finished c s
 
@@ -532,6 +577,7 @@ let tests = [
   "Local embargo 3", `Quick, test_local_embargo_3;
   "Local embargo 4", `Quick, test_local_embargo_4;
   "Local embargo 5", `Quick, test_local_embargo_5;
+  "Local embargo 6", `Quick, test_local_embargo_6;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
@@ -545,6 +591,7 @@ let tests = [
 ]
 
 let () =
+  Printexc.record_backtrace true;
   Alcotest.run ~and_exit:false "capnp-rpc" [
     "core", tests;
   ]

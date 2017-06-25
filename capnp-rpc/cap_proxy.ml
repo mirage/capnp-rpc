@@ -113,6 +113,7 @@ module Make(C : S.CORE_TYPES) = struct
           state <- Resolved released
 
         method disembargo =
+          assert (ref_count > 0);
           super#resolve underlying
 
         method! pp f =

@@ -45,7 +45,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
     answer_id : AnswerId.t;
     mutable exports_for_release : ExportId.t list;
     answer_promise : Core_types.struct_resolver;
-    mutable finished : bool;
+
+    mutable answer_state : [`Finished | `Not_finished of Cap_proxy.embargo_cap Queue.t];
+    (* If not finished, there may be some embargoes that need to be lifted when finished. *)
   }
 
   let flag_returned = 1
@@ -283,7 +285,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let return_results t answer msg (caps : [< descr] RO_array.t) =
       let result =
-        if answer.finished then `Cancelled
+        if answer.answer_state = `Finished then `Cancelled
         else (
           let descrs =
             caps |> RO_array.map (fun cap ->
@@ -478,15 +480,17 @@ module Make (EP : Message_types.ENDPOINT) = struct
         object (self : #Core_types.cap)
           inherit Core_types.ref_counted
 
+          val id = Debug.OID.next ()
+
           method call msg caps =
             if ref_count < 1 then Debug.failf "%t already released!" self#pp;
             send_call t message_target msg caps
 
           method pp f =
             if settled then
-              Fmt.pf f "far-ref(rc=%d) -> %a" ref_count pp_cap message_target
+              Fmt.pf f "far-ref(%a, rc=%d) -> %a" Debug.OID.pp id ref_count pp_cap message_target
             else
-              Fmt.pf f "remote-promise(rc=%d) -> %a" ref_count pp_cap message_target
+               Fmt.pf f "remote-promise(%a, rc=%d) -> %a"Debug.OID.pp id ref_count pp_cap message_target
 
           method private release =
             Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
@@ -569,27 +573,42 @@ module Make (EP : Message_types.ENDPOINT) = struct
          *)
         maybe_embargo t ~old_path:embargo_path (with_inc_ref export.export_service)
       | `ReceiverAnswer (id, path) ->
-        let answer = (Answers.find_exn t.answers id).answer_promise in
-        begin match answer#response with
+        let answer = Answers.find_exn t.answers id in
+        let answer_promise = answer.answer_promise in
+        begin match answer_promise#response with
           | None ->
             (* We don't know the answer, so we can't have replied yet.
                We can send a disembargo request now and the peer will get it before
                any answer and return it to us. *)
-            maybe_embargo t ~old_path:embargo_path (answer#cap path)
-          | Some (Error _) -> answer#cap path (* No need to embargo errors *)
+            maybe_embargo t ~old_path:embargo_path (answer_promise#cap path)
+          | Some (Error _) -> answer_promise#cap path (* No need to embargo errors *)
           | Some (Ok payload) ->
             (* We've already replied to this question. Decide what to do about embargoes.
                The cases are:
                - The field is hosted here. Treat as for ReceiverHosted. TODO
                - The field we want isn't in the payload. We can't embargo, because
                  the peer has no way to return the response, but we don't need to for errors.
-               - The field is hosted at the peer. No need to embargo; any messages pipelined to it
-                 will be delivered before anything we send in the future. TODO
+               - The field is hosted at the peer. There might be messages we pipelined to it
+                 currently heading back to us. Embargo until we get the finish message - nothing
+                 can arrive after that.
                - The field is hosted elsewhere (level 3 only). TODO
             *)
             match Core_types.Response_payload.field payload path with
-            | Ok cap -> maybe_embargo t ~old_path:embargo_path (with_inc_ref cap)
-            | Error (`Invalid_index _) -> answer#cap path (* Don't embargo errors *)
+            | Error (`Invalid_index _) -> answer_promise#cap path (* Don't embargo errors *)
+            | Ok cap ->
+              let cap = with_inc_ref cap#shortest in
+              match unwrap t cap with
+              | None ->
+                (* Hosted locally *)
+                maybe_embargo t ~old_path:embargo_path cap
+              | Some _ ->
+                (* Hosted at peer *)
+                match answer.answer_state with
+                | `Finished -> failwith "Bug: finished answer in answers table!"
+                | `Not_finished disembargo_on_finish ->
+                  let embargo = Cap_proxy.embargo cap in
+                  embargo#inc_ref; Queue.add embargo disembargo_on_finish;
+                  (embargo :> Core_types.cap)
         end
       | `None -> Core_types.null
       | `ThirdPartyHosted _ -> failwith "TODO: import"
@@ -602,7 +621,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         answer_id = id;
         exports_for_release = [];
         answer_promise = answer;
-        finished = false;
+        answer_state = `Not_finished (Queue.create ());
       } in
       Answers.set t.answers id answer;
       let target =
@@ -622,7 +641,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         answer_id = id;
         exports_for_release = [];
         answer_promise = answer;
-        finished = false;
+        answer_state = `Not_finished (Queue.create ());
       } in
       Answers.set t.answers id answer;
       answer
@@ -678,16 +697,20 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let finish t answer_id ~releaseResultCaps =
       let answer = Answers.find_exn t.answers answer_id in
-      answer.finished <- true;
-      Answers.release t.answers answer_id;
-      if releaseResultCaps then (
-        (* This is very unclear. It says "all capabilities that were in the
-           results should be considered released". However, only imports can
-           be released, not capabilities in general.
-           Also, assuming we decrement the ref count by one in this case. *)
-        List.iter (release t ~referenceCount:1) answer.exports_for_release
-      );
-      answer.answer_promise
+      match answer.answer_state with
+      | `Finished -> assert false
+      | `Not_finished disembargo_on_finish ->
+        answer.answer_state <- `Finished;
+        Queue.iter (fun e -> e#disembargo; e#dec_ref) disembargo_on_finish;
+        Answers.release t.answers answer_id;
+        if releaseResultCaps then (
+          (* This is very unclear. It says "all capabilities that were in the
+             results should be considered released". However, only imports can
+             be released, not capabilities in general.
+             Also, assuming we decrement the ref count by one in this case. *)
+          List.iter (release t ~referenceCount:1) answer.exports_for_release
+        );
+        answer.answer_promise
 
     let disembargo_request t = function
       | `Loopback (old_path, id) ->
