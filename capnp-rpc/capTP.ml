@@ -12,6 +12,19 @@ let rec filter_map f = function
 
 let dec_ref x = x#dec_ref
 
+let pp_check check f (k, v) =
+  try check k v
+  with ex ->
+    Fmt.pf f "@,[%a] %a"
+      Fmt.(styled `Red string) "ERROR"
+      Debug.pp_exn ex
+
+let hashtbl_dump ~key pp f items =
+  let add k v results = (k, v) :: results in
+  Hashtbl.fold add items []
+  |> List.sort (fun a b -> compare (key (snd a)) (key (snd b)))
+  |> Fmt.Dump.list pp f
+
 module EmbargoId = Message_types.EmbargoId
 
 module Make (EP : Message_types.ENDPOINT) = struct
@@ -87,9 +100,47 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `ThirdPartyHosted _third_party_desc -> Fmt.pf f "ThirdPartyHosted"
     | `Local local -> Fmt.pf f "Local:%t" local#pp
 
+  module Proxy_caps : sig
+    type t
+    (* Maps proxies that we create to information about their target at our peer. *)
+
+    val create : unit -> t
+    val register : t -> Core_types.cap -> message_target_cap -> unit
+    val unwrap : t -> Core_types.cap -> message_target_cap option
+    val unregister : t -> Core_types.cap -> unit
+    val dump : check:(Core_types.cap -> message_target_cap -> unit) -> t Fmt.t
+    val iter : (Core_types.cap -> message_target_cap -> unit) -> t -> unit
+  end = struct
+    type t = (Core_types.cap, message_target_cap) Hashtbl.t              (* TODO: use weak table *)
+
+    let create () = Hashtbl.create 10
+
+    let register t x y =
+      match Hashtbl.find t x with
+      | exception Not_found -> Hashtbl.add t x y
+      | existing -> assert (y = existing)
+
+    let unwrap t x =
+      try Some (Hashtbl.find t x#shortest)
+      with Not_found -> None
+
+    let unregister = Hashtbl.remove
+
+    let sort_key = function
+      | `Import import -> `Import import.import_id
+      | `QuestionCap (question, path) -> `Question (question.question_id, path)
+
+    let pp_proxy_cap ~check f (cap, target) =
+      Fmt.pf f "%t => %a%a" cap#pp pp_cap target (pp_check check) (cap, target)
+
+    let dump ~check = hashtbl_dump ~key:sort_key (pp_proxy_cap ~check)
+
+    let iter = Hashtbl.iter
+  end
+
   type t = {
     queue_send : (EP.Out.t -> unit);
-    proxy_caps : (Core_types.cap, message_target_cap) Hashtbl.t;              (* TODO: use weak table *)
+    proxy_caps : Proxy_caps.t;
     tags : Logs.Tag.set;
     embargoes : (EmbargoId.t * Cap_proxy.embargo_cap) Embargoes.t;
     bootstrap : Core_types.cap option;
@@ -133,7 +184,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let create ?bootstrap ~tags ~queue_send =
     {
       queue_send;
-      proxy_caps = Hashtbl.create 10;
+      proxy_caps = Proxy_caps.create ();
       tags;
       bootstrap = (bootstrap :> Core_types.cap option);
       questions = Questions.make ();
@@ -151,18 +202,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | None, Some aid -> Logs.Tag.add Debug.qid_tag (EP.Table.AnswerId.uint32 aid) t.tags
     | Some _, Some _ -> assert false
 
-  let register t x y =
-    match Hashtbl.find t.proxy_caps x with
-    | exception Not_found -> Hashtbl.add t.proxy_caps x y
-    | existing -> assert (y = existing)
-
-  let unwrap t x =
-    try Some (Hashtbl.find t.proxy_caps x#shortest)
-    with Not_found -> None
-
   let to_cap_desc t (cap : Core_types.cap) =
     let cap = cap#shortest in
-    match unwrap t cap with
+    match Proxy_caps.unwrap t.proxy_caps cap with
     | None -> `Local cap
     | Some x -> (x :> [`Local of Core_types.cap | message_target_cap])
 
@@ -348,6 +390,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
           send_call t target msg caps
         | None -> failwith "Not initialised!"
 
+      method! field_resolved f = Proxy_caps.unregister t.proxy_caps f
+
       method on_resolve q _ =
         match q with
         | Some (_target_q, finish) -> Lazy.force finish
@@ -370,8 +414,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | Unresolved u ->
             begin match u.target with
               | None -> failwith "Not intialised!"
-              | Some (target_q, _) ->
-                register t field (`QuestionCap (target_q, path));        (* TODO: unregister *)
+              | Some (target_q, _) -> Proxy_caps.register t.proxy_caps field (`QuestionCap (target_q, path))
             end
           | _ -> ()
         end;
@@ -495,7 +538,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
           method private release =
             Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
             let id, count = Send.release t import in
-            t.queue_send (`Release (id, count))
+            t.queue_send (`Release (id, count));
+            Proxy_caps.unregister t.proxy_caps self
 
           method shortest = self
 
@@ -507,7 +551,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             assert settled      (* Otherwise, our switchable should have intercepted this *)
         end
       in
-      register t cap message_target;
+      Proxy_caps.register t.proxy_caps cap message_target;
       if settled then
         import.import_proxy <- `Settled cap
       else
@@ -597,7 +641,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             | Error (`Invalid_index _) -> answer_promise#cap path (* Don't embargo errors *)
             | Ok cap ->
               let cap = with_inc_ref cap#shortest in
-              match unwrap t cap with
+              match Proxy_caps.unwrap t.proxy_caps cap with
               | None ->
                 (* Hosted locally *)
                 maybe_embargo t ~old_path:embargo_path cap
@@ -732,7 +776,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             end
         in
         (* Check that [cap] points back at sender. *)
-        match unwrap t cap with
+        match Proxy_caps.unwrap t.proxy_caps cap with
         | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
         | None -> Debug.failf "Protocol error: disembargo for invalid target %t" cap#pp
 
@@ -850,22 +894,54 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let check_answer   x = x.answer_promise#check_invariants
   let check_embargo  x = (snd x)#check_invariants
 
+  let check_proxy_cap t _cap target =
+    match target with
+    | `Import import ->
+      let import2 = Imports.find_exn t.imports import.import_id in
+      assert (import == import2)
+    | `QuestionCap (question, _path) ->
+      let question2 = Questions.find_exn t.questions question.question_id in
+      assert (question == question2)
+
+  let check_exported_cap t cap export_id =
+    match Exports.find_exn t.exports export_id with
+    | export ->
+      if export.export_service <> cap then (
+        Debug.invariant_broken @@ fun f ->
+        Fmt.pf f "export_caps maps %t to export %a back to different cap %t!"
+          cap#pp ExportId.pp export_id export.export_service#pp
+      )
+    | exception ex ->
+      Debug.invariant_broken @@ fun f ->
+      Fmt.pf f "exported_caps for %t: %a" cap#pp Debug.pp_exn ex
+
+  let exported_sort_key export_id = export_id
+
+  let pp_exported_cap t f (cap, export_id) =
+    Fmt.pf f "%t => export %a%a" cap#pp ExportId.pp export_id (pp_check (check_exported_cap t)) (cap, export_id)
+
   let dump f t =
     Fmt.pf f "@[<v2>Questions:@,%a@]@,\
               @[<v2>Answers:@,%a@]@,\
               @[<v2>Exports:@,%a@]@,\
               @[<v2>Imports:@,%a@]@,\
-              @[<v2>Embargoes:@,%a@]@,"
+              @[<v2>Embargoes:@,%a@]@,\
+              @[<v2>Proxy caps:@,%a@]@,\
+              @[<v2>Exported caps:@,%a@]@,"
       (Questions.dump ~check:check_question dump_question) t.questions
       (Answers.dump   ~check:check_answer   dump_answer) t.answers
       (Exports.dump   ~check:check_export   dump_export) t.exports
       (Imports.dump   ~check:check_import   dump_import) t.imports
       (Embargoes.dump ~check:check_embargo  dump_embargo) t.embargoes
+      (Proxy_caps.dump ~check:(check_proxy_cap t)) t.proxy_caps
+      (hashtbl_dump ~key:exported_sort_key (pp_exported_cap t)) t.exported_caps
 
   let check t =
-    Questions.iter (fun _ -> check_question) t.questions;
-    Answers.iter   (fun _ -> check_answer)   t.answers;
-    Imports.iter   (fun _ -> check_import)   t.imports;
-    Exports.iter   (fun _ -> check_export)   t.exports;
-    Embargoes.iter (fun _ -> check_embargo)  t.embargoes
+    Questions.iter  (fun _ -> check_question) t.questions;
+    Answers.iter    (fun _ -> check_answer)   t.answers;
+    Imports.iter    (fun _ -> check_import)   t.imports;
+    Exports.iter    (fun _ -> check_export)   t.exports;
+    Embargoes.iter  (fun _ -> check_embargo)  t.embargoes;
+    Proxy_caps.iter (check_proxy_cap t) t.proxy_caps;
+    Hashtbl.iter    (check_exported_cap t) t.exported_caps
 end
