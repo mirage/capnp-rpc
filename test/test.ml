@@ -358,6 +358,7 @@ let test_cancel () =
   CS.flush c s;
   CS.check_finished c s
 
+(* Asking for the same field twice gives the same object. *)
 let test_duplicates () =
   let open CS in
   let service = Services.manual () in
@@ -381,6 +382,54 @@ let test_duplicates () =
   C.handle_msg c ~expect:"return:a1";
   S.handle_msg s ~expect:"release";             (* bootstrap *)
   S.handle_msg s ~expect:"finish";              (* c1 *)
+  CS.check_finished c s
+
+(* Exporting a cap twice reuses the existing export. *)
+let test_single_export () =
+  let open CS in
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let local = Services.echo_service () in
+  let q1 = call bs "q1" [local; local] in
+  let q2 = call bs "q2" [local] in
+  Alcotest.(check int) "One export" 1 (C.Conn.stats c.C.conn).n_exports;
+  S.handle_msg s ~expect:"call:q1";
+  S.handle_msg s ~expect:"call:q2";
+  q1#finish;
+  q2#finish;
+  let ignore msg =
+    let got, caps, a = service#pop in
+    Alcotest.(check string) ("Ignore " ^ msg) msg got;
+    RO_array.iter dec_ref caps;
+    resolve_ok a "a" []
+  in
+  ignore "q1";
+  ignore "q2";
+  bs#dec_ref;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* Exporting a field of a remote promise sends a promised answer desc. *)
+let test_shorten_field () =
+  let open CS in
+  let service = Services.manual () in
+  let logger = Services.logger () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let q1 = call bs "q1" [] in
+  let proxy_to_logger = q1#cap 0 in
+  let q2 = call bs "q2" [proxy_to_logger] in
+  S.handle_msg s ~expect:"call:q1";
+  let a1 = service#pop0 "q1" in
+  resolve_ok a1 "a1" [logger];
+  S.handle_msg s ~expect:"call:q2";
+  let direct_to_logger, a2 = service#pop1 "q2" in
+  assert (direct_to_logger#shortest = (logger :> Core_types.cap));
+  resolve_ok a2 "a2" [];
+  bs#dec_ref;
+  proxy_to_logger#dec_ref;
+  q1#finish;
+  q2#finish;
+  CS.flush c s;
   CS.check_finished c s
 
 let ensure_is_cycle_error (x:#Core_types.struct_ref) : unit =
@@ -582,6 +631,8 @@ let tests = [
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
   "Duplicates", `Quick, test_duplicates;
+  "Re-export", `Quick, test_single_export;
+  "Shorten field", `Quick, test_shorten_field;
   "Cycle", `Quick, test_cycle;
   "Cycle 2", `Quick, test_cycle_2;
   "Resolve", `Quick, test_resolve;

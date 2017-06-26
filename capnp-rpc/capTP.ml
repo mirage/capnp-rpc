@@ -780,7 +780,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
     reply_to_call t (`Bootstrap answer)
 
   let handle_call t (aid, message_target, msg, descs) =
-    Log.info (fun f -> f ~tags:(tags ~aid t) "Received call to %a" EP.In.pp_desc message_target);
+    Log.info (fun f -> f ~tags:(tags ~aid t) "Received call to %a with args %a"
+                 EP.In.pp_desc message_target
+                 (RO_array.pp EP.In.pp_desc) descs
+             );
     let promise = Local_struct_promise.make () in
     let answer, target, caps = Input.call t aid message_target descs ~allowThirdPartyTailCall:false `Caller ~answer:promise in
     reply_to_call t (`Call (answer, target, msg, caps))
