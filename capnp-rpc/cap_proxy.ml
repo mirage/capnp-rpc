@@ -43,6 +43,7 @@ module Make(C : S.CORE_TYPES) = struct
         | Resolved cap -> cap#call msg caps
 
       method resolve (cap:cap) =
+        self#check_refcount;
         match state with
         | Unresolved (q, release_pending) ->
           let cap =
@@ -98,8 +99,8 @@ module Make(C : S.CORE_TYPES) = struct
 
       method pp f =
         match state with
-        | Unresolved _ -> Fmt.pf f "local-cap-promise(%a, rc=%d) -> (unresolved)" Debug.OID.pp id ref_count
-        | Resolved cap -> Fmt.pf f "local-cap-promise(%a, rc=%d) -> %t" Debug.OID.pp id ref_count cap#pp
+        | Unresolved _ -> Fmt.pf f "local-cap-promise(%a, %t) -> (unresolved)" Debug.OID.pp id self#pp_refcount
+        | Resolved cap -> Fmt.pf f "local-cap-promise(%a, %t) -> %t" Debug.OID.pp id self#pp_refcount cap#pp
 
       method! check_invariants =
         super#check_invariants;
@@ -118,13 +119,13 @@ module Make(C : S.CORE_TYPES) = struct
           state <- Resolved released
 
         method disembargo =
-          assert (ref_count > 0);
+          super#check_refcount;
           super#resolve underlying
 
         method! pp f =
           match state with
-          | Unresolved _ -> Fmt.pf f "embargoed(%a, rc=%d) -> %t" Debug.OID.pp id ref_count underlying#pp
-          | Resolved cap -> Fmt.pf f "disembargoed(%a, rc=%d) -> %t" Debug.OID.pp id ref_count cap#pp
+          | Unresolved _ -> Fmt.pf f "embargoed(%a, %t) -> %t" Debug.OID.pp id super#pp_refcount underlying#pp
+          | Resolved cap -> Fmt.pf f "disembargoed(%a, %t) -> %t" Debug.OID.pp id super#pp_refcount cap#pp
       end
     in
     (cap :> embargo_cap)
@@ -138,6 +139,8 @@ module Make(C : S.CORE_TYPES) = struct
     object (self : #cap)
       inherit ref_counted as super
 
+      val id = Debug.OID.next ()
+
       val mutable state =
         if is_settled init then `Settled init
         else `Unsettled (init, Queue.create ())
@@ -148,6 +151,7 @@ module Make(C : S.CORE_TYPES) = struct
         | `Settled x -> x#call msg caps
 
       method resolve cap =
+        self#check_refcount;
         match state with
         | `Settled _ -> failwith "Can't resolve settled switchable!"
         | `Unsettled (old, q) ->
@@ -188,7 +192,7 @@ module Make(C : S.CORE_TYPES) = struct
         | `Unsettled (x, _) | `Settled x -> x#check_invariants
 
       method pp f =
-        Fmt.pf f "switchable %a" pp_state state
+        Fmt.pf f "switchable(%a, %t) %a" Debug.OID.pp id super#pp_refcount pp_state state
     end
 
   let local_promise () = (new local_promise :> resolver_cap)

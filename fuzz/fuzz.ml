@@ -231,11 +231,14 @@ module Endpoint = struct
   let try_step t =
     if Queue.length t.recv_queue > 0 then (
       if dump_state_at_each_step then
-        Logs.info (fun f -> f ~tags:(Conn.tags t.conn) "%a" dump t);
+        Logs.info (fun f -> f ~tags:(Conn.tags t.conn) "@[<v>%a@]" dump t);
       handle_msg t;
       if sanity_checks then Conn.check t.conn;
       true
     ) else false
+
+  let disconnect t =
+    Conn.disconnect t.conn (Capnp_rpc.Exception.v "Tests finished")
 end
 
 let () =
@@ -395,12 +398,17 @@ module Vat = struct
 
   let test_service ~target:self_id vat =
     object (_ : Core_types.cap)
-      inherit Core_types.service
+      inherit Core_types.service as super
 
-      method! pp f = Fmt.pf f "test-service(rc=%d) %a" ref_count Direct.pp self_id
+      val id = Capnp_rpc.Debug.OID.next ()
+
+      method! pp f = Fmt.pf f "test-service(%a, %t) %a"
+          Capnp_rpc.Debug.OID.pp id
+          super#pp_refcount
+          Direct.pp self_id
 
       method call msg caps =
-        assert (ref_count > 0);
+        super#check_refcount;
         let {Msg.Request.target; counters; seq; arg_ids; answer} = msg in
         if not (Direct.equal target self_id) then
           failf "Call received by %a, but expected target was %a (answer %a)"
@@ -512,6 +520,14 @@ module Vat = struct
     List.fold_left (fun found (_, c) ->
         Endpoint.try_step c || found
       ) false t.connections
+
+  let destroy t =
+    begin match t.bootstrap with
+    | None -> ()
+    | Some (bs, _) -> bs#dec_ref; t.bootstrap <- None
+    end;
+    List.iter (fun (_, e) -> Endpoint.disconnect e) t.connections;
+    t.connections <- []
 end
 
 let make_connection v1 v2 =
@@ -534,11 +550,7 @@ let make_connection v1 v2 =
   v1.connections <- (v2.id, c) :: v1.connections;
   v2.connections <- (v1.id, s) :: v2.connections
 
-let () =
-  (* Logs.set_level (Some Logs.Error); *)
-  assert (Array.length (Sys.argv) = 1);
-  AflPersistent.run @@ fun () ->
-
+let run_test () =
   let v1 = Vat.create () in
   let v2 = Vat.create () in
 
@@ -556,9 +568,6 @@ let () =
 
   let free_all () =
     Logs.info (fun f -> f "Freeing everything (for debugging)");
-    vats |> Array.iter (fun v ->
-        Vat.free_all v;
-      );
     let rec flush () =
       let progress = Array.fold_left (fun found v ->
           Vat.try_step v || found
@@ -567,7 +576,14 @@ let () =
       Array.iter Vat.check vats;
       if progress then flush ()
     in
+    flush ();   (* Deliver any pending calls - may add caps *)
+    vats |> Array.iter (fun v ->
+        Vat.free_all v;
+      );
     flush ();
+    vats |> Array.iter (fun v ->
+        Logs.info (fun f -> f ~tags:(Vat.tags v) "%a" Vat.pp v);
+      );
     if stop_after >= 0 then failwith "Everything freed!"
   in
 
@@ -590,7 +606,8 @@ let () =
       try loop ()
       with Choose.End_of_fuzz_data -> ()
     end;
-    free_all ()
+    free_all ();
+    Array.iter Vat.destroy vats
   with ex ->
     let bt = Printexc.get_raw_backtrace () in
     Logs.err (fun f -> f "%a" Fmt.exn_backtrace (ex, bt));
@@ -599,3 +616,10 @@ let () =
         Logs.info (fun f -> f ~tags:(Vat.tags v) "%a" Vat.pp v);
       );
     raise ex
+
+let () =
+  (* Logs.set_level (Some Logs.Error); *)
+  assert (Array.length (Sys.argv) = 1);
+  AflPersistent.run @@ fun () ->
+  run_test ();
+  Gc.full_major ()

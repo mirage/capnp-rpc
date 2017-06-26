@@ -18,6 +18,9 @@ module Make (EP : Message_types.ENDPOINT) : sig
       It will call [queue_send] as necessary to handle the call.
       Messages MUST be fed to [handle_msg] in the order in which they arrive from the peer. *)
 
+  val disconnect : t -> Exception.t -> unit
+  (** [disconnect t reason] breaks all references with [reason] and releases the bootstrap object. *)
+
   (** {2 Debugging and diagnostics} *)
 
   val tags : ?qid:EP.Out.QuestionId.t -> ?aid:EP.Out.AnswerId.t -> t -> Logs.Tag.set

@@ -139,11 +139,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
   end
 
   type t = {
-    queue_send : (EP.Out.t -> unit);
+    mutable queue_send : (EP.Out.t -> unit);    (* (mutable for shutdown) *)
     proxy_caps : Proxy_caps.t;
     tags : Logs.Tag.set;
     embargoes : (EmbargoId.t * Cap_proxy.embargo_cap) Embargoes.t;
-    bootstrap : Core_types.cap option;
+    mutable bootstrap : Core_types.cap option; (* (mutable for shutdown) *)
 
     questions : question Questions.t;
     answers : answer Answers.t;
@@ -182,6 +182,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
     }
 
   let create ?bootstrap ~tags ~queue_send =
+    begin match bootstrap with
+      | None -> ()
+      | Some x -> x#inc_ref
+    end;
     {
       queue_send;
       proxy_caps = Proxy_caps.create ();
@@ -194,6 +198,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
       embargoes = Embargoes.make ();
       exported_caps = Hashtbl.create 30;
     }
+
+  let disconnect t ex =
+    begin match t.bootstrap with
+    | None -> ()
+    | Some b -> t.bootstrap <- None; b#dec_ref
+    end;
+    t.queue_send <- (fun _ -> Debug.failf "CapTP connection disconnected: %a" Exception.pp ex)
+    (* TODO: break existing caps *)
 
   let tags ?qid ?aid t =
     match qid, aid with
@@ -281,8 +293,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
                                  Out.pp_desc new_export
                              );
                     t.queue_send (`Resolve (ex.export_id, Ok new_export));
-                    x#dec_ref
-                  ) (* else: no longer an export *)
+                  ); (* else: no longer an export *)
+                  x#dec_ref
                 );
             );
             ex
@@ -526,14 +538,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
           val id = Debug.OID.next ()
 
           method call msg caps =
-            if ref_count < 1 then Debug.failf "%t already released!" self#pp;
+            self#check_refcount;
             send_call t message_target msg caps
 
           method pp f =
             if settled then
-              Fmt.pf f "far-ref(%a, rc=%d) -> %a" Debug.OID.pp id ref_count pp_cap message_target
+              Fmt.pf f "far-ref(%a, %t) -> %a" Debug.OID.pp id self#pp_refcount pp_cap message_target
             else
-               Fmt.pf f "remote-promise(%a, rc=%d) -> %a"Debug.OID.pp id ref_count pp_cap message_target
+               Fmt.pf f "remote-promise(%a, %t) -> %a"Debug.OID.pp id self#pp_refcount pp_cap message_target
 
           method private release =
             Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
@@ -552,6 +564,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         end
       in
       Proxy_caps.register t.proxy_caps cap message_target;
+      assert (import.import_proxy = `Uninitialised);
       if settled then
         import.import_proxy <- `Settled cap
       else
@@ -783,6 +796,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let disembargo_reply t _target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
       Embargoes.release t.embargoes embargo_id;
+      embargo#dec_ref;
       embargo
 
     let resolve t import_id new_target =

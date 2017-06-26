@@ -3,20 +3,20 @@ open Capnp_direct.Core_types
 module RO_array = Capnp_rpc.RO_array
 
 let echo_service () = object
-  inherit service
+  inherit service as super
   method call x caps =
-    assert (ref_count > 0);
+    super#check_refcount;
     return ("got:" ^ x, caps)
   method! pp f = Fmt.string f "echo-service"
 end
 
 (* A service which just queues incoming messages and lets the test driver handle them. *)
 let manual () = object
-  inherit service
+  inherit service as super
   val queue = Queue.create ()
 
   method call x caps =
-    assert (ref_count > 0);
+    super#check_refcount;
     let result = Capnp_direct.Local_struct_promise.make () in
     Queue.add (x, caps, result) queue;
     (result :> struct_ref)
@@ -42,24 +42,24 @@ end
 
 (* Callers can swap their arguments for the slot's contents. *)
 let swap_service slot = object
-  inherit service
+  inherit service as super
 
   method call x caps =
-    assert (ref_count > 0);
+    super#check_refcount;
     let old_msg, old_caps = !slot in
     slot := (x, caps);
     return (old_msg, old_caps)
 
-  method! pp f = Fmt.string f "swap-service"
+  method! pp f = Fmt.pf f "swap-service(%t)" super#pp_refcount
 end
 
 let logger () = object
-  inherit service
+  inherit service as super
 
   val log = Queue.create ()
 
   method call x caps =
-    assert (ref_count > 0);
+    super#check_refcount;
     assert (RO_array.length caps = 0);
     Queue.add x log;
     return ("logged", RO_array.empty)

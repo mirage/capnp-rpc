@@ -1,3 +1,5 @@
+type 'a brand = ..
+
 module type WIRE = sig
   (** The core RPC logic can be used with different serialisation systems.
       The appropriate types should be provided here. *)
@@ -115,6 +117,9 @@ module type CORE_TYPES = sig
           Note that the new capability can be another promise.
           If [c] is already resolved to a value, this does nothing.
           If [c] is forwarding to another cap, it will forward this call. *)
+
+      method sealed_dispatch : 'a. 'a brand -> 'a option
+      (** [c#sealed_dispatch brand] extracts some private data of the given type. *)
           
     end
   (** A capability reference to an object that can handle calls.
@@ -159,12 +164,25 @@ module type CORE_TYPES = sig
   (** A [struct_ref] that allows its caller to resolve it. *)
 
   class virtual ref_counted : object
-    val mutable ref_count : int
     method private virtual release : unit
     method virtual pp : Format.formatter -> unit
+
+    method private pp_refcount : Format.formatter -> unit
+    (** Write the current ref-count to the formatter (use with ["%t"]). *)
+
+    method private check_refcount : unit
+    (** Raise an exception if the ref-count is less than one
+        (i.e. check that the object hasn't already been freed). *)
+
     method inc_ref : unit
     method dec_ref : unit
     method check_invariants : unit
+
+    method virtual blocker : base_ref option
+    method virtual call : Wire.Request.t -> cap RO_array.t -> struct_ref
+    method virtual shortest : cap
+    method virtual when_more_resolved : (cap -> unit) -> unit
+    method sealed_dispatch : 'a. 'a brand -> 'a option
   end
   (** A mix-in to help with writing reference-counted objects.
       It will call [self#release] when the ref-count reaches zero. *)
