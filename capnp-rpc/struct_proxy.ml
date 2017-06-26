@@ -151,6 +151,9 @@ module Make (C : S.CORE_TYPES) = struct
 
     method private virtual do_finish : 'promise -> unit
 
+    method private field_resolved _f = ()
+    (** [field_resolved f] is called when [f] has been resolved. *)
+
     method pipeline path msg caps =
       dispatch state
         ~cancelling_ok:true
@@ -228,7 +231,8 @@ module Make (C : S.CORE_TYPES) = struct
                   f.cap#resolve c
                 ) else (
                   f.cap#resolve invalid_cap
-                )
+                );
+                self#field_resolved (f.cap :> cap)
               );
             self#on_resolve u.target x;
             Queue.iter (fun fn -> fn x) u.when_resolved;

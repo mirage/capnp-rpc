@@ -91,7 +91,9 @@ module Make ( ) = struct
   let check_finished c s =
     try
       Alcotest.(check stats) "Client finished" Stats.zero @@ C.Conn.stats c.C.conn;
-      Alcotest.(check stats) "Server finished" Stats.zero @@ S.Conn.stats s.S.conn
+      Alcotest.(check stats) "Server finished" Stats.zero @@ S.Conn.stats s.S.conn;
+      C.Conn.check c.C.conn;
+      S.Conn.check s.S.conn;
     with ex ->
       dump c s;
       raise ex
