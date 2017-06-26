@@ -21,6 +21,7 @@ let create_no_args () =
   {msg; n_exports = 0; exports_rev = []}
 
 let export t cap =
+  cap#inc_ref;
   let i = t.n_exports in
   t.n_exports <- i + 1;
   t.exports_rev <- cap :: t.exports_rev;

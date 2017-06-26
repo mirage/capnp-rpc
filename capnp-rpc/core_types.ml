@@ -8,6 +8,7 @@ module Make(Wire : S.WIRE) = struct
   class type base_ref = object
     method pp : Format.formatter -> unit
     method blocker : base_ref option
+    method check_invariants : unit
   end
 
   let pp f x = x#pp f
@@ -25,6 +26,7 @@ module Make(Wire : S.WIRE) = struct
     method inc_ref : unit
     method dec_ref : unit
     method shortest : cap
+    method when_more_resolved : (cap -> unit) -> unit
   end
 
   class type struct_resolver = object
@@ -52,45 +54,66 @@ module Make(Wire : S.WIRE) = struct
       ref_count <- ref_count - 1;
       if ref_count = 0 then
         self#release
+
+    method check_invariants =
+      if ref_count <= 0 then (
+        Debug.invariant_broken @@ fun f ->
+        Fmt.pf f "%a for %t"
+          (Fmt.styled `Red (Fmt.fmt "ref_count=%d")) ref_count
+          self#pp
+      )
   end
 
-  let rec broken_cap msg = object (self : cap)
+  let rec broken_cap ex = object (self : cap)
     method call _ caps =
       RO_array.iter (fun c -> c#dec_ref) caps;
-      broken_struct (`Exception msg)
+      broken_struct (`Exception ex)
     method inc_ref = ()
     method dec_ref = ()
-    method pp f = Fmt.pf f "broken:%s" msg
+    method pp f = Exception.pp f ex
     method shortest = self
     method blocker = None
+    method when_more_resolved _ = ()
+    method check_invariants = ()
   end
   and broken_struct err = object (_ : struct_ref)
     method response = Some (Error err)
     method when_resolved fn = fn (Error err)
     method cap _ =
       match err with
-      | `Exception msg -> broken_cap msg
-      | `Cancelled -> broken_cap "Cancelled"
-    method pp f = Fmt.pf f "broken:%a" Error.pp err
+      | `Exception ex -> broken_cap ex
+      | `Cancelled -> broken_cap Exception.cancelled
+    method pp f = Error.pp f err
     method finish = ()
     method blocker = None
+    method check_invariants = ()
   end
 
-  let null = broken_cap "null"
+  let null = broken_cap {Exception.ty = `Failed; reason = "null"}
+  let cancelled = broken_cap Exception.cancelled
 
-  let cap_failf msg = msg |> Fmt.kstrf broken_cap
+  let cap_failf ?(ty=`Failed) msg = msg |> Fmt.kstrf (fun reason -> broken_cap {Exception.ty; reason})
 
   let cap_in_cap_list i caps =
     match i with
-    | None -> null
-    | Some i when i < 0 || i >= RO_array.length caps -> cap_failf "Invalid cap index %d in %a" i pp_cap_list caps
-    | Some i -> RO_array.get caps i
+    | None -> Ok null (* The field wasn't set - OK *)
+    | Some i when i < 0 || i >= RO_array.length caps -> Error (`Invalid_index i)
+    | Some i ->
+      let cap = RO_array.get caps i in
+      if cap == null then Error (`Invalid_index i)  (* Index was marked as unused *)
+      else Ok cap
 
-  let cap_in_payload i (_, caps) = cap_in_cap_list i caps
+  let cap_in_cap_list_or_err i caps =
+    match cap_in_cap_list i caps with
+    | Ok cap -> cap
+    | Error (`Invalid_index i) ->
+      cap_failf "Invalid cap index %d in %a" i pp_cap_list caps
+
+  let cap_in_payload i (_, caps) = cap_in_cap_list_or_err i caps
 
   let cap_of_err = function
     | `Exception msg -> broken_cap msg
-    | `Cancelled -> broken_cap "Cancelled"
+    | `Cancelled -> cancelled
 
   let cap_in_result i = function
     | Ok p -> cap_in_payload i p
@@ -112,6 +135,10 @@ module Make(Wire : S.WIRE) = struct
     let field (msg, caps) path =
       let i = Response.cap_index msg path in
       cap_in_cap_list i caps
+
+    let field_or_err (msg, caps) path =
+      let i = Response.cap_index msg path in
+      cap_in_cap_list_or_err i caps
   end
 
   let return (msg, caps) = object (_ : struct_ref)
@@ -123,7 +150,7 @@ module Make(Wire : S.WIRE) = struct
 
     method cap path =
       let i = Response.cap_index msg path in
-      let cap = cap_in_cap_list i caps in
+      let cap = cap_in_cap_list_or_err i caps in
       cap#inc_ref;
       cap
 
@@ -134,21 +161,25 @@ module Make(Wire : S.WIRE) = struct
       caps <- RO_array.empty
 
     method blocker = None
+
+    method check_invariants =
+      RO_array.iter (fun c -> c#check_invariants) caps
   end
 
-  class virtual service = object (self)
+  class virtual service = object (self : #cap)
     inherit ref_counted
 
     method virtual call : Request.t -> cap RO_array.t -> struct_ref
     method private release = ()
     method pp f = Fmt.string f "<service>"
     method shortest = (self :> cap)
-    method blocker : base_ref option = None
+    method blocker = None
+    method when_more_resolved _ = ()
   end
 
-  let fail msg =
-    msg |> Fmt.kstrf @@ fun msg ->
-    broken_struct (`Exception msg)
+  let fail ?(ty=`Failed) msg =
+    msg |> Fmt.kstrf @@ fun reason ->
+    broken_struct (`Exception {Exception.ty; reason})
 
   let resolved = function
     | Ok x -> return x

@@ -59,7 +59,7 @@ let return_lwt fn =
         )
         (fun ex ->
            Log.warn (fun f -> f "Uncaught exception: %a" Fmt.exn ex);
-           result#resolve (Error (`Exception "Internal error"));
+           result#resolve (Error (Capnp_rpc.Error.exn "Internal error"));
            Lwt.return_unit
         );
     );

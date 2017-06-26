@@ -11,7 +11,7 @@ module Make (C : S.CORE_TYPES) = struct
     method private do_pipeline q i msg caps =
       let result = local_promise ~parent:self () in
       q |> Queue.add (fun p ->
-          Logs.info (fun f -> f "%d:%a forwarding %t" id Wire.Path.pp i p#pp);
+          Logs.info (fun f -> f "%a:%a forwarding %t" Debug.OID.pp id Wire.Path.pp i p#pp);
           result#connect ((p#cap i)#call msg caps)      (* XXX: dec_ref? *)
         );
       (result :> struct_ref)
@@ -23,7 +23,7 @@ module Make (C : S.CORE_TYPES) = struct
         | Some p -> Fmt.pf f "blocked on %t" p#pp
       in
       Fmt.pf f "local-struct-ref(%a) -> %a"
-        (Fmt.styled `Blue Fmt.int) id
+        Debug.OID.pp id
         (Struct_proxy.pp_state ~pp_promise) state
 
     method private on_resolve q x =

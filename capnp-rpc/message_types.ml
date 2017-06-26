@@ -64,30 +64,29 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
   ]
 
   type return = [
+    | Error.t
     | `Results of Response.t * desc RO_array.t
-    | `Exception of string
-    | `Cancelled
     | `ResultsSentElsewhere
     | `TakeFromOtherQuestion
     | `AcceptFromThirdParty
   ]
 
   type disembargo_request = [
-    | `Loopback of (QuestionId.t * Path.t) * EmbargoId.t
+    | `Loopback of message_target * EmbargoId.t
   ]
 
   let pp_return f = function
-    | `Results descrs -> Fmt.pf f "Results:%a" (Fmt.Dump.list pp_desc) descrs
-    | `Exception msg -> Fmt.pf f "Exception:%s" msg
+    | `Results (_, descrs) -> Fmt.pf f "Results:%a" (RO_array.pp pp_desc) descrs
+    | `Exception ex -> Fmt.pf f "Exception:%a" Exception.pp ex
     | `Cancelled -> Fmt.pf f "Cancelled"
     | `ResultsSentElsewhere -> Fmt.pf f "ResultsSentElsewhere"
     | `TakeFromOtherQuestion -> Fmt.pf f "TakeFromOtherQuestion"
     | `AcceptFromThirdParty -> Fmt.pf f "AcceptFromThirdParty"
 
   let pp_disembargo_request : disembargo_request Fmt.t = fun f -> function
-    | `Loopback ((qid, p), id) -> Fmt.pf f "senderLoopback for question %a:%a (embargo_id = %a)"
-                                  QuestionId.pp qid Path.pp p
-                                  EmbargoId.pp id;
+    | `Loopback (old_path, id) -> Fmt.pf f "senderLoopback for %a (embargo_id = %a)"
+                                    pp_desc old_path
+                                    EmbargoId.pp id
 
   type t = [
     | `Bootstrap of QuestionId.t
@@ -97,6 +96,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | `Disembargo_request of disembargo_request
     | `Disembargo_reply of message_target * EmbargoId.t
     | `Return of (AnswerId.t * return)
+    | `Resolve of (ExportId.t * (desc, Exception.t) result)
   ]
   (** A message sent over the network. *)
 end

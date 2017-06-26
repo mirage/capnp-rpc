@@ -46,18 +46,19 @@ let write_promised_answer pa (qid, xforms) =
       PromisedAnswer.Op.get_pointer_field_set_exn b f
     )
 
+let write_cap slot =
+  let open Builder in function
+  | `ReceiverHosted id -> CapDescriptor.receiver_hosted_set slot (ImportId.uint32 id)
+  | `ReceiverAnswer x -> write_promised_answer (CapDescriptor.receiver_answer_init slot) x
+  | `SenderHosted id -> CapDescriptor.sender_hosted_set slot (ExportId.uint32 id)
+  | `SenderPromise id -> CapDescriptor.sender_promise_set slot (ExportId.uint32 id)
+  | `ThirdPartyHosted _ -> failwith "TODO: write_caps_array"
+  | `None -> CapDescriptor.none_set slot
+
 let write_caps_array caps payload =
   let open Builder in
   let builder = Payload.cap_table_init payload (RO_array.length caps) in
-  caps |> RO_array.iteri (fun i x ->
-      let slot = Capnp.Array.get builder i in
-      match x with
-      | `None -> ()
-      | `ReceiverHosted id -> CapDescriptor.receiver_hosted_set slot (ImportId.uint32 id)
-      | `ReceiverAnswer x -> write_promised_answer (CapDescriptor.receiver_answer_init slot) x
-      | `SenderHosted id -> CapDescriptor.sender_hosted_set slot (ExportId.uint32 id)
-      | _ -> failwith "TODO: write_caps_array"
-    )
+  caps |> RO_array.iteri (fun i -> write_cap (Capnp.Array.get builder i))
 
 let parse_xform x =
   let open Reader.PromisedAnswer.Op in
@@ -89,6 +90,19 @@ let parse_desc d =
 
 let parse_descs = RO_array.map parse_desc
 
+let read_exn ex =
+  let open Reader.Exception in
+  let reason = reason_get ex in
+  let ty =
+    match type_get ex with
+    | Failed        -> `Failed
+    | Overloaded    -> `Overloaded
+    | Disconnected  -> `Disconnected
+    | Unimplemented -> `Unimplemented
+    | Undefined x   -> `Undefined x
+  in
+  { Capnp_rpc.Exception.ty; reason }
+
 let handle_return t return =
   let open Reader in
   let qid = Return.answer_id_get return |> QuestionId.of_uint32 in
@@ -97,9 +111,9 @@ let handle_return t return =
     let descs = parse_descs (Payload.cap_table_get_list results |> RO_array.of_list) in
     Conn.handle_msg t.conn (`Return (qid, `Results (Rpc.Readonly return, descs)))
   | Return.Exception ex ->
-    let reason = Exception.reason_get ex in
-    Log.info (fun f -> f ~tags:(tags ~qid t) "Got exception %S" reason);
-    Conn.handle_msg t.conn (`Return (qid, `Exception reason))
+    let ex = read_exn ex in
+    Log.info (fun f -> f ~tags:(tags ~qid t) "Got exception %a" Capnp_rpc.Exception.pp ex);
+    Conn.handle_msg t.conn (`Return (qid, `Exception ex))
   | Return.Canceled ->
     Conn.handle_msg t.conn (`Return (qid, `Cancelled))
   | _ ->
@@ -152,7 +166,7 @@ let handle_disembargo t x =
     let embargo_id = EmbargoId.of_uint32 embargo_id in
     begin match target with
     | `ReceiverAnswer (aid, path) ->
-      let req = `Loopback ((aid, path), embargo_id) in
+      let req = `Loopback (`ReceiverAnswer (aid, path), embargo_id) in
       Conn.handle_msg t.conn (`Disembargo_request req)
     | `ReceiverHosted _ -> failwith "TODO: handle_disembargo: ReceiverHosted"   (* Can this happen? *)
     end
@@ -194,6 +208,19 @@ let set_target b target =
   | `ReceiverHosted id ->
     MessageTarget.imported_cap_set b (ImportId.uint32 id)
 
+let write_exn b ex =
+  let open Builder.Exception in
+  let ty =
+    match ex.Capnp_rpc.Exception.ty with
+    | `Failed        -> Type.Failed
+    | `Overloaded    -> Type.Overloaded
+    | `Disconnected  -> Type.Disconnected
+    | `Unimplemented -> Type.Unimplemented
+    | `Undefined x   -> Type.Undefined x
+  in
+  type_set b ty;
+  reason_set b ex.Capnp_rpc.Exception.reason
+
 let serialise ~tags : Endpoint_types.Out.t -> _ =
   let open Builder in
   function
@@ -230,8 +257,8 @@ let serialise ~tags : Endpoint_types.Out.t -> _ =
     let dis = Message.disembargo_init m in
     let ctx = Disembargo.context_init dis in
     begin match disembargo_request with
-      | `Loopback ((qid, path), embargo_id) ->
-        set_target (Disembargo.target_init dis) (`ReceiverAnswer (qid, path));
+      | `Loopback (old_path, embargo_id) ->
+        set_target (Disembargo.target_init dis) old_path;
         Disembargo.Context.sender_loopback_set ctx (EmbargoId.uint32 embargo_id)
     end;
     Message.to_message m
@@ -250,12 +277,10 @@ let serialise ~tags : Endpoint_types.Out.t -> _ =
           let ret = Rpc.writable_resp msg in
           write_caps_array descs (results_of_return ret);
           ret
-        | `Exception msg ->
+        | `Exception ex ->
           let m = Message.init_root () in
           let ret = Message.return_init m in
-          let ex = Return.exception_init ret in
-          Exception.type_set ex Exception.Type.Failed;    (* todo: other types? *)
-          Exception.reason_set ex msg;
+          write_exn (Return.exception_init ret) ex;
           ret
         | `Cancelled ->
           let m = Message.init_root () in
@@ -266,6 +291,15 @@ let serialise ~tags : Endpoint_types.Out.t -> _ =
     in
     Return.answer_id_set ret (AnswerId.uint32 aid);
     Return.to_message ret
+  | `Resolve (id, new_target) ->
+    let m = Message.init_root () in
+    let r = Message.resolve_init m in
+    begin match new_target with
+      | Ok cap -> write_cap (Resolve.cap_init r) cap
+      | Error e -> write_exn (Resolve.exception_init r) e
+    end;
+    Resolve.promise_id_set r (ExportId.uint32 id);
+    Message.to_message m
 
 let queue_send ~tags endpoint x =
   let message = serialise ~tags x in

@@ -2,7 +2,7 @@ module Make (EP : Message_types.ENDPOINT) : sig
   type t
   (** A [t] is a connection to a remote vat. *)
 
-  val create : ?bootstrap:EP.Core_types.cap -> tags:Logs.Tag.set -> queue_send:(EP.Out.t -> unit) -> t
+  val create : ?bootstrap:#EP.Core_types.cap -> tags:Logs.Tag.set -> queue_send:(EP.Out.t -> unit) -> t
   (** [create ~bootstrap ~tags ~queue_send] is a handler for a connection to a remote peer.
       Messages will be sent to the peer by calling [queue_send] (which MUST deliver them in order).
       If the remote peer asks for the bootstrap object, it will be given a reference to [bootstrap].
@@ -29,4 +29,8 @@ module Make (EP : Message_types.ENDPOINT) : sig
 
   val dump : t Fmt.t
   (** [dump] formats a dump of the current state of the connection. *)
+
+  val check : t -> unit
+  (** [check t] performs some sanity checks on the state of the tables and raises an exception
+      if it finds a problem. *)
 end

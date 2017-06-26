@@ -80,6 +80,7 @@ module Untyped = struct
       method finish = failwith "Can't use finish on a sub-struct"
       method pp f = Fmt.pf f "pointer %d in %t" i t#pp
       method blocker = failwith "struct_field: blocker"
+      method check_invariants = ()
     end
 
   let capability_field t f = t#cap [Xform.Field f]

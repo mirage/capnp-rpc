@@ -20,5 +20,5 @@ clean:
 test:
 	rm -rf _build/_tests
 	jbuilder build --dev test/test.bc test-lwt/test.bc
-	#./_build/default/test/test.bc test core 7
+	#./_build/default/test/test.bc test core -ev 8
 	jbuilder build @runtest --dev --no-buffer -j 1

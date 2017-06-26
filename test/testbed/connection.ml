@@ -29,13 +29,14 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
     | `Bootstrap _ -> "bootstrap"
     | `Call (_, _, msg, _) -> "call:" ^ msg
     | `Return (_, `Results (msg, _)) -> "return:" ^ msg
-    | `Return (_, `Exception msg) -> "return:" ^ msg
+    | `Return (_, `Exception ex) -> "return:" ^ ex.Capnp_rpc.Exception.reason
     | `Return (_, `Cancelled) -> "return:(cancelled)"
     | `Return (_, _) -> "return:(other)"
     | `Finish _ -> "finish"
     | `Release _ -> "release"
     | `Disembargo_request _ -> "disembargo-request"
     | `Disembargo_reply _ -> "disembargo-reply"
+    | `Resolve _ -> "resolve"
 
   let pop_msg ?expect t =
     match Queue.pop t.recv_queue, expect with
