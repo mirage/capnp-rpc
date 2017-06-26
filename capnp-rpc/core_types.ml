@@ -1,3 +1,5 @@
+module Log = Debug.Log
+
 module Make(Wire : S.WIRE) = struct
   module Wire = Wire
 

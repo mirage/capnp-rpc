@@ -4,6 +4,11 @@ module Make(C : S.CORE_TYPES) = struct
   open C
   module Local_struct_promise = Local_struct_promise.Make(C)
 
+  class type resolver_cap = object
+    inherit C.cap
+    method resolve : C.cap -> unit
+  end
+
   class type embargo_cap = object
     inherit cap
     method disembargo : unit
@@ -185,4 +190,7 @@ module Make(C : S.CORE_TYPES) = struct
       method pp f =
         Fmt.pf f "switchable %a" pp_state state
     end
+
+  let local_promise () = (new local_promise :> resolver_cap)
+  let switchable init = (new switchable init :> resolver_cap)
 end

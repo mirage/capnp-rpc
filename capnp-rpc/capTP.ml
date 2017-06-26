@@ -79,7 +79,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     mutable import_proxy : [
       | `Uninitialised
       | `Settled of Core_types.cap
-      | `Unsettled of Cap_proxy.local_promise   (* Note: might be resolved to a settled value *)
+      | `Unsettled of Cap_proxy.resolver_cap   (* Note: might be resolved to a settled value *)
     ]
   }
 
@@ -555,7 +555,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       if settled then
         import.import_proxy <- `Settled cap
       else
-        import.import_proxy <- `Unsettled (new Cap_proxy.switchable cap)
+        import.import_proxy <- `Unsettled (Cap_proxy.switchable cap)
 
     let import_sender t ~mark_dirty ~settled id =
       match Imports.find t.imports id with

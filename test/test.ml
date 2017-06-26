@@ -131,7 +131,7 @@ let cap x = (x :> Core_types.cap)
 let test_local_embargo_2 () =
   let open CS in
   let server_main = Services.manual () in
-  let c, s, bs = init_pair ~bootstrap_service:(cap server_main) in
+  let c, s, bs = init_pair ~bootstrap_service:server_main in
   let local = Services.logger () in
   let local_reg = Services.manual () in    (* A registry that provides access to [local]. *)
   let q1 = call bs "q1" [local_reg] in (* Give the server our registry and get back [local]. *)
@@ -182,7 +182,7 @@ let test_local_embargo_3 () =
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_logger = RO_array.get q1_args 0 in
-  let promise = new Proxy.local_promise in
+  let promise = Proxy.local_promise () in
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   let service = q1#cap 0 in
@@ -251,7 +251,7 @@ let test_local_embargo_5 () =
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_local = RO_array.get q1_args 0 in
-  let server_promise = new Proxy.local_promise in
+  let server_promise = Proxy.local_promise () in
   resolve_ok a1 "a1" [server_promise];
   C.handle_msg c ~expect:"return:a1";
   (* [test] is now known to be at [service]; no embargo needed.
@@ -441,8 +441,8 @@ let ensure_is_cycle_error (x:#Core_types.struct_ref) : unit =
 let test_cycle () =
   (* Cap cycles *)
   let module P = Testbed.Capnp_direct.Cap_proxy in
-  let p1 = new P.local_promise in
-  let p2 = new P.local_promise in
+  let p1 = P.local_promise () in
+  let p2 = P.local_promise () in
   p1#resolve (p2 :> Core_types.cap);
   p2#resolve (p1 :> Core_types.cap);
   ensure_is_cycle_error (call p2 "test" []);
@@ -480,7 +480,7 @@ let test_resolve () =
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_logger = RO_array.get q1_args 0 in
-  let promise = new Proxy.local_promise in
+  let promise = Proxy.local_promise () in
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   (* The server now resolves the promise *)
@@ -508,7 +508,7 @@ let test_resolve_2 () =
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_logger = RO_array.get q1_args 0 in
-  let promise = new Proxy.local_promise in
+  let promise = Proxy.local_promise () in
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   (* The client doesn't care about the result and releases it *)
@@ -529,7 +529,7 @@ let test_resolve_3 () =
   let q1 = call proxy_to_service "q1" [] in
   S.handle_msg s ~expect:"call:q1";
   let (_, _q1_args, a1) = service#pop in
-  let a1_promise = new Proxy.local_promise in
+  let a1_promise = Proxy.local_promise () in
   resolve_ok a1 "a1" [a1_promise];
   C.handle_msg c ~expect:"return:a1";
   q1#finish;
@@ -593,7 +593,7 @@ let test_ref_counts () =
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
   (* Test local promise *)
   let module Proxy = Testbed.Capnp_direct.Cap_proxy in
-  let promise = new Proxy.local_promise in
+  let promise = Proxy.local_promise () in
   promise#when_more_resolved dec_ref;
   promise#resolve (make ());
   promise#dec_ref;
