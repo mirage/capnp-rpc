@@ -89,7 +89,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   type t = {
     queue_send : (EP.Out.t -> unit);
-    ours : (Core_types.cap, message_target_cap) Hashtbl.t;              (* TODO: use weak table *)
+    proxy_caps : (Core_types.cap, message_target_cap) Hashtbl.t;              (* TODO: use weak table *)
     tags : Logs.Tag.set;
     embargoes : (EmbargoId.t * Cap_proxy.embargo_cap) Embargoes.t;
     bootstrap : Core_types.cap option;
@@ -98,7 +98,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     answers : answer Answers.t;
     exports : export Exports.t;
     imports : import Imports.t;
-    wrapper : (Core_types.cap, ExportId.t) Hashtbl.t;
+    exported_caps : (Core_types.cap, ExportId.t) Hashtbl.t;
   }
 
   let get_import_proxy import =
@@ -133,7 +133,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let create ?bootstrap ~tags ~queue_send =
     {
       queue_send;
-      ours = Hashtbl.create 10;
+      proxy_caps = Hashtbl.create 10;
       tags;
       bootstrap = (bootstrap :> Core_types.cap option);
       questions = Questions.make ();
@@ -141,7 +141,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       imports = Imports.make ();
       exports = Exports.make ();
       embargoes = Embargoes.make ();
-      wrapper = Hashtbl.create 30;
+      exported_caps = Hashtbl.create 30;
     }
 
   let tags ?qid ?aid t =
@@ -152,12 +152,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | Some _, Some _ -> assert false
 
   let register t x y =
-    match Hashtbl.find t.ours x with
-    | exception Not_found -> Hashtbl.add t.ours x y
+    match Hashtbl.find t.proxy_caps x with
+    | exception Not_found -> Hashtbl.add t.proxy_caps x y
     | existing -> assert (y = existing)
 
   let unwrap t x =
-    try Some (Hashtbl.find t.ours x#shortest)
+    try Some (Hashtbl.find t.proxy_caps x#shortest)
     with Not_found -> None
 
   let to_cap_desc t (cap : Core_types.cap) =
@@ -214,7 +214,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         let service = service#shortest in
         let settled = service#blocker = None in
         let ex =
-          match Hashtbl.find t.wrapper service with
+          match Hashtbl.find t.exported_caps service with
           | id ->
             let ex = Exports.find_exn t.exports id in
             ex.export_count <- ex.export_count + 1;
@@ -226,7 +226,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
               )
             in
             let id = ex.export_id in
-            Hashtbl.add t.wrapper service id;
+            Hashtbl.add t.exported_caps service id;
             if not settled then (
               Log.info (fun f -> f ~tags:t.tags "Monitoring promise export %a -> %a" ExportId.pp ex.export_id dump_export ex);
               service#when_more_resolved (fun x ->
@@ -690,7 +690,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       export.export_count <- count;
       if count = 0 then (
         Log.info (fun f -> f ~tags:t.tags "Releasing export %a" ExportId.pp export_id);
-        Hashtbl.remove t.wrapper export.export_service;
+        Hashtbl.remove t.exported_caps export.export_service;
         Exports.release t.exports export_id;
         export.export_service#dec_ref
       )
