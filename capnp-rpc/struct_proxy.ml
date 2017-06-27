@@ -22,6 +22,8 @@ module Make (C : S.CORE_TYPES) = struct
 
     method field_check_invariants : Wire.Path.t -> unit
 
+    method field_sealed_dispatch : 'a. Wire.Path.t -> 'a S.brand -> 'a option
+
     method field_pp : Wire.Path.t -> Format.formatter -> unit
   end
 
@@ -133,7 +135,10 @@ module Make (C : S.CORE_TYPES) = struct
         | ForwardingField c -> c#check_invariants
         | PromiseField (p, i) -> p#field_check_invariants i
 
-      method sealed_dispatch _ = None
+      method sealed_dispatch brand =
+        match state with
+        | ForwardingField _ -> None
+        | PromiseField (p, i) -> p#field_sealed_dispatch i brand
     end
 
   class virtual ['promise] t init = object (self : #struct_resolver)
@@ -153,6 +158,8 @@ module Make (C : S.CORE_TYPES) = struct
     (* We have just started forwarding. Send any queued data onwards. *)
 
     method private virtual do_finish : 'promise -> unit
+
+    method virtual field_sealed_dispatch : 'a. Wire.Path.t -> 'a S.brand -> 'a option
 
     method private field_resolved _f = ()
     (** [field_resolved f] is called when [f] has been resolved. *)

@@ -36,6 +36,8 @@ module Make (C : S.CORE_TYPES) = struct
       | None, _ -> None            (* Not blocked *)
       | Some _self, Some b -> b#blocker
       | Some _ as x, None -> x
+
+    method field_sealed_dispatch _ _ = None
   end
 
   let make () = (local_promise () :> struct_resolver)

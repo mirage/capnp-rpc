@@ -1,7 +1,7 @@
 module RO_array = Capnp_rpc.RO_array
 module Test_utils = Testbed.Test_utils
 
-let three_vats = false (* XXX *)
+let three_vats = true (* XXX *)
 
 let stop_after =
   match Sys.getenv "FUZZ_STOP" with
