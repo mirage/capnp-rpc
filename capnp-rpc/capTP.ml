@@ -48,7 +48,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   type question = {
     question_id : QuestionId.t;
-    question_data : Core_types.struct_resolver;
+    question_data : Core_types.struct_resolver;         (* TODO: should be a weak ref *)
     mutable question_flags : int;
     mutable params_for_release : ExportId.t list;
     mutable question_pipelined_fields : PathSet.t; (* Fields used while unresolved; will need embargoes *)
@@ -75,8 +75,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
   type import = {
     import_id : ImportId.t;
     mutable import_count : int; (* Number of times remote sent us this *)
-    mutable import_used : bool; (* We have send a message to this target *)
-    mutable import_proxy : [
+    mutable import_used : bool; (* We have sent a message to this target *)
+    mutable import_proxy : [    (* TODO: should be a weak ref *)
       | `Uninitialised
       | `Settled of Core_types.cap
       | `Unsettled of Cap_proxy.resolver_cap   (* Note: might be resolved to a settled value *)
@@ -111,6 +111,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
     exports : export Exports.t;
     imports : import Imports.t;
     exported_caps : (Core_types.cap, ExportId.t) Hashtbl.t;
+
+    mutable disconnected : Exception.t option;  (* If set, this connection is finished. *)
   }
 
   type 'a S.brand += CapTP : (t * message_target_cap) S.brand
@@ -167,15 +169,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       exports = Exports.make ();
       embargoes = Embargoes.make ();
       exported_caps = Hashtbl.create 30;
+      disconnected = None;
     }
-
-  let disconnect t ex =
-    begin match t.bootstrap with
-    | None -> ()
-    | Some b -> t.bootstrap <- None; b#dec_ref
-    end;
-    t.queue_send <- (fun _ -> Debug.failf "CapTP connection disconnected: %a" Exception.pp ex)
-    (* TODO: break existing caps *)
 
   let tags ?qid ?aid t =
     match qid, aid with
@@ -198,6 +193,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
     if question.question_flags - flag_returned - flag_finished = 0 then (
       Questions.release t.questions question.question_id
     )
+
+  let check_connected t =
+    match t.disconnected with
+    | None -> ()
+    | Some ex -> Debug.failf "CapTP connection is disconnected (%a)" Exception.pp ex
 
   module Send : sig
     (** Converts struct pointers into integer table indexes, ready for sending.
@@ -277,6 +277,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         descr, [id]
 
     let bootstrap t question_data =
+      check_connected t;
       let question =
         Questions.alloc t.questions (fun question_id ->
             {question_flags = 0; params_for_release = []; question_id; question_data; question_pipelined_fields = PathSet.empty}
@@ -859,7 +860,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
              );
     Input.resolve t id new_target
 
-  let handle_msg t : EP.In.t -> unit = function
+  let handle_msg t (msg : EP.In.t) =
+    check_connected t;
+    match msg with
     | `Bootstrap x          -> handle_bootstrap t x
     | `Call x               -> handle_call t x
     | `Return x             -> handle_return t x
@@ -916,4 +919,20 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Exports.iter    (fun _ -> check_export)   t.exports;
     Embargoes.iter  (fun _ -> check_embargo)  t.embargoes;
     Hashtbl.iter    (check_exported_cap t) t.exported_caps
+
+  let disconnect t ex =
+    check_connected t;
+    t.disconnected <- Some ex;
+    begin match t.bootstrap with
+    | None -> ()
+    | Some b -> t.bootstrap <- None; b#dec_ref
+    end;
+    t.queue_send <- ignore;
+    Exports.drop_all t.exports (fun _ e -> e.export_service#dec_ref);
+    Hashtbl.clear t.exported_caps;
+    Answers.drop_all t.answers (fun _ a -> a.answer_promise#finish);
+    Imports.drop_all t.imports (fun _ i -> i.import_proxy <- `Uninitialised);
+    Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; e#dec_ref);
+    (* TODO: break existing caps *)
+    ()
 end

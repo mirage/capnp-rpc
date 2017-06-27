@@ -39,6 +39,17 @@ module type WIRE = sig
     val cap_index : t -> Path.t -> int option
     (** [cap_index msg path] is the capability index at [path]. *)
   end
+
+  val ref_leak_detected : (unit -> unit) -> unit
+  (** [ref_leak_detected fn] is called when a promise or capability is GC'd while
+      its ref-count is non-zero, indicating that resources may have been leaked.
+      [fn ()] will log a warning about this and free the resources itself.
+      The reason for going via [ref_leak_detected] rather than calling [fn] directly
+      is because the OCaml GC may detect the problem at any point (e.g. while we're
+      sending another message). The implementation should arrange for [fn] to be
+      called at a safe point (e.g. when returning to the main loop).
+      Unit-tests may wish to call [fn] immediately to show the error and then
+      fail the test. *)
 end
 
 module type CORE_TYPES = sig

@@ -12,6 +12,7 @@ module Make(C : S.CORE_TYPES) = struct
   class type embargo_cap = object
     inherit cap
     method disembargo : unit
+    method break : Exception.t -> unit
   end
 
   (* Operations to perform when resolved. *)
@@ -71,6 +72,9 @@ module Make(C : S.CORE_TYPES) = struct
             state <- Resolved released
           )
         | Resolved _ -> failwith "Already resolved!"
+
+      method break ex =
+        self#resolve (broken_cap ex)
 
       method private release =
         match state with

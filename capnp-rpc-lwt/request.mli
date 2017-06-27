@@ -9,3 +9,4 @@ val create_no_args : unit -> 'a t
 val export : 'a t -> Core_types.cap -> Uint32.t
 val get_call : 'a t -> Schema.Builder.Call.t
 val caps : 'a t -> Core_types.cap RO_array.t
+val release : 'a t -> unit

@@ -179,21 +179,49 @@ let handle_disembargo t x =
     end
   | _ -> failwith "TODO: handle_disembargo"
 
+let handle_resolve t x =
+  let open Reader in
+  let new_target =
+    match Resolve.get x with
+    | Resolve.Cap d -> Ok (parse_desc d)
+    | Resolve.Exception e -> Error (read_exn e)
+    | Resolve.Undefined x -> Capnp_rpc.Debug.failf "Resolved to Undefined(%d)!" x
+  in
+  let import_id = Resolve.promise_id_get x |> ImportId.of_uint32 in
+  Conn.handle_msg t.conn (`Resolve (import_id, new_target))
+
+let handle_release t x =
+  let open Reader in
+  let export_id = Release.id_get x |> ExportId.of_uint32 in
+  let ref_count = Release.reference_count_get x |> Uint32.to_int in
+  Conn.handle_msg t.conn (`Release (export_id, ref_count))
+
+let return_not_implemented _t _x = failwith "TODO: return_not_implemented"
+
 let listen t =
   let rec loop () =
     Endpoint.recv t.endpoint >>= function
     | Error e -> Lwt.return e
     | Ok msg ->
       begin
-        let open Reader in
-        let msg = Reader.Message.of_message msg in
-        match Message.get msg with
-        | Message.Call x       -> handle_call t x
-        | Message.Bootstrap x  -> handle_bootstrap t x
-        | Message.Return x     -> handle_return t x
-        | Message.Finish x     -> handle_finish t x
-        | Message.Disembargo x -> handle_disembargo t x
-        | _ -> failwith "TODO: listen"
+        let open Reader.Message in
+        let msg = of_message msg in
+        match get msg with
+        | Call x       -> handle_call t x
+        | Bootstrap x  -> handle_bootstrap t x
+        | Return x     -> handle_return t x
+        | Finish x     -> handle_finish t x
+        | Disembargo x -> handle_disembargo t x
+        | Resolve x    -> handle_resolve t x
+        | Release x    -> handle_release t x
+        | Unimplemented _  -> failwith "TODO: listen: Unimplemented"
+        | Abort _          -> failwith "Received Abort" (* TODO: handle this better *)
+        | Provide _
+        | Accept _
+        | Join _           -> return_not_implemented t msg
+        | ObsoleteSave _   -> failwith "Received ObsoleteSave!"
+        | ObsoleteDelete _ -> failwith "Received ObsoleteDelete!"
+        | Undefined x      -> Capnp_rpc.Debug.failf "Received Undefined message (%d)!" x
       end;
       loop ()
   in
@@ -308,6 +336,10 @@ let queue_send ~tags endpoint x =
 
 let of_endpoint ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
   let conn = Conn.create ?bootstrap:offer ~tags ~queue_send:(queue_send ~tags endpoint) in
+  Lwt_switch.add_hook (Some switch) (fun () ->
+      Conn.disconnect conn (Capnp_rpc.Exception.v "CapTP switch turned off");
+      Lwt.return_unit
+    );
   let t = {
     conn;
     endpoint;
@@ -329,3 +361,5 @@ let of_endpoint ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
       (* todo: notify users *)
     );
   t
+
+let dump f t = Conn.dump f t.conn

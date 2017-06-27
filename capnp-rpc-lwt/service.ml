@@ -16,11 +16,19 @@ type ('a, 'b) method_t = abstract_method_t
 
 let pp_method = Capnp.RPC.Registry.pp_method
 
-let local s =
-  object
-    inherit Core_types.service
+class type generic = object
+  method dispatch : interface_id:Uint64.t -> method_id:int -> abstract_method_t
+  method release : unit
+  method pp : Format.formatter -> unit
+end
 
-    method! pp f = Fmt.string f "local-service"
+let local (s:#generic) =
+  object (_ : Core_types.cap)
+    inherit Core_types.service as super
+
+    method! pp f = Fmt.pf f "%t(%t)" s#pp super#pp_refcount
+
+    method! private release = s#release
 
     method call call caps =
       let open Schema.Reader in
@@ -29,7 +37,7 @@ let local s =
       let method_id = Call.method_id_get call in
       Log.info (fun f -> f "Invoking local method %a" pp_method (interface_id, method_id));
       let p = Call.params_get call in
-      let m = s ~interface_id ~method_id in
+      let m = s#dispatch ~interface_id ~method_id in
       try m (p, caps)
       with ex ->
         Log.warn (fun f -> f "Uncaught exception handling %a: %a" pp_method (interface_id, method_id) Fmt.exn ex);

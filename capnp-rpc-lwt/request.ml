@@ -33,4 +33,12 @@ let get_call t =
   | _ -> failwith "Not a call!"
 
 let caps t =
-  List.rev t.exports_rev |> RO_array.of_list
+  let caps = List.rev t.exports_rev |> RO_array.of_list in
+  t.n_exports <- 0;
+  t.exports_rev <- [];
+  caps
+
+let release t =
+  List.iter (fun x -> x#dec_ref) t.exports_rev;
+  t.n_exports <- 0;
+  t.exports_rev <- []

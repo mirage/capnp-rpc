@@ -3,7 +3,7 @@ FROM ocaml/opam@sha256:a469435632d0cacbceab799d7e48201b727d025fa1805cbbe210d9423
 RUN cd opam-repository && git fetch && git reset --hard f946b0ab58422e1f38b9bd3069a6c874d9df0129 && opam update
 ADD *.opam /home/opam/capnp-rpc/
 WORKDIR /home/opam/capnp-rpc/
-RUN opam pin add -ny capnp "https://github.com/talex5/capnp-ocaml.git#interfaces" && \
+RUN opam pin add -ny capnp "https://github.com/talex5/capnp-ocaml.git#interfaces2" && \
     opam pin add -ny capnp-rpc . && \
     opam pin add -ny capnp-rpc-lwt . && \
     opam depext capnp-rpc-lwt

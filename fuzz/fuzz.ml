@@ -1,7 +1,7 @@
 module RO_array = Capnp_rpc.RO_array
 module Test_utils = Testbed.Test_utils
 
-let three_vats = true (* XXX *)
+let three_vats = true
 
 let stop_after =
   match Sys.getenv "FUZZ_STOP" with
@@ -169,6 +169,10 @@ module Msg = struct
     let cap_index _ i = Some i
     let bootstrap = "(boot)"
   end
+
+  let ref_leak_detected fn =
+    fn ();
+    failwith "ref_leak_detected"
 end
 
 module Core_types = struct

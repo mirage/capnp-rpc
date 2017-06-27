@@ -25,7 +25,7 @@ Some key features:
 
 This library should be used with the [capnp-ocaml][] schema compiler, which generates bindings from schema files.
 
-Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces> branch, which adds support for compiling interface definitions.
+Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces2> branch, which adds support for compiling interface definitions.
 
 
 ### Status
@@ -50,7 +50,7 @@ To build, you will need a platform with the capnproto package available (e.g. De
 
     git clone https://github.com/mirage/capnp-rpc.git
     cd capnp-rpc
-    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces"
+    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces2"
     opam pin add -nyk git capnp-rpc .
     opam pin add -nyk git capnp-rpc-lwt .
     opam depext capnp-rpc-lwt alcotest

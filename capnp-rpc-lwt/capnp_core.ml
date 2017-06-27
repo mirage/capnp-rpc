@@ -1,3 +1,5 @@
+open Lwt.Infix
+
 module Capnp_content = struct
   module Path = struct
     type t = Xform.t list
@@ -35,6 +37,13 @@ module Capnp_content = struct
       Payload.content_set_interface p (Some Uint32.zero);   (* Cap index 0 *)
       Rpc.Builder ret
   end
+
+  let ref_leak_detected fn =
+    Lwt.async (fun () ->
+        Lwt.pause () >|= fun () ->
+        fn ();
+        failwith "ref_leak_detected"
+      )
 end
 
 module Core_types = struct

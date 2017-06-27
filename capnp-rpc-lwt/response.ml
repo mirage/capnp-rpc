@@ -30,9 +30,17 @@ let export t cap =
   Uint32.of_int i
 
 let caps t =
-  List.rev t.exports_rev |> RO_array.of_list
+  let caps = List.rev t.exports_rev |> RO_array.of_list in
+  t.n_exports <- 0;
+  t.exports_rev <- [];
+  caps
 
 let finish t =
   match Message.get t.msg with
   | Message.Return r -> Rpc.Builder r, caps t
   | _ -> assert false
+
+let release t =
+  List.iter (fun x -> x#dec_ref) t.exports_rev;
+  t.n_exports <- 0;
+  t.exports_rev <- []

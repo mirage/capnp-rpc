@@ -54,6 +54,12 @@ module Allocating (Key : Id.S) = struct
     (Fmt.Dump.list (pp_item ~check (pp_kv pp))) f items
 
   let iter fn t = Hashtbl.iter fn t.used
+
+  let drop_all t fn =
+    Hashtbl.iter fn t.used;
+    t.free <- [];
+    t.next <- Key.zero;
+    Hashtbl.clear t.used
 end
 
 module Tracking (Key : Id.S) = struct
@@ -87,4 +93,8 @@ module Tracking (Key : Id.S) = struct
     (Fmt.Dump.list (pp_item ~check (pp_kv pp))) f items
 
   let iter fn t = Hashtbl.iter fn t
+
+  let drop_all t fn =
+    Hashtbl.iter fn t;
+    Hashtbl.clear t
 end

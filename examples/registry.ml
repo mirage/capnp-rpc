@@ -3,8 +3,10 @@ open Capnp_rpc_lwt
 
 let version_service =
   Api.Builder.Version.local @@
-  object (_ : Api.Builder.Version.service)
-    method read _ =
+  object
+    inherit Api.Builder.Version.service
+
+    method read_impl _ =
       let module R = Api.Builder.Version.Read_results in
       let resp, results = Service.Response.create R.init_pointer in
       R.version_set results "0.1";
@@ -14,19 +16,27 @@ let version_service =
 (* A service that can return other services. *)
 let service () =
   Api.Builder.Registry.local @@
-  object (_ : Api.Builder.Registry.service)
+  object
+    inherit Api.Builder.Registry.service
+
     val mutable blocked = Lwt.wait ()
     val mutable echo_service = Echo.service ()
 
-    method set_echo_service params =
+    method! release = Capability.dec_ref echo_service
+
+    method! pp f = Fmt.string f "registry"
+
+    method set_echo_service_impl params =
       let module P = Api.Reader.Registry.SetEchoService_params in
       match P.service_get (P.of_payload params) with
       | None -> assert false
       | Some s ->
+        Capability.dec_ref echo_service;
         echo_service <- Payload.import params s;
+        Payload.release params;
         Service.return_empty ()
 
-    method echo_service _params =
+    method echo_service_impl _params =
       let module R = Api.Builder.Registry.EchoService_results in
       let resp, results = Service.Response.create R.init_pointer in
       let cap_index = Service.Response.export resp echo_service in
@@ -35,12 +45,12 @@ let service () =
         fst blocked >|= fun () -> Ok resp
       )
 
-    method unblock _ =
+    method unblock_impl _ =
       Lwt.wakeup (snd blocked) ();
       blocked <- Lwt.wait ();
       Service.return_empty ()
 
-    method complex _ =
+    method complex_impl _ =
       (* Returns:
          foo (f1):
            b (b2) = {}
@@ -70,8 +80,7 @@ module Client = struct
   let echo_service t =
     let req = Capability.Request.create_no_args () in
     let module R = Api.Reader.Registry.EchoService_results in
-    Capability.call t Api.Reader.Registry.echo_service_method req
-    |> R.service_get_pipelined
+    Capability.call_for_caps t Api.Reader.Registry.echo_service_method req R.service_get_pipelined
 
   let unblock t =
     let req = Capability.Request.create_no_args () in
@@ -82,7 +91,7 @@ module Client = struct
     let module R = Api.Reader.Registry.Complex_results in
     let module Foo = Api.Reader.Foo in
     let module Bar = Api.Reader.Bar in
-    let result = Capability.call t Api.Reader.Registry.complex_method req in
+    Capability.call_for_caps t Api.Reader.Registry.complex_method req @@ fun result ->
     let echo_service = R.foo_get_pipelined result |> Foo.echo_get_pipelined in
     let version = R.bar_get_pipelined result |> Bar.version_get_pipelined in
     (echo_service, version)

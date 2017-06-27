@@ -110,7 +110,7 @@ module Make (C : S.CORE_TYPES) = struct
         | ForwardingField c -> c#dec_ref
 
       method resolve cap =
-        Log.info (fun f -> f "Resolve field(%a) to %t" Debug.OID.pp id cap#pp);
+        Log.info (fun f -> f "Resolved field(%a) to %t" Debug.OID.pp id cap#pp);
         match state with
         | ForwardingField _ -> failwith "Field already resolved!"
         | PromiseField _ -> state <- ForwardingField cap
@@ -225,9 +225,9 @@ module Make (C : S.CORE_TYPES) = struct
                   match RO_array.find blocked_on_us caps with
                   | None -> x
                   | Some c ->
-                    let x = cycle_err "Resolving:@,  %t@,with:@,  %t@,due to:@,  %t@]" self#pp x#pp c#pp in
-                    RO_array.iter (fun c -> c#dec_ref) caps;
-                    x
+                    let err = cycle_err "Resolving:@,  %t@,with:@,  %t@,due to:@,  %t@]" self#pp x#pp c#pp in
+                    x#finish;
+                    err
             in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->

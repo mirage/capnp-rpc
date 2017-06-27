@@ -7,6 +7,7 @@ module Make(C : S.CORE_TYPES) : sig
   class type embargo_cap = object
     inherit C.cap
     method disembargo : unit
+    method break : Exception.t -> unit
   end
 
   val local_promise : unit -> resolver_cap

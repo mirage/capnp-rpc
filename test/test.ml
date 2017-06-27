@@ -121,7 +121,6 @@ let test_local_embargo () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   (* Clean up *)
-  CS.dump c s;
   local#dec_ref;
   bs#dec_ref;
   service#dec_ref;
@@ -561,7 +560,7 @@ let test_ref_counts () =
     let o = object (self)
       inherit Core_types.service
       val id = Capnp_rpc.Debug.OID.next ()
-      method call _ _  = failwith "call"
+      method call _ _  = Core_types.return ("answer", RO_array.empty)
       method! private release = Hashtbl.remove objects self
       method! pp f = Fmt.pf f "Service(%a, %t)" Capnp_rpc.Debug.OID.pp id self#pp_refcount
     end in
@@ -592,6 +591,16 @@ let test_ref_counts () =
   promise#finish;
   List.iter dec_ref fields;
   List.iter dec_ref fields2;
+  Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
+  (* With pipelining *)
+  let promise = S.make () in
+  let f0 = promise#cap 0 in
+  let q1 = call f0 "q1" [] in
+  f0#when_more_resolved dec_ref;
+  resolve_ok promise "ok" [make ()];
+  f0#dec_ref;
+  promise#finish;
+  q1#finish;
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
   (* Test local promise *)
   let module Proxy = Testbed.Capnp_direct.Cap_proxy in

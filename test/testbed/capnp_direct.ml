@@ -23,6 +23,10 @@ module String_content = struct
     let cap_index _ i = Some i
     let bootstrap = "(boot)"
   end
+
+  let ref_leak_detected fn =
+    fn ();
+    failwith "ref_leak_detected"
 end
 
 module Core_types = struct
