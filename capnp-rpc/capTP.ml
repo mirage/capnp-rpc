@@ -486,7 +486,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     val release : t -> In.ImportId.t -> referenceCount:int -> unit
     val disembargo_request : t -> In.disembargo_request -> unit
-    val disembargo_reply : t -> In.message_target -> Message_types.EmbargoId.t -> Cap_proxy.embargo_cap
+    val disembargo_reply : t -> In.message_target -> Message_types.EmbargoId.t -> unit
     val resolve : t -> In.ExportId.t -> (In.desc, Exception.t) result -> unit
 (*
     val provide : t -> In.QuestionId.t -> In.message_target -> recipient_id -> unit
@@ -764,11 +764,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
         | None -> Debug.failf "Protocol error: disembargo for invalid target %t" cap#pp
 
-    let disembargo_reply t _target embargo_id =
+    let disembargo_reply t target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
+      Log.info (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
+                   EP.In.pp_desc target
+                   embargo#pp);
       Embargoes.release t.embargoes embargo_id;
-      embargo#dec_ref;
-      embargo
+      embargo#disembargo;
+      embargo#dec_ref
 
     let resolve t import_id new_target =
       let new_target ~embargo_path =
@@ -843,13 +846,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Log.info (fun f -> f ~tags:t.tags "Received disembargo %a" EP.In.pp_disembargo_request request);
     Input.disembargo_request t request
 
-  let handle_disembargo_reply t (target, embargo_id) =
-    let embargo = Input.disembargo_reply t target embargo_id in
-    Log.info (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
-                 EP.In.pp_desc target
-                 embargo#pp);
-    embargo#disembargo
-
   let handle_release t (id, referenceCount) =
     Input.release t id ~referenceCount
 
@@ -869,7 +865,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Finish x             -> handle_finish t x
     | `Release x            -> handle_release t x
     | `Disembargo_request x -> handle_disembargo_request t x
-    | `Disembargo_reply x   -> handle_disembargo_reply t x
+    | `Disembargo_reply (target, id) -> Input.disembargo_reply t target id
     | `Resolve x            -> handle_resolve t x
 
   let dump_embargo f (id, proxy) =

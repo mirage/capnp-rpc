@@ -15,6 +15,9 @@ let dump_state_at_each_step = (stop_after >= 0)
 let sanity_checks = dump_state_at_each_step
 (* Check that the state is valid after every step (slow). *)
 
+let () =
+  if sanity_checks then Printexc.record_backtrace true
+
 let failf msg = Fmt.kstrf failwith msg
 
 let styles = [| `Red; `Green; `Blue |]
@@ -387,11 +390,12 @@ module Vat = struct
 
   (* Reply to a random question. *)
   let do_answer state () =
+    (* Choose args before popping question, in case we run out of random data in the middle. *)
+    let n_args = Choose.int 3 in
+    let args, arg_refs = n_caps state (n_args) in
     match DynArray.pop state.answers_needed with
     | None -> ()
     | Some (answer, answer_id) ->
-      let n_args = Choose.int 3 in
-      let args, arg_refs = n_caps state (n_args) in
       let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
       RO_array.iter (fun c -> c#inc_ref) args;
       Logs.info (fun f -> f ~tags:(tags state)
@@ -600,15 +604,15 @@ let run_test () =
       Vat.do_action v;
       if dump_state_at_each_step then
         Logs.info (fun f -> f ~tags:(Vat.tags v) "Post: %a" Vat.pp v);
-      if sanity_checks then Vat.check v;
+      if sanity_checks then (Gc.full_major (); Vat.check v);
       if !step <> stop_after then (
         incr step;
         loop ()
-      )
+      ) else Logs.info (fun f -> f "Stopping early due to stop_after");
     in
     begin
       try loop ()
-      with Choose.End_of_fuzz_data -> ()
+      with Choose.End_of_fuzz_data -> Logs.info (fun f -> f "End of fuzz data")
     end;
     free_all ();
     Array.iter Vat.destroy vats
