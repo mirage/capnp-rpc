@@ -22,6 +22,8 @@ module Make (C : S.CORE_TYPES) = struct
 
     method field_check_invariants : Wire.Path.t -> unit
 
+    method field_sealed_dispatch : 'a. Wire.Path.t -> 'a S.brand -> 'a option
+
     method field_pp : Wire.Path.t -> Format.formatter -> unit
   end
 
@@ -31,9 +33,10 @@ module Make (C : S.CORE_TYPES) = struct
     method dec_ref = failwith "invalid_cap"
     method shortest = failwith "invalid_cap"
     method when_more_resolved _ = failwith "invalid_cap"
-    method pp f = Fmt.pf f "[%a]" Fmt.(styled `Red string) "INVALID CAP"
+    method pp f = Fmt.string f "(invalid cap)"
     method blocker = failwith "invalid_cap"
     method check_invariants = failwith "invalid_cap"
+    method sealed_dispatch _ = failwith "invalid_cap"
   end
 
   module Field_map = Map.Make(Wire.Path)
@@ -107,7 +110,7 @@ module Make (C : S.CORE_TYPES) = struct
         | ForwardingField c -> c#dec_ref
 
       method resolve cap =
-        Log.info (fun f -> f "Resolve field(%a) to %t" Debug.OID.pp id cap#pp);
+        Log.info (fun f -> f "Resolved field(%a) to %t" Debug.OID.pp id cap#pp);
         match state with
         | ForwardingField _ -> failwith "Field already resolved!"
         | PromiseField _ -> state <- ForwardingField cap
@@ -131,6 +134,11 @@ module Make (C : S.CORE_TYPES) = struct
         match state with
         | ForwardingField c -> c#check_invariants
         | PromiseField (p, i) -> p#field_check_invariants i
+
+      method sealed_dispatch brand =
+        match state with
+        | ForwardingField _ -> None
+        | PromiseField (p, i) -> p#field_sealed_dispatch i brand
     end
 
   class virtual ['promise] t init = object (self : #struct_resolver)
@@ -150,6 +158,8 @@ module Make (C : S.CORE_TYPES) = struct
     (* We have just started forwarding. Send any queued data onwards. *)
 
     method private virtual do_finish : 'promise -> unit
+
+    method virtual field_sealed_dispatch : 'a. Wire.Path.t -> 'a S.brand -> 'a option
 
     method private field_resolved _f = ()
     (** [field_resolved f] is called when [f] has been resolved. *)
@@ -215,9 +225,9 @@ module Make (C : S.CORE_TYPES) = struct
                   match RO_array.find blocked_on_us caps with
                   | None -> x
                   | Some c ->
-                    let x = cycle_err "Resolving:@,  %t@,with:@,  %t@,due to:@,  %t@]" self#pp x#pp c#pp in
-                    RO_array.iter (fun c -> c#dec_ref) caps;
-                    x
+                    let err = cycle_err "Resolving:@,  %t@,with:@,  %t@,due to:@,  %t@]" self#pp x#pp c#pp in
+                    x#finish;
+                    err
             in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->
@@ -242,7 +252,8 @@ module Make (C : S.CORE_TYPES) = struct
             failwith (Fmt.strf "Already forwarding (to %t)!" t#pp)
           )
 
-    method resolve result = self#connect (resolved result)
+    method resolve result =
+      self#connect (resolved result)
 
     method finish =
       dispatch state
@@ -312,7 +323,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:true
         ~unresolved:(fun u ->
             let f = Field_map.get i u.fields in
-            assert (f.ref_count > 0)
+            assert (f.ref_count > 1)
           )
         ~forwarding:(fun _ -> Debug.failf "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
 
@@ -328,7 +339,9 @@ module Make (C : S.CORE_TYPES) = struct
     method check_invariants =
       dispatch state
         ~cancelling_ok:true
-        ~unresolved:(fun u -> Field_map.iter (fun _ f -> f.cap#check_invariants) u.fields)
+        ~unresolved:(fun u ->
+            Field_map.iter (fun _ f -> assert (f.ref_count > 0)) u.fields
+          )
         ~forwarding:(fun x -> x#check_invariants)
 
     initializer

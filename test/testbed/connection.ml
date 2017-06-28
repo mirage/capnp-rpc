@@ -6,6 +6,28 @@ module Log = (val Logs.src_log src: Logs.LOG)
 module Stats = Capnp_rpc.Stats
 let stats = Alcotest.of_pp Stats.pp
 
+module type ENDPOINT = sig
+  open Capnp_direct.Core_types
+
+  type t
+
+  module EP : Capnp_direct.ENDPOINT
+
+  val dump : t Fmt.t
+
+  val create : ?bootstrap:#cap -> tags:Logs.Tag.set -> EP.Out.t Queue.t -> EP.In.t Queue.t -> t
+
+  val handle_msg : ?expect:string -> t -> unit
+
+  val maybe_handle_msg : t -> unit
+
+  val step : t -> bool
+
+  val bootstrap : t -> cap
+
+  val stats : t -> Capnp_rpc.Stats.t
+end
+
 module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   module Conn = Capnp_rpc.CapTP.Make(EP)
 
@@ -16,6 +38,8 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 
   let dump f t =
     Conn.dump f t.conn
+
+  module EP = EP
 
   let create ?bootstrap ~tags xmit_queue recv_queue =
     let queue_send x = Queue.add x xmit_queue in
@@ -58,9 +82,11 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
     else false
 
   let bootstrap t = Conn.bootstrap t.conn
+
+  let stats t = Conn.stats t.conn
 end
 
-module Make ( ) = struct
+module Pair ( ) = struct
   module ProtoC = Capnp_rpc.Message_types.Endpoint(Capnp_direct.Core_types) ( )
   module ProtoS = struct
     module Core_types = Capnp_direct.Core_types
@@ -77,6 +103,7 @@ module Make ( ) = struct
     let q2 = Queue.create () in
     let c = C.create ~tags:client_tags q1 q2 in
     let s = S.create ~tags:server_tags q2 q1 ~bootstrap in
+    bootstrap#dec_ref; (* [s] took a reference *)
     c, s
 
   let rec flush c s =
@@ -88,12 +115,16 @@ module Make ( ) = struct
     Logs.info (fun f -> f ~tags:(C.Conn.tags c.C.conn) "%a" C.dump c);
     Logs.info (fun f -> f ~tags:(S.Conn.tags s.S.conn) "%a" S.dump s)
 
+  let finished = Capnp_rpc.Exception.v "Tests finished"
+
   let check_finished c s =
     try
-      Alcotest.(check stats) "Client finished" Stats.zero @@ C.Conn.stats c.C.conn;
-      Alcotest.(check stats) "Server finished" Stats.zero @@ S.Conn.stats s.S.conn;
+      Alcotest.(check stats) "Client finished" Stats.zero @@ C.stats c;
+      Alcotest.(check stats) "Server finished" Stats.zero @@ S.stats s;
       C.Conn.check c.C.conn;
       S.Conn.check s.S.conn;
+      C.Conn.disconnect c.C.conn finished;
+      S.Conn.disconnect s.S.conn finished;
     with ex ->
       dump c s;
       raise ex

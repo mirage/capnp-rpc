@@ -1,3 +1,5 @@
+module Log = Debug.Log
+
 module Make(Wire : S.WIRE) = struct
   module Wire = Wire
 
@@ -27,6 +29,7 @@ module Make(Wire : S.WIRE) = struct
     method dec_ref : unit
     method shortest : cap
     method when_more_resolved : (cap -> unit) -> unit
+    method sealed_dispatch : 'a. 'a S.brand -> 'a option
   end
 
   class type struct_resolver = object
@@ -37,32 +40,59 @@ module Make(Wire : S.WIRE) = struct
 
   let pp_cap_list f caps = RO_array.pp pp f caps
 
-  class virtual ref_counted = object (self)
-    val mutable ref_count = 1
+  type 'a S.brand += Gc : unit S.brand
 
-    method private virtual release : unit
-    method virtual pp : Format.formatter -> unit
+  class virtual ref_counted =
+    object (self : #cap)
+      val mutable ref_count = 1
+      method private virtual release : unit
+      method virtual pp : Format.formatter -> unit
 
-    method inc_ref =
-      if ref_count < 1 then (
-        failwith (Fmt.strf "inc_ref: already destroyed %t" self#pp)
-      );
-      ref_count <- ref_count + 1
+      method private pp_refcount f =
+        Fmt.pf f "rc=%d" ref_count
 
-    method dec_ref =
-      if ref_count < 1 then failwith (Fmt.strf "Already unref'd! %t" self#pp);
-      ref_count <- ref_count - 1;
-      if ref_count = 0 then
-        self#release
+      method private check_refcount =
+        if ref_count < 1 then
+          Debug.invariant_broken (fun f -> Fmt.pf f "Already unref'd! %t" self#pp)
 
-    method check_invariants =
-      if ref_count <= 0 then (
-        Debug.invariant_broken @@ fun f ->
-        Fmt.pf f "%a for %t"
-          (Fmt.styled `Red (Fmt.fmt "ref_count=%d")) ref_count
-          self#pp
-      )
-  end
+      method inc_ref =
+        self#check_refcount;
+        ref_count <- ref_count + 1
+
+      method dec_ref =
+        self#check_refcount;
+        ref_count <- ref_count - 1;
+        if ref_count = 0 then (
+          self#release;          (* We can get GC'd once we enter [release], but ref_count is 0 by then so OK. *)
+        );
+        ignore (Sys.opaque_identity self)
+
+      method check_invariants = self#check_refcount
+
+      method sealed_dispatch : type a. a S.brand -> a option = function
+        | Gc ->
+          if ref_count <> 0 then (
+            ref_leak_detected (fun () ->
+                (* Note: only the first warning logged is really useful. The others may result from
+                   things being freed by the first one, and may even note that the ref-count is now zero. *)
+                Log.warn (fun f -> f "@[<v2>Capability reference GC'd with ref-count of %d!@,%t@]"
+                             ref_count self#pp);
+                ref_count <- 0;
+                self#release
+              )
+          );
+          Some ()
+        | _ ->
+          None
+
+      method virtual blocker : base_ref option
+      method virtual call : Request.t -> cap RO_array.t -> struct_ref
+      method virtual shortest : cap
+      method virtual when_more_resolved : (cap -> unit) -> unit
+
+      initializer
+        Gc.finalise (fun (self:#cap) -> ignore (self#sealed_dispatch Gc)) self
+    end
 
   let rec broken_cap ex = object (self : cap)
     method call _ caps =
@@ -75,6 +105,7 @@ module Make(Wire : S.WIRE) = struct
     method blocker = None
     method when_more_resolved _ = ()
     method check_invariants = ()
+    method sealed_dispatch _ = None
   end
   and broken_struct err = object (_ : struct_ref)
     method response = Some (Error err)
@@ -141,8 +172,10 @@ module Make(Wire : S.WIRE) = struct
       cap_in_cap_list_or_err i caps
   end
 
-  let return (msg, caps) = object (_ : struct_ref)
+  let return (msg, caps) = object (self : struct_ref)
     val mutable caps = caps
+
+    val id = Debug.OID.next ()
 
     method response = Some (Ok (msg, caps))
 
@@ -154,16 +187,27 @@ module Make(Wire : S.WIRE) = struct
       cap#inc_ref;
       cap
 
-    method pp f = Fmt.pf f "returned:%a" Response_payload.pp (msg, caps)
+    method pp f = Fmt.pf f "returned(%a):%a" Debug.OID.pp id Response_payload.pp (msg, caps)
 
     method finish =
       RO_array.iter (fun c -> c#dec_ref) caps;
-      caps <- RO_array.empty
+      caps <- RO_array.empty;
+      ignore (Sys.opaque_identity self) (* Prevent self from being GC'd until this point *)
 
     method blocker = None
 
     method check_invariants =
       RO_array.iter (fun c -> c#check_invariants) caps
+
+    initializer
+      self |> Gc.finalise (fun self ->
+          if RO_array.length caps > 0 then (
+            ref_leak_detected (fun () ->
+                Log.warn (fun f -> f "@[<v2>StructRef GC'd without being finished!@,%t@]" self#pp);
+                self#finish
+              )
+          )
+        )
   end
 
   class virtual service = object (self : #cap)

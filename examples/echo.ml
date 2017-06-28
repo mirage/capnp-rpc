@@ -5,11 +5,17 @@ open Capnp_rpc_lwt
    replies, so it has become a bit messy... *)
 let service () =
   Api.Builder.Echo.local @@
-  object (_ : Api.Builder.Echo.service)
+  object
+    inherit Api.Builder.Echo.service
+
     val mutable blocked = Lwt.wait ()
     val mutable count = 0
 
-    method ping = fun req ->
+    val id = Capnp_rpc.Debug.OID.next ()
+
+    method! pp f = Fmt.pf f "echo-service(%a)" Capnp_rpc.Debug.OID.pp id
+
+    method ping_impl = fun req ->
       let module P = Api.Reader.Echo.Ping_params in
       let module R = Api.Builder.Echo.Ping_results in
       let params = P.of_payload req in
@@ -24,7 +30,7 @@ let service () =
       )
       else Service.return resp
 
-    method unblock _ =
+    method unblock_impl _ =
       Lwt.wakeup (snd blocked) ();
       blocked <- Lwt.wait ();
       Service.return_empty ()

@@ -10,7 +10,13 @@ module Payload = struct
   type 'a t = Schema.Reader.Payload.t * Core_types.cap RO_array.t
   type 'a index = Uint32.t
 
-  let import (t:'a t) i = RO_array.get (snd t) (Uint32.to_int i)        (* TODO: out-of-bounds *)
+  let import (t:'a t) i =
+    let cap = RO_array.get (snd t) (Uint32.to_int i) in       (* TODO: out-of-bounds *)
+    cap#inc_ref;
+    cap
+
+  let release (_, caps) =
+    RO_array.iter (fun x -> x#dec_ref) caps
 end
 
 module Capability = struct
@@ -23,6 +29,7 @@ module Capability = struct
 
   let inc_ref x = x#inc_ref
   let dec_ref x = x#dec_ref
+  let pp f x = x#pp f
 
   let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) req =
     let open Schema.Builder in
@@ -60,6 +67,12 @@ module Capability = struct
           Capnp.RPC.Registry.pp_method m
           Capnp_rpc.Error.pp e in
       Lwt.fail (Failure msg)
+
+  let call_for_caps cap m req fn =
+    let q = call cap m req in
+    match fn q with
+    | r -> q#finish; r
+    | exception ex -> q#finish; raise ex
 end
 
 module StructRef = struct
@@ -104,6 +117,8 @@ module Untyped = struct
 
   let unknown_method ~interface_id ~method_id _req =
     Core_types.fail "Unknown method %a.%d" Uint64.printer interface_id method_id
+
+  class type generic_service = Service.generic
 end
 
 module Service = Service

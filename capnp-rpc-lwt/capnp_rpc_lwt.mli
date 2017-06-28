@@ -21,7 +21,11 @@ module rec Payload : sig
 
   val import : 'a t -> 'b index -> 'b Capability.t
   (** [import t i] is the capability at index [i] in the table.
-      Use the generated field accessors to get [i]. *)
+      Use the generated field accessors to get [i].
+      This increases the ref-count on the capability - call [dec_ref] when done with it. *)
+
+  val release : 'a t -> unit
+  (** [release t] releases the payload, by reducing the ref-count on each capability in it. *)
 end
 
 and Capability : sig
@@ -46,7 +50,13 @@ and Capability : sig
 
     val export : 'a t -> 'b capability_t -> 'b Payload.index
     (** [export t cap] adds [cap] to the payload's CapDescriptor table and returns
-        its index. You can use the index with the generated setter. *)
+        its index. You can use the index with the generated setter.
+        The request increases the ref-count on [cap]. If you decide not to send
+        the message, use [release] to free it. *)
+
+    val release : 'a t -> unit
+    (** Clear the exported refs, dropping their ref-counts. This is called automatically
+        when you send a message, but you might need it if you decide to abort. *)
   end
 
   val call : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b StructRef.t
@@ -67,9 +77,17 @@ and Capability : sig
   val call_for_value_exn : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b Payload.t Lwt.t
   (** Wrapper for [call_for_value] that turns errors in Lwt failures. *)
 
+  val call_for_caps : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> ('b StructRef.t -> 'c) -> 'c
+  (** [call_for_caps] is a wrapper for [call] that passes the results to a
+      callback and finishes them automatically when it returns.
+      In the common case where you want a single cap "foo" from the result, use
+      [call_for_caps target meth req R.foo_get_pipelined]. *)
+
   val inc_ref : _ t -> unit
 
   val dec_ref : _ t -> unit
+
+  val pp : 'a t Fmt.t
 end
 
 module Service : sig
@@ -88,7 +106,13 @@ module Service : sig
 
     val export : 'a t -> 'b Capability.t -> 'b Payload.index
     (** [export t cap] adds [cap] to the payload's CapDescriptor table and returns
-        its index. You can use the index with the generated setter. *)
+        its index. You can use the index with the generated setter.
+        The response increases the ref-count of [cap]. It will be released when
+        the message is sent. If the message is not sent, you must release it. *)
+
+    val release : 'a t -> unit
+    (** Clear the exported refs, dropping their ref-counts. This is called automatically
+        when you send a message, but you might need it if you decide to abort. *)
   end
 
   val return : 'a Response.t -> 'a StructRef.t
@@ -126,9 +150,13 @@ module Untyped : sig
 
   val capability_field : 'a StructRef.t -> int -> 'b Capability.t
 
-  val local :
-    (interface_id:Uint64.t -> method_id:int -> abstract_method_t) ->
-    'a Capability.t
+  class type generic_service = object
+    method dispatch : interface_id:Uint64.t -> method_id:int -> abstract_method_t
+    method release : unit
+    method pp : Format.formatter -> unit
+  end
+
+  val local : #generic_service -> 'a Capability.t
 
   val cap_index : Uint32.t option -> _ Payload.index option
 
@@ -147,6 +175,9 @@ module CapTP : sig
 
   val bootstrap : t -> 'a Capability.t
   (** [bootstrap t] is the peer's public bootstrap object, if any. *)
+
+  val dump : t Fmt.t
+  (** [dump] dumps the state of the connection, for debugging. *)
 end
 
 module Endpoint = Endpoint

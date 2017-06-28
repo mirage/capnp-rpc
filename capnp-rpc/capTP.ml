@@ -48,7 +48,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   type question = {
     question_id : QuestionId.t;
-    question_data : Core_types.struct_resolver;
+    question_data : Core_types.struct_resolver;         (* TODO: should be a weak ref *)
     mutable question_flags : int;
     mutable params_for_release : ExportId.t list;
     mutable question_pipelined_fields : PathSet.t; (* Fields used while unresolved; will need embargoes *)
@@ -75,11 +75,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
   type import = {
     import_id : ImportId.t;
     mutable import_count : int; (* Number of times remote sent us this *)
-    mutable import_used : bool; (* We have send a message to this target *)
-    mutable import_proxy : [
+    mutable import_used : bool; (* We have sent a message to this target *)
+    mutable import_proxy : [    (* TODO: should be a weak ref *)
       | `Uninitialised
       | `Settled of Core_types.cap
-      | `Unsettled of Cap_proxy.local_promise   (* Note: might be resolved to a settled value *)
+      | `Unsettled of Cap_proxy.resolver_cap   (* Note: might be resolved to a settled value *)
     ]
   }
 
@@ -100,57 +100,30 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `ThirdPartyHosted _third_party_desc -> Fmt.pf f "ThirdPartyHosted"
     | `Local local -> Fmt.pf f "Local:%t" local#pp
 
-  module Proxy_caps : sig
-    type t
-    (* Maps proxies that we create to information about their target at our peer. *)
-
-    val create : unit -> t
-    val register : t -> Core_types.cap -> message_target_cap -> unit
-    val unwrap : t -> Core_types.cap -> message_target_cap option
-    val unregister : t -> Core_types.cap -> unit
-    val dump : check:(Core_types.cap -> message_target_cap -> unit) -> t Fmt.t
-    val iter : (Core_types.cap -> message_target_cap -> unit) -> t -> unit
-  end = struct
-    type t = (Core_types.cap, message_target_cap) Hashtbl.t              (* TODO: use weak table *)
-
-    let create () = Hashtbl.create 10
-
-    let register t x y =
-      match Hashtbl.find t x with
-      | exception Not_found -> Hashtbl.add t x y
-      | existing -> assert (y = existing)
-
-    let unwrap t x =
-      try Some (Hashtbl.find t x#shortest)
-      with Not_found -> None
-
-    let unregister = Hashtbl.remove
-
-    let sort_key = function
-      | `Import import -> `Import import.import_id
-      | `QuestionCap (question, path) -> `Question (question.question_id, path)
-
-    let pp_proxy_cap ~check f (cap, target) =
-      Fmt.pf f "%t => %a%a" cap#pp pp_cap target (pp_check check) (cap, target)
-
-    let dump ~check = hashtbl_dump ~key:sort_key (pp_proxy_cap ~check)
-
-    let iter = Hashtbl.iter
-  end
-
   type t = {
-    queue_send : (EP.Out.t -> unit);
-    proxy_caps : Proxy_caps.t;
+    mutable queue_send : (EP.Out.t -> unit);    (* (mutable for shutdown) *)
     tags : Logs.Tag.set;
     embargoes : (EmbargoId.t * Cap_proxy.embargo_cap) Embargoes.t;
-    bootstrap : Core_types.cap option;
+    mutable bootstrap : Core_types.cap option; (* (mutable for shutdown) *)
 
     questions : question Questions.t;
     answers : answer Answers.t;
     exports : export Exports.t;
     imports : import Imports.t;
     exported_caps : (Core_types.cap, ExportId.t) Hashtbl.t;
+
+    mutable disconnected : Exception.t option;  (* If set, this connection is finished. *)
   }
+
+  type 'a S.brand += CapTP : (t * message_target_cap) S.brand
+  (* The [CapTP] message asks a capability to tell us its CapTP target, if any. *)
+
+  let target_of (x : #Core_types.cap) = x#shortest#sealed_dispatch CapTP
+
+  let my_target_of t (x : #Core_types.cap) =
+    match target_of x with
+    | Some (t', target) when t == t' -> Some target
+    | _ -> None
 
   let get_import_proxy import =
     match import.import_proxy with
@@ -182,9 +155,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
     }
 
   let create ?bootstrap ~tags ~queue_send =
+    begin match bootstrap with
+      | None -> ()
+      | Some x -> x#inc_ref
+    end;
     {
       queue_send;
-      proxy_caps = Proxy_caps.create ();
       tags;
       bootstrap = (bootstrap :> Core_types.cap option);
       questions = Questions.make ();
@@ -193,6 +169,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       exports = Exports.make ();
       embargoes = Embargoes.make ();
       exported_caps = Hashtbl.create 30;
+      disconnected = None;
     }
 
   let tags ?qid ?aid t =
@@ -204,7 +181,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   let to_cap_desc t (cap : Core_types.cap) =
     let cap = cap#shortest in
-    match Proxy_caps.unwrap t.proxy_caps cap with
+    match my_target_of t cap with
     | None -> `Local cap
     | Some x -> (x :> [`Local of Core_types.cap | message_target_cap])
 
@@ -216,6 +193,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
     if question.question_flags - flag_returned - flag_finished = 0 then (
       Questions.release t.questions question.question_id
     )
+
+  let check_connected t =
+    match t.disconnected with
+    | None -> ()
+    | Some ex -> Debug.failf "CapTP connection is disconnected (%a)" Exception.pp ex
 
   module Send : sig
     (** Converts struct pointers into integer table indexes, ready for sending.
@@ -281,8 +263,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
                                  Out.pp_desc new_export
                              );
                     t.queue_send (`Resolve (ex.export_id, Ok new_export));
-                    x#dec_ref
-                  ) (* else: no longer an export *)
+                  ); (* else: no longer an export *)
+                  x#dec_ref
                 );
             );
             ex
@@ -295,6 +277,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         descr, [id]
 
     let bootstrap t question_data =
+      check_connected t;
       let question =
         Questions.alloc t.questions (fun question_id ->
             {question_flags = 0; params_for_release = []; question_id; question_data; question_pipelined_fields = PathSet.empty}
@@ -381,7 +364,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   (* A cap that sends to a promised answer's cap at other *)
   and make_remote_promise t =
     object (self : #Core_types.struct_resolver)
-      inherit [target] Struct_proxy.t None as super
+      inherit [target] Struct_proxy.t None
 
       method do_pipeline question i msg caps =
         match question with
@@ -389,8 +372,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
           let target = `QuestionCap (target_q, i) in
           send_call t target msg caps
         | None -> failwith "Not initialised!"
-
-      method! field_resolved f = Proxy_caps.unregister t.proxy_caps f
 
       method on_resolve q _ =
         match q with
@@ -408,21 +389,21 @@ module Make (EP : Message_types.ENDPOINT) = struct
         ) in
         self#update_target (Some (q, finish))
 
-      method! cap path =
-        let field = super#cap path in
-        begin match state with
-          | Unresolved u ->
-            begin match u.target with
-              | None -> failwith "Not intialised!"
-              | Some (target_q, _) -> Proxy_caps.register t.proxy_caps field (`QuestionCap (target_q, path))
-            end
-          | _ -> ()
-        end;
-        field
-
       method do_finish = function
         | Some (_, finish) -> Lazy.force finish
         | None -> failwith "Not initialised!"
+
+      method field_sealed_dispatch : type a. Wire.Path.t -> a S.brand -> a option = fun path -> function
+        | CapTP ->
+          begin match state with
+            | Unresolved u ->
+              begin match u.target with
+                | None -> failwith "Not intialised!"
+                | Some (target_q, _) -> Some (t, `QuestionCap (target_q, path))
+              end
+            | _ -> failwith "Not a promise!"
+          end;
+        | _ -> None
     end
 
   let reply_to_disembargo t target embargo_id =
@@ -521,25 +502,24 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let message_target = `Import import in
       let cap =
         object (self : #Core_types.cap)
-          inherit Core_types.ref_counted
+          inherit Core_types.ref_counted as super
 
           val id = Debug.OID.next ()
 
           method call msg caps =
-            if ref_count < 1 then Debug.failf "%t already released!" self#pp;
+            self#check_refcount;
             send_call t message_target msg caps
 
           method pp f =
             if settled then
-              Fmt.pf f "far-ref(%a, rc=%d) -> %a" Debug.OID.pp id ref_count pp_cap message_target
+              Fmt.pf f "far-ref(%a, %t) -> %a" Debug.OID.pp id self#pp_refcount pp_cap message_target
             else
-               Fmt.pf f "remote-promise(%a, rc=%d) -> %a"Debug.OID.pp id ref_count pp_cap message_target
+               Fmt.pf f "remote-promise(%a, %t) -> %a"Debug.OID.pp id self#pp_refcount pp_cap message_target
 
           method private release =
             Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
             let id, count = Send.release t import in
-            t.queue_send (`Release (id, count));
-            Proxy_caps.unregister t.proxy_caps self
+            t.queue_send (`Release (id, count))
 
           method shortest = self
 
@@ -549,13 +529,17 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
           method when_more_resolved _ =
             assert settled      (* Otherwise, our switchable should have intercepted this *)
+
+          method! sealed_dispatch : type a. a S.brand -> a option = function
+            | CapTP -> Some (t, message_target)
+            | x -> super#sealed_dispatch x
         end
       in
-      Proxy_caps.register t.proxy_caps cap message_target;
+      assert (import.import_proxy = `Uninitialised);
       if settled then
         import.import_proxy <- `Settled cap
       else
-        import.import_proxy <- `Unsettled (new Cap_proxy.switchable cap)
+        import.import_proxy <- `Unsettled (Cap_proxy.switchable cap)
 
     let import_sender t ~mark_dirty ~settled id =
       match Imports.find t.imports id with
@@ -641,7 +625,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             | Error (`Invalid_index _) -> answer_promise#cap path (* Don't embargo errors *)
             | Ok cap ->
               let cap = with_inc_ref cap#shortest in
-              match Proxy_caps.unwrap t.proxy_caps cap with
+              match my_target_of t cap with
               | None ->
                 (* Hosted locally *)
                 maybe_embargo t ~old_path:embargo_path cap
@@ -776,13 +760,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
             end
         in
         (* Check that [cap] points back at sender. *)
-        match Proxy_caps.unwrap t.proxy_caps cap with
+        match my_target_of t cap with
         | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
         | None -> Debug.failf "Protocol error: disembargo for invalid target %t" cap#pp
 
     let disembargo_reply t _target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
       Embargoes.release t.embargoes embargo_id;
+      embargo#dec_ref;
       embargo
 
     let resolve t import_id new_target =
@@ -875,7 +860,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
              );
     Input.resolve t id new_target
 
-  let handle_msg t : EP.In.t -> unit = function
+  let handle_msg t (msg : EP.In.t) =
+    check_connected t;
+    match msg with
     | `Bootstrap x          -> handle_bootstrap t x
     | `Call x               -> handle_call t x
     | `Return x             -> handle_return t x
@@ -893,15 +880,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let check_question x = x.question_data#check_invariants
   let check_answer   x = x.answer_promise#check_invariants
   let check_embargo  x = (snd x)#check_invariants
-
-  let check_proxy_cap t _cap target =
-    match target with
-    | `Import import ->
-      let import2 = Imports.find_exn t.imports import.import_id in
-      assert (import == import2)
-    | `QuestionCap (question, _path) ->
-      let question2 = Questions.find_exn t.questions question.question_id in
-      assert (question == question2)
 
   let check_exported_cap t cap export_id =
     match Exports.find_exn t.exports export_id with
@@ -926,14 +904,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
               @[<v2>Exports:@,%a@]@,\
               @[<v2>Imports:@,%a@]@,\
               @[<v2>Embargoes:@,%a@]@,\
-              @[<v2>Proxy caps:@,%a@]@,\
               @[<v2>Exported caps:@,%a@]@,"
       (Questions.dump ~check:check_question dump_question) t.questions
       (Answers.dump   ~check:check_answer   dump_answer) t.answers
       (Exports.dump   ~check:check_export   dump_export) t.exports
       (Imports.dump   ~check:check_import   dump_import) t.imports
       (Embargoes.dump ~check:check_embargo  dump_embargo) t.embargoes
-      (Proxy_caps.dump ~check:(check_proxy_cap t)) t.proxy_caps
       (hashtbl_dump ~key:exported_sort_key (pp_exported_cap t)) t.exported_caps
 
   let check t =
@@ -942,6 +918,21 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Imports.iter    (fun _ -> check_import)   t.imports;
     Exports.iter    (fun _ -> check_export)   t.exports;
     Embargoes.iter  (fun _ -> check_embargo)  t.embargoes;
-    Proxy_caps.iter (check_proxy_cap t) t.proxy_caps;
     Hashtbl.iter    (check_exported_cap t) t.exported_caps
+
+  let disconnect t ex =
+    check_connected t;
+    t.disconnected <- Some ex;
+    begin match t.bootstrap with
+    | None -> ()
+    | Some b -> t.bootstrap <- None; b#dec_ref
+    end;
+    t.queue_send <- ignore;
+    Exports.drop_all t.exports (fun _ e -> e.export_service#dec_ref);
+    Hashtbl.clear t.exported_caps;
+    Answers.drop_all t.answers (fun _ a -> a.answer_promise#finish);
+    Imports.drop_all t.imports (fun _ i -> i.import_proxy <- `Uninitialised);
+    Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; e#dec_ref);
+    (* TODO: break existing caps *)
+    ()
 end

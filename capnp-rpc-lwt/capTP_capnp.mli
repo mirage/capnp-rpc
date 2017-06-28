@@ -11,3 +11,6 @@ val of_endpoint : ?offer:cap -> ?tags:Logs.Tag.set -> switch:Lwt_switch.t -> End
 
 val bootstrap : t -> cap
 (** [bootstrap t] is the peer's public bootstrap object, if any. *)
+
+val dump : t Fmt.t
+(** [dump] dumps the state of the connection, for debugging. *)

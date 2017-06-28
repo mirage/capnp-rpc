@@ -40,8 +40,7 @@ module Client = struct
     let module R = Api.Reader.Calculator.Evaluate_results in
     let req, p = Capability.Request.create P.init_pointer in
     write_expr ~req (P.expression_init p) expr;
-    Capability.call t Api.Reader.Calculator.evaluate_method req
-    |> R.value_get_pipelined
+    Capability.call_for_caps t Api.Reader.Calculator.evaluate_method req R.value_get_pipelined
 
   let getOperator t op =
     let module P = Api.Builder.Calculator.GetOperator_params in
@@ -54,8 +53,7 @@ module Client = struct
         | `Multiply -> O.Multiply
         | `Divide -> O.Divide
       );
-    Capability.call t Api.Reader.Calculator.get_operator_method req
-    |> R.func_get_pipelined
+    Capability.call_for_caps t Api.Reader.Calculator.get_operator_method req R.func_get_pipelined
 
   let read v =
     let module P = Api.Reader.Calculator.Value.Read_params in
@@ -63,6 +61,11 @@ module Client = struct
     let req = Capability.Request.create_no_args () in
     Capability.call_for_value_exn v Api.Reader.Calculator.Value.read_method req >|= fun resp ->
     R.of_payload resp |> R.value_get
+
+  let final_read v =
+    read v >|= fun result ->
+    Capability.dec_ref v;
+    result
 
   let call fn args =
     let module P = Api.Builder.Calculator.Function.Call_params in
@@ -76,12 +79,24 @@ end
 (* Export a literal float as a service with a [read] method. *)
 let literal f =
   let open Api.Builder.Calculator in
-  Value.local @@ object (_ : Value.service)
-    method read _ =
+  Value.local @@ object
+    inherit Value.service
+
+    val id = Capnp_rpc.Debug.OID.next ()
+
+    method! pp fmt = Fmt.pf fmt "Literal(%a) = %f" Capnp_rpc.Debug.OID.pp id f
+
+    method read_impl _ =
       let resp, c = Service.Response.create Value.Read_results.init_pointer in
       Value.Read_results.value_set c f;
       Service.return resp
   end
+
+let pp_result_lwt f x =
+  match Lwt.state x with
+  | Lwt.Return v -> Fmt.float f v
+  | Lwt.Fail ex -> Fmt.exn f ex
+  | Lwt.Sleep -> Fmt.string f "(still calculating)"
 
 (* Evaluate an expression, where some sub-expressions may require remote calls. *)
 let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t = function
@@ -91,12 +106,19 @@ let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t = fu
   | Call (f, params) ->
     let params = params |> Lwt_list.map_p (fun p ->
         let value = eval ~args p in
-        Client.read value
+        Client.final_read value
       ) in
     let result = params >>= Client.call f in
     let open Api.Builder.Calculator in
-    Value.local @@ object (_ : Value.service)
-      method read _ =
+    Value.local @@ object
+      inherit Value.service
+
+      val id = Capnp_rpc.Debug.OID.next ()
+
+      method! pp f =
+        Fmt.pf f "EvalResultValue(%a) = %a" Capnp_rpc.Debug.OID.pp id pp_result_lwt result
+
+      method read_impl _ =
         Service.return_lwt (fun () ->
             result >|= fun result ->
             let resp, c = Service.Response.create Value.Read_results.init_pointer in
@@ -105,11 +127,21 @@ let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t = fu
           )
     end
 
+let rec release_expr = function
+  | Float _ -> ()
+  | Prev v -> Capability.dec_ref v
+  | Param _ -> ()
+  | Call (f, params) ->
+    Capability.dec_ref f;
+    List.iter release_expr params
+
 (* A local service that provides the function [body]. *)
 let fn n_args body =
   let open Api.Builder.Calculator in
-  Function.local @@ object (_ : Function.service)
-    method call req =
+  Function.local @@ object
+    inherit Function.service
+
+    method call_impl req =
       let module P = Api.Reader.Calculator.Function.Call_params in
       let module R = Api.Builder.Calculator.Function.Call_results in
       let params = P.of_payload req in
@@ -118,7 +150,7 @@ let fn n_args body =
       let value = eval ~args body in
       (* Functions return floats, not Value objects, so we have to wait here. *)
       Service.return_lwt (fun () ->
-          Client.read value >|= fun value ->
+          Client.final_read value >|= fun value ->
           let resp, r = Service.Response.create R.init_pointer in
           R.value_set r value;
           Ok resp
@@ -129,7 +161,9 @@ let fn n_args body =
 let binop op : Api.Builder.Calculator.Function.t Capability.t =
   let open Api.Builder.Calculator in
   Function.local @@ object
-    method call req =
+    inherit Function.service
+
+    method call_impl req =
       let module P = Api.Reader.Calculator.Function.Call_params in
       let module R = Api.Builder.Calculator.Function.Call_results in
       let params = P.of_payload req in
@@ -166,31 +200,37 @@ let rec parse_expr ~req r =
 (* The main calculator service *)
 let service =
   Api.Builder.Calculator.local @@
-  object (_ : Api.Builder.Calculator.service)
-    method def_function req =
+  object
+    inherit Api.Builder.Calculator.service
+
+    method def_function_impl req =
       let module P = Api.Reader.Calculator.DefFunction_params in
       let module R = Api.Builder.Calculator.DefFunction_results in
       let params = P.of_payload req in
       let n_args = P.param_count_get_int_exn params in
       let body = P.body_get params |> parse_expr ~req in
       let fn_obj = fn n_args body in
+      release_expr body;
       let resp, results = Service.Response.create R.init_pointer in
       let fn_id = Service.Response.export resp fn_obj in
       R.func_set results (Some fn_id);
       Service.return resp
 
-    method evaluate req =
+    method evaluate_impl req =
       let module P = Api.Reader.Calculator.Evaluate_params in
       let module R = Api.Builder.Calculator.Evaluate_results in
       let params = P.of_payload req in
       let expr = parse_expr ~req (P.expression_get params) in
+      Payload.release req;
       let value_obj = eval expr in
+      release_expr expr;
       let resp, results = Service.Response.create R.init_pointer in
       let value_id = Service.Response.export resp value_obj in
+      Capability.dec_ref value_obj;
       R.value_set results (Some value_id);
       Service.return resp
 
-    method get_operator req =
+    method get_operator_impl req =
       let module P = Api.Reader.Calculator.GetOperator_params in
       let module R = Api.Builder.Calculator.GetOperator_results in
       let module O = Api.Reader.Calculator.Operator in

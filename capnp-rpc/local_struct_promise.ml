@@ -11,8 +11,10 @@ module Make (C : S.CORE_TYPES) = struct
     method private do_pipeline q i msg caps =
       let result = local_promise ~parent:self () in
       q |> Queue.add (fun p ->
-          Logs.info (fun f -> f "%a:%a forwarding %t" Debug.OID.pp id Wire.Path.pp i p#pp);
-          result#connect ((p#cap i)#call msg caps)      (* XXX: dec_ref? *)
+          let cap = p#cap i in
+          let r = result#connect (cap#call msg caps) in
+          cap#dec_ref;
+          r
         );
       (result :> struct_ref)
 
@@ -36,6 +38,8 @@ module Make (C : S.CORE_TYPES) = struct
       | None, _ -> None            (* Not blocked *)
       | Some _self, Some b -> b#blocker
       | Some _ as x, None -> x
+
+    method field_sealed_dispatch _ _ = None
   end
 
   let make () = (local_promise () :> struct_resolver)
