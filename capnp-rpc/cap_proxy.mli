@@ -13,8 +13,5 @@ module Make(C : S.CORE_TYPES) : sig
   val local_promise : unit -> resolver_cap
   (** A [local_promise ()] is a promise that buffers calls until it is resolved. *)
 
-  val switchable : C.cap -> resolver_cap
-  (** A [switchable init] forwards messages to [init], which can be changed by calling resolve. *)
-
   val embargo : C.cap -> embargo_cap
 end

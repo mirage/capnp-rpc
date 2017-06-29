@@ -466,6 +466,76 @@ module Make (EP : Message_types.ENDPOINT) = struct
       (answer_promise answer)#connect resp;
       resp#when_resolved (fun _ -> return_results t answer)
 
+  class switchable init =
+    (* We initially forward to an unsettled promise (otherwise there's no point using a switchable).
+       Later, we resolve and become set. The resolution may be settled or unsettled. *)
+    let released = Core_types.broken_cap (Exception.v "(released)") in
+    let is_settled x = (x#blocker = None) in
+    let pp_state f = function
+      | `Unsettled (x, _) -> Fmt.pf f "(unsettled) -> %t" x#pp
+      | `Set x -> Fmt.pf f "(set) -> %t" x#pp
+    in
+    let target = function
+      | `Unsettled (x, _)
+      | `Set x -> x
+    in
+    object (self : #Core_types.cap)
+      inherit Core_types.ref_counted as super
+
+      val id = Debug.OID.next ()
+
+      val mutable state =
+        assert (not (is_settled init));
+        `Unsettled (init, Queue.create ())
+
+      method call msg caps =
+        (target state)#call msg caps
+
+      method resolve cap =
+        self#check_refcount;
+        match state with
+        | `Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
+        | `Unsettled (old, q) ->
+          state <- `Set cap;
+          Queue.iter (fun f -> f (cap#inc_ref; cap)) q;
+          old#dec_ref
+
+      method private release =
+        (target state)#dec_ref;
+        state <- `Set released
+
+      method shortest =
+        match state with
+        | `Unsettled _ -> (self :> Core_types.cap)     (* Can't shorten, as we may change later *)
+        | `Set x -> x#shortest
+
+      method blocker =
+        match state with
+        | `Unsettled _ -> Some (self :> Core_types.base_ref)
+        | `Set x -> x#blocker
+
+      method when_more_resolved fn =
+        match state with
+        | `Unsettled (_, q) -> Queue.add fn q
+        | `Set x -> x#when_more_resolved fn
+
+      (* When trying to find the target for export, it's OK to expose our current
+         target, even though [shortest] shouldn't.
+         In particular, we need this to deal with disembargo requests. *)
+      method! sealed_dispatch : type a. a S.brand -> a option = function
+        | CapTP -> (target state)#shortest#sealed_dispatch CapTP
+        | x -> super#sealed_dispatch x
+
+      method! check_invariants =
+        super#check_invariants;
+        match state with
+        | `Unsettled (x, _) | `Set x -> x#check_invariants
+
+      method pp f =
+        Fmt.pf f "switchable(%a, %t) %a" Debug.OID.pp id super#pp_refcount pp_state state
+    end
+
+
   module Input : sig
     open EP.Core_types
 
@@ -528,7 +598,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       if settled then
         import.import_proxy <- `Settled cap
       else
-        import.import_proxy <- `Unsettled (Cap_proxy.switchable cap)
+        import.import_proxy <- `Unsettled (new switchable cap)
 
     let import_sender t ~mark_dirty ~settled id =
       match Imports.find t.imports id with
@@ -753,7 +823,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         answer.answer_promise#finish
 
     let disembargo_request t request =
-      Log.info (fun f -> f ~tags:t.tags "Received disembargo %a" EP.In.pp_disembargo_request request);
+      Log.info (fun f -> f ~tags:t.tags "Received disembargo request %a" EP.In.pp_disembargo_request request);
       match request with
       | `Loopback (old_path, id) ->
         let cap =
@@ -776,7 +846,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         (* Check that [cap] points back at sender. *)
         match my_target_of t cap with
         | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
-        | None -> Debug.failf "Protocol error: disembargo for invalid target %t" cap#pp
+        | None -> Debug.failf "Protocol error: disembargo request for invalid target %t" cap#pp
 
     let disembargo_reply t target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
