@@ -3,6 +3,22 @@ open Asetmap
 module Log = Debug.Log
 module IntMap = Map.Make(struct type t = int let compare (a:int) b = compare a b end)
 
+module Weak_ptr : sig
+  type 'a t
+  val wrap : 'a -> 'a t
+  val get : 'a t -> 'a option
+end = struct
+  type 'a t = 'a Weak.t
+
+  let wrap x =
+    let t = Weak.create 1 in
+    Weak.set t 0 (Some x);
+    t
+
+  let get t =
+    Weak.get t 0
+end
+
 let rec filter_map f = function
   | [] -> []
   | x :: xs ->
@@ -48,7 +64,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   type question = {
     question_id : QuestionId.t;
-    question_data : Core_types.struct_resolver;         (* TODO: should be a weak ref *)
+    question_data : Core_types.struct_resolver;
     mutable question_flags : int;
     mutable params_for_release : ExportId.t list;
     mutable question_pipelined_fields : PathSet.t; (* Fields used while unresolved; will need embargoes *)
@@ -78,8 +94,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
     mutable import_used : bool; (* We have sent a message to this target *)
     mutable import_proxy : [    (* TODO: should be a weak ref *)
       | `Uninitialised
-      | `Settled of Core_types.cap
-      | `Unsettled of Cap_proxy.resolver_cap   (* Note: might be resolved to a settled value *)
+      | `Settled of Core_types.cap Weak_ptr.t
+      | `Unsettled of Cap_proxy.resolver_cap Weak_ptr.t   (* Note: might be resolved to a settled value *)
     ]
   }
 
@@ -128,8 +144,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let get_import_proxy import =
     match import.import_proxy with
     | `Uninitialised -> assert false
-    | `Settled p -> p
-    | `Unsettled p -> (p :> Core_types.cap)
+    | `Settled p -> Weak_ptr.get p
+    | `Unsettled p -> (Weak_ptr.get p :> Core_types.cap option)
 
   let pp_question f q =
     Fmt.pf f "q%a" QuestionId.pp q.question_id
@@ -143,8 +159,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let dump_export f x =
     Fmt.pf f "%t" x.export_service#pp
 
+  let pp_weak f = function
+    | None -> Fmt.pf f "(GC'd weak pointer)"
+    | Some x -> x#pp f
+
   let dump_import f x =
-    Fmt.pf f "%t" (get_import_proxy x)#pp
+    Fmt.pf f "%a" pp_weak (get_import_proxy x)
 
   let stats t =
     { Stats.
@@ -573,12 +593,17 @@ module Make (EP : Message_types.ENDPOINT) = struct
             if settled then
               Fmt.pf f "far-ref(%a, %t) -> %a" Debug.OID.pp id self#pp_refcount pp_cap message_target
             else
-               Fmt.pf f "remote-promise(%a, %t) -> %a"Debug.OID.pp id self#pp_refcount pp_cap message_target
+              Fmt.pf f "remote-promise(%a, %t) -> %a" Debug.OID.pp id self#pp_refcount pp_cap message_target
 
           method private release =
-            Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
-            let id, count = Send.release t import in
-            t.queue_send (`Release (id, count))
+            if import.import_proxy = `Uninitialised then (
+              Log.info (fun f -> f ~tags:t.tags "Import proxy removed; can be caused by ref-counting bugs; \
+                                                check for previous warning messages!");
+            ) else (
+              Log.info (fun f -> f ~tags:t.tags "Sending release %t" self#pp);
+              let id, count = Send.release t import in
+              t.queue_send (`Release (id, count))
+            )
 
           method shortest = self
 
@@ -595,24 +620,39 @@ module Make (EP : Message_types.ENDPOINT) = struct
         end
       in
       assert (import.import_proxy = `Uninitialised);
-      if settled then
-        import.import_proxy <- `Settled cap
-      else
-        import.import_proxy <- `Unsettled (new switchable cap)
+      if settled then (
+        import.import_proxy <- `Settled (Weak_ptr.wrap cap);
+        cap
+      ) else (
+        let cap = new switchable cap in
+        import.import_proxy <- `Unsettled (Weak_ptr.wrap cap);
+        (cap :> Core_types.cap)
+      )
 
     let import_sender t ~mark_dirty ~settled id =
+      let new_import () =
+        let import = { import_count = 1; import_id = id; import_proxy = `Uninitialised; import_used = mark_dirty } in
+        Imports.set t.imports id import;
+        set_import_proxy t ~settled import
+      in
       match Imports.find t.imports id with
+      | None -> new_import ()
       | Some import ->
         import.import_count <- import.import_count + 1;
         if mark_dirty then import.import_used <- true;
-        let proxy = get_import_proxy import in
-        proxy#inc_ref;
-        proxy
-      | None ->
-        let import = { import_count = 1; import_id = id; import_proxy = `Uninitialised; import_used = mark_dirty } in
-        Imports.set t.imports id import;
-        set_import_proxy t ~settled import;
-        get_import_proxy import
+        match get_import_proxy import with
+        | Some proxy ->
+          proxy#inc_ref;
+          proxy
+        | None ->
+          (* The user let the proxy get GC'd without dropping the reference,
+             but it hasn't been reported yet. It will try to release in a bit,
+             (when next entering main loop, so not right now), and will see
+             that the old struct's import proxy is Uninitialised and do nothing. *)
+          import.import_count <- 0;
+          import.import_proxy <- `Uninitialised;
+          Imports.release t.imports import.import_id;
+          new_import ()
 
     (* Create an embargo proxy for [x] and send a disembargo for it down [old_path]. *)
     let local_embargo t ~old_path x =
@@ -874,17 +914,27 @@ module Make (EP : Message_types.ENDPOINT) = struct
                      ImportId.pp import_id new_target#pp);
         new_target#dec_ref
       | Some im ->
-        let new_target =
+        let import () =
           if im.import_used
           then new_target ~embargo_path:(Some (`ReceiverHosted import_id))
           else new_target ~embargo_path:None
         in
         match im.import_proxy with
         | `Uninitialised -> assert false
-        | `Settled x -> Debug.failf "Got a Resolve (to %t) for settled import %t!" new_target#pp x#pp
+        | `Settled x ->
+          let new_target = import () in
+          Debug.failf "Got a Resolve (to %t) for settled import %a!"
+            new_target#pp pp_weak (Weak_ptr.get x)
         | `Unsettled x ->
           (* This will also dec_ref the old remote-promise, releasing the import. *)
-          x#resolve new_target
+          match Weak_ptr.get x with
+          | Some x -> x#resolve (import ())
+          | None ->
+            (* We can only get here if the user messed up their ref-counting, but try to handle it. *)
+            let new_target = new_target ~embargo_path:None in
+            Log.info (fun f -> f ~tags:t.tags "Import %a was GC'd! Releasing new resolve target %t"
+                         ImportId.pp import_id new_target#pp);
+            new_target#dec_ref
 
 (* TODO:
     let provide _t _question_id _message_target _recipient_id = ()
@@ -909,7 +959,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let dump_embargo f (id, proxy) =
     Fmt.pf f "%a: @[%t@]" EmbargoId.pp id proxy#pp
 
-  let check_import   x = (get_import_proxy x)#check_invariants
+  let check_import x =
+    match get_import_proxy x with
+    | Some x -> x#check_invariants
+    | None -> failwith "Import proxy GC'd, but not removed from table!"
+
   let check_export   x = x.export_service#check_invariants
   let check_question x = x.question_data#check_invariants
   let check_answer   x = x.answer_promise#check_invariants

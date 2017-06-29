@@ -73,12 +73,16 @@ module Make(Wire : S.WIRE) = struct
         | Gc ->
           if ref_count <> 0 then (
             ref_leak_detected (fun () ->
-                (* Note: only the first warning logged is really useful. The others may result from
-                   things being freed by the first one, and may even note that the ref-count is now zero. *)
-                Log.warn (fun f -> f "@[<v2>Capability reference GC'd with ref-count of %d!@,%t@]"
-                             ref_count self#pp);
-                ref_count <- 0;
-                self#release
+                if ref_count = 0 then (
+                  Log.warn (fun f -> f "@[<v2>Capability reference GC'd with non-zero ref-count!@,%t@,\
+                                        But, ref-count is now zero, so a previous GC leak must have fixed it.@]"
+                               self#pp);
+                ) else (
+                  Log.warn (fun f -> f "@[<v2>Capability reference GC'd with ref-count of %d!@,%t@]"
+                               ref_count self#pp);
+                  ref_count <- 0;
+                  self#release
+                )
               )
           );
           Some ()
