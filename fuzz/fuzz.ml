@@ -5,7 +5,9 @@ let three_vats = true
 
 let stop_after =
   match Sys.getenv "FUZZ_STOP" with
-  | s -> int_of_string s
+  | s ->
+    print_endline "vi: foldmethod=marker syntax=capnp-rpc";
+    int_of_string s
   | exception Not_found -> -1
 (* If the ref-counting seems off after a while, try setting this to a low-ish number.
    This will cause it to try to clean up early and hopefully discover the problem sooner. *)
@@ -22,9 +24,12 @@ let failf msg = Fmt.kstrf failwith msg
 
 let styles = [| `Red; `Green; `Blue |]
 
-let tags_for_id id =
+let actor_for_id id =
   let style = styles.(id mod Array.length styles) in
-  Logs.Tag.empty |> Logs.Tag.add Test_utils.actor_tag (style, Fmt.strf "vat-%d" id)
+  (style, Fmt.strf "vat-%d" id)
+
+let tags_for_id id =
+  Logs.Tag.empty |> Logs.Tag.add Test_utils.actor_tag (actor_for_id id)
 
 module Direct : sig
   (* For each capability and struct_ref in the real system, we make a corresponding
@@ -238,7 +243,7 @@ module Endpoint = struct
   let try_step t =
     if Queue.length t.recv_queue > 0 then (
       if dump_state_at_each_step then
-        Logs.info (fun f -> f ~tags:(Conn.tags t.conn) "@[<v>%a@]" dump t);
+        Logs.info (fun f -> f ~tags:(Conn.tags t.conn) "@[<v>{{{%a}}}@]" dump t);
       handle_msg t;
       if sanity_checks then Conn.check t.conn;
       true
@@ -250,7 +255,7 @@ end
 
 let () =
   Format.pp_set_margin Fmt.stderr 120;
-  Fmt.set_style_renderer Fmt.stderr `Ansi_tty
+  Fmt_tty.setup_std_outputs ()
 
 let dummy_answer = object (self : Core_types.struct_resolver)
   method cap _ = failwith "dummy_answer"
@@ -550,8 +555,10 @@ let make_connection v1 v2 =
     | None -> Direct.null
     | Some (_, id) -> id
   in
-  let c = Endpoint.create ~tags:(Vat.tags v1) q1 q2 ?bootstrap:(bootstrap v1) in
-  let s = Endpoint.create ~tags:(Vat.tags v2) q2 q1 ?bootstrap:(bootstrap v2) in
+  let v1_tags = Vat.tags v1 |> Logs.Tag.add Test_utils.peer_tag (actor_for_id v2.Vat.id) in
+  let v2_tags = Vat.tags v2 |> Logs.Tag.add Test_utils.peer_tag (actor_for_id v1.Vat.id) in
+  let c = Endpoint.create ~tags:v1_tags q1 q2 ?bootstrap:(bootstrap v1) in
+  let s = Endpoint.create ~tags:v2_tags q2 q1 ?bootstrap:(bootstrap v2) in
   let open Vat in
   add_actions v1 c ~target:(target v2.bootstrap);
   add_actions v2 s ~target:(target v1.bootstrap);
@@ -590,7 +597,7 @@ let run_test () =
       );
     flush ();
     vats |> Array.iter (fun v ->
-        Logs.info (fun f -> f ~tags:(Vat.tags v) "%a" Vat.pp v);
+        Logs.info (fun f -> f ~tags:(Vat.tags v) "{{{%a}}}" Vat.pp v);
       );
     if stop_after >= 0 then failwith "Everything freed!"
   in
@@ -600,10 +607,10 @@ let run_test () =
     let rec loop () =
       let v = Choose.array vats in
       if dump_state_at_each_step then
-        Logs.info (fun f -> f ~tags:(Vat.tags v) "Pre: %a" Vat.pp v);
+        Logs.info (fun f -> f ~tags:(Vat.tags v) "Pre: {{{%a}}}" Vat.pp v);
       Vat.do_action v;
       if dump_state_at_each_step then
-        Logs.info (fun f -> f ~tags:(Vat.tags v) "Post: %a" Vat.pp v);
+        Logs.info (fun f -> f ~tags:(Vat.tags v) "Post: {{{%a}}}}" Vat.pp v);
       if sanity_checks then (Gc.full_major (); Vat.check v);
       if !step <> stop_after then (
         incr step;
@@ -618,10 +625,10 @@ let run_test () =
     Array.iter Vat.destroy vats
   with ex ->
     let bt = Printexc.get_raw_backtrace () in
-    Logs.err (fun f -> f "%a" Fmt.exn_backtrace (ex, bt));
+    Logs.err (fun f -> f "{{{%a}}}" Fmt.exn_backtrace (ex, bt));
     Logs.err (fun f -> f "Got error (at step %d) - dumping state:" !step);
     vats |> Array.iter (fun v ->
-        Logs.info (fun f -> f ~tags:(Vat.tags v) "%a" Vat.pp v);
+        Logs.info (fun f -> f ~tags:(Vat.tags v) "{{{%a}}}" Vat.pp v);
       );
     raise ex
 

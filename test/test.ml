@@ -7,6 +7,8 @@ module CS = Testbed.Connection.Pair ( )    (* A client-server pair *)
 module RO_array = Capnp_rpc.RO_array
 module Error = Capnp_rpc.Error
 module Exception = Capnp_rpc.Exception
+module Local_struct_promise = Testbed.Capnp_direct.Local_struct_promise
+module Cap_proxy = Testbed.Capnp_direct.Cap_proxy
 
 module C = CS.C
 module S = CS.S
@@ -173,7 +175,6 @@ let test_local_embargo_2 () =
 
 (* Embargo on a resolve message *)
 let test_local_embargo_3 () =
-  let module Proxy = Testbed.Capnp_direct.Cap_proxy in
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
   let local = Services.logger () in
@@ -181,7 +182,7 @@ let test_local_embargo_3 () =
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_logger = RO_array.get q1_args 0 in
-  let promise = Proxy.local_promise () in
+  let promise = Cap_proxy.local_promise () in
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   let service = q1#cap 0 in
@@ -239,7 +240,6 @@ let test_local_embargo_4 () =
    (because we pipelined over the answer), even though we didn't pipeline over the
    import. *)
 let test_local_embargo_5 () =
-  let module Proxy = Testbed.Capnp_direct.Cap_proxy in
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
   let local = Services.logger () in
@@ -249,7 +249,7 @@ let test_local_embargo_5 () =
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_local = RO_array.get q1_args 0 in
-  let server_promise = Proxy.local_promise () in
+  let server_promise = Cap_proxy.local_promise () in
   resolve_ok a1 "a1" [server_promise];
   C.handle_msg c ~expect:"return:a1";
   (* [test] is now known to be at [service]; no embargo needed.
@@ -313,6 +313,54 @@ let test_local_embargo_6 () =
   q2#finish;
   proxy_to_local#dec_ref;
   local#dec_ref;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* The client tries to disembargo via a switchable. *)
+let test_local_embargo_7 () =
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let local = Services.manual () in
+  (* Client calls the server, giving it [local]. *)
+  let q1 = call bs "q1" [local] in
+  let target = q1#cap 0 in
+  q1#finish;
+  let _ = call target "Message-1" [] in
+  S.handle_msg s ~expect:"call:q1";
+  let proxy_to_local, a1 = service#pop1 "q1" in
+  (* Server makes a call on [local] and uses that promise to answer [q1]. *)
+  let q2 = call proxy_to_local "q2" [] in
+  resolve_ok a1 "a1" [q2#cap 0];
+  q2#finish;
+  C.handle_msg c ~expect:"call:q2";
+  S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
+  (* Client resolves a2 to a local promise. *)
+  let client_promise = Cap_proxy.local_promise () in
+  let a2 = local#pop0 "q2" in
+  client_promise#inc_ref;
+  resolve_ok a2 "a2" [client_promise];
+  (* Client gets answer to a1 and sends disembargo. *)
+  C.handle_msg c ~expect:"return:a1";
+  let _ = call target "Message-2" [] in
+  S.handle_msg s ~expect:"return:a2";
+  (* At this point, the server's answer to q1 is a switchable, because it expects the client
+     to resolve the promise at some point in the future. *)
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
+  C.handle_msg c ~expect:"finish";
+  C.handle_msg c ~expect:"disembargo-reply";
+  let client_logger = Services.logger () in
+  client_logger#inc_ref;
+  client_promise#resolve (client_logger :> Core_types.cap);
+  client_promise#dec_ref;
+  CS.flush c s;
+  Alcotest.(check string) "Pipelined arrived first" "Message-1" client_logger#pop;
+  Alcotest.(check string) "Embargoed arrived second" "Message-2" client_logger#pop;
+  client_logger#dec_ref;
+  proxy_to_local#dec_ref;
+  local#dec_ref;
+  bs#dec_ref;
+  target#dec_ref;
   CS.flush c s;
   CS.check_finished c s
 
@@ -445,21 +493,19 @@ let test_cycle () =
   p2#resolve (p1 :> Core_types.cap);
   ensure_is_cycle_error (call p2 "test" []);
   (* Connect struct to its own field *)
-  let module S = Testbed.Capnp_direct.Local_struct_promise in
-  let p1 = S.make () in
+  let p1 = Local_struct_promise.make () in
   let c = p1#cap 0 in
   p1#resolve (Ok ("msg", RO_array.of_list [c]));
   ensure_is_cycle_error p1;
   (* Connect struct to itself *)
-  let p1 = S.make () in
+  let p1 = Local_struct_promise.make () in
   p1#connect (p1 :> Core_types.struct_ref);
   ensure_is_cycle_error p1
 
 (* Resolve a promise with an answer that includes the result of a pipelined
    call on the promise itself. *)
 let test_cycle_2 () =
-  let module S = Testbed.Capnp_direct.Local_struct_promise in
-  let s1 = S.make () in
+  let s1 = Local_struct_promise.make () in
   let s2 = call (s1#cap 0) "get-s2" [] in
   s1#resolve (Ok ("a7", RO_array.of_list [s2#cap 0]));
   ensure_is_cycle_error s1
@@ -467,7 +513,6 @@ let test_cycle_2 () =
 (* The server returns an answer containing a promise. Later, it resolves the promise
    to a resource at the client. The client must be able to invoke the service locally. *)
 let test_resolve () =
-  let module Proxy = Testbed.Capnp_direct.Cap_proxy in
   let service = Services.manual () in
   let client_logger = Services.logger () in
   let c, s, proxy_to_service = init_pair ~bootstrap_service:service in
@@ -476,7 +521,7 @@ let test_resolve () =
   proxy_to_service#dec_ref;
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_logger, a1 = service#pop1 "q1" in
-  let promise = Proxy.local_promise () in
+  let promise = Cap_proxy.local_promise () in
   promise#inc_ref;
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
@@ -498,7 +543,6 @@ let test_resolve () =
 (* The server resolves an export after the client has released it.
    The client releases the new target. *)
 let test_resolve_2 () =
-  let module Proxy = Testbed.Capnp_direct.Cap_proxy in
   let service = Services.manual () in
   let client_logger = Services.logger () in
   let c, s, proxy_to_service = init_pair ~bootstrap_service:service in
@@ -508,7 +552,7 @@ let test_resolve_2 () =
   proxy_to_service#dec_ref;
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_logger, a1 = service#pop1 "q1" in
-  let promise = Proxy.local_promise () in
+  let promise = Cap_proxy.local_promise () in
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   (* The client doesn't care about the result and releases it *)
@@ -521,14 +565,13 @@ let test_resolve_2 () =
 (* The server returns a promise, but by the time it resolves the server
    has removed the export. It must not send a resolve message. *)
 let test_resolve_3 () =
-  let module Proxy = Testbed.Capnp_direct.Cap_proxy in
   let service = Services.manual () in
   let c, s, proxy_to_service = init_pair ~bootstrap_service:service in
   (* Make a call, get a promise, and release it *)
   let q1 = call proxy_to_service "q1" [] in
   S.handle_msg s ~expect:"call:q1";
   let a1 = service#pop0 "q1" in
-  let a1_promise = Proxy.local_promise () in
+  let a1_promise = Cap_proxy.local_promise () in
   a1_promise#inc_ref;
   resolve_ok a1 "a1" [a1_promise];
   C.handle_msg c ~expect:"return:a1";
@@ -554,7 +597,6 @@ let test_resolve_3 () =
   CS.check_finished c s
 
 let test_ref_counts () =
-  let module S = Testbed.Capnp_direct.Local_struct_promise in
   let objects = Hashtbl.create 3 in
   let make () =
     let o = object (self)
@@ -567,22 +609,8 @@ let test_ref_counts () =
     Hashtbl.add objects o true;
     o
   in
-  let remote_promise () =
-    let o = object (self)
-      inherit Core_types.ref_counted
-      val id = Capnp_rpc.Debug.OID.next ()
-      method call _ _  = failwith "call"
-      method private release = Hashtbl.remove objects self
-      method pp f = Fmt.pf f "remote-promise(%a, %t)" Capnp_rpc.Debug.OID.pp id self#pp_refcount
-      method blocker = Some (self :> Core_types.base_ref)
-      method shortest = (self :> Core_types.cap)
-      method when_more_resolved _ = ()
-    end in
-    Hashtbl.add objects o true;
-    o
-  in
   (* Test structs and fields *)
-  let promise = S.make () in
+  let promise = Local_struct_promise.make () in
   let f0 = promise#cap 0 in
   f0#when_more_resolved dec_ref;
   let fields = [f0; promise#cap 1] in
@@ -593,7 +621,7 @@ let test_ref_counts () =
   List.iter dec_ref fields2;
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
   (* With pipelining *)
-  let promise = S.make () in
+  let promise = Local_struct_promise.make () in
   let f0 = promise#cap 0 in
   let q1 = call f0 "q1" [] in
   f0#when_more_resolved dec_ref;
@@ -603,26 +631,19 @@ let test_ref_counts () =
   q1#finish;
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
   (* Test local promise *)
-  let module Proxy = Testbed.Capnp_direct.Cap_proxy in
-  let promise = Proxy.local_promise () in
+  let promise = Cap_proxy.local_promise () in
   promise#when_more_resolved dec_ref;
   promise#resolve (make ());
   promise#dec_ref;
   Alcotest.(check int) "Local promise released" 0 (Hashtbl.length objects);
-  (* Test switchable promise *)
-  let promise = Proxy.switchable (remote_promise ()) in
-  promise#when_more_resolved dec_ref;
-  promise#resolve (make ());
-  promise#dec_ref;
-  Alcotest.(check int) "Switchable released" 0 (Hashtbl.length objects);
   (* Test embargo *)
-  let embargo = Proxy.embargo (make ()) in
+  let embargo = Cap_proxy.embargo (make ()) in
   embargo#when_more_resolved dec_ref;
   embargo#disembargo;
   embargo#dec_ref;
   Alcotest.(check int) "Disembargo released" 0 (Hashtbl.length objects);
   (* Test embargo without disembargo *)
-  let embargo = Proxy.embargo (make ()) in
+  let embargo = Cap_proxy.embargo (make ()) in
   embargo#when_more_resolved dec_ref;
   embargo#dec_ref;
   Alcotest.(check int) "Embargo released" 0 (Hashtbl.length objects);
@@ -638,6 +659,7 @@ let tests = [
   "Local embargo 4", `Quick, test_local_embargo_4;
   "Local embargo 5", `Quick, test_local_embargo_5;
   "Local embargo 6", `Quick, test_local_embargo_6;
+  "Local embargo 7", `Quick, test_local_embargo_7;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;

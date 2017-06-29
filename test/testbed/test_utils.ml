@@ -2,9 +2,14 @@ type actor = Fmt.style * string
 
 let pp_actor f (style, name) = Fmt.(styled style (const string name)) f ()
 
-let unknown = `Black, "------"
+let pp_peer f = function
+  | None -> ()
+  | Some peer -> Fmt.pf f "(%a)" pp_actor peer
+
+let unknown = `Black, "------------"
 
 let actor_tag = Logs.Tag.def "actor" pp_actor
+let peer_tag = Logs.Tag.def "peer" pp_actor
 
 let pp_qid f = function
   | None -> ()
@@ -21,16 +26,18 @@ let reporter =
       | Some x -> x
       | None -> unknown
     in
+    let peer = Logs.Tag.find peer_tag tags in
     let qid = Logs.Tag.find Capnp_rpc.Debug.qid_tag tags in
     let print _ =
       Fmt.(pf stderr) "%a@." pp_qid qid;
       over ();
       k ()
     in
-    Fmt.kpf print Fmt.stderr ("%a %a %a: @[" ^^ fmt ^^ "@]")
+    Fmt.kpf print Fmt.stderr ("%a %a %a%a: @[" ^^ fmt ^^ "@]")
       Fmt.(styled `Magenta string) (Printf.sprintf "%11s" src)
       Logs_fmt.pp_header (level, header)
       pp_actor actor
+      pp_peer peer
   in
   { Logs.report = report }
 
