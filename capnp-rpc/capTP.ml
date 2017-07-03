@@ -92,7 +92,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     import_id : ImportId.t;
     mutable import_count : int; (* Number of times remote sent us this *)
     mutable import_used : bool; (* We have sent a message to this target *)
-    mutable import_proxy : [    (* TODO: should be a weak ref *)
+    mutable import_proxy : [
       | `Uninitialised
       | `Settled of Core_types.cap Weak_ptr.t
       | `Unsettled of Cap_proxy.resolver_cap Weak_ptr.t   (* Note: might be resolved to a settled value *)
