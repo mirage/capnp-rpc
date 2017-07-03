@@ -4,7 +4,7 @@ let src = Logs.Src.create "test-net" ~doc:"Cap'n Proto RPC tests"
 module Log = (val Logs.src_log src: Logs.LOG)
 
 module Stats = Capnp_rpc.Stats
-let stats = Alcotest.of_pp Stats.pp
+let stats_t = Alcotest.of_pp Stats.pp
 
 module type ENDPOINT = sig
   open Capnp_direct.Core_types
@@ -26,6 +26,8 @@ module type ENDPOINT = sig
   val bootstrap : t -> cap
 
   val stats : t -> Capnp_rpc.Stats.t
+
+  val check_finished : t -> name:string -> unit
 end
 
 module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
@@ -52,10 +54,12 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   let summary_of_msg = function
     | `Bootstrap _ -> "bootstrap"
     | `Call (_, _, msg, _) -> "call:" ^ msg
-    | `Return (_, `Results (msg, _)) -> "return:" ^ msg
-    | `Return (_, `Exception ex) -> "return:" ^ ex.Capnp_rpc.Exception.reason
-    | `Return (_, `Cancelled) -> "return:(cancelled)"
-    | `Return (_, _) -> "return:(other)"
+    | `Return (_, `Results (msg, _), _) -> "return:" ^ msg
+    | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
+    | `Return (_, `Cancelled, _) -> "return:(cancelled)"
+    | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
+    | `Return (_, `ResultsSentElsewhere, _) -> "return:sent-elsewhere"
+    | `Return (_, `TakeFromOtherQuestion, _) -> "return:take-from-other"
     | `Finish _ -> "finish"
     | `Release _ -> "release"
     | `Disembargo_request _ -> "disembargo-request"
@@ -84,6 +88,13 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   let bootstrap t = Conn.bootstrap t.conn
 
   let stats t = Conn.stats t.conn
+
+  let finished = Capnp_rpc.Exception.v "Tests finished"
+
+  let check_finished t ~name =
+      Alcotest.(check stats_t) (name ^ " finished") Stats.zero @@ stats t;
+      Conn.check t.conn;
+      Conn.disconnect t.conn finished
 end
 
 module Pair ( ) = struct
@@ -115,16 +126,10 @@ module Pair ( ) = struct
     Logs.info (fun f -> f ~tags:(C.Conn.tags c.C.conn) "%a" C.dump c);
     Logs.info (fun f -> f ~tags:(S.Conn.tags s.S.conn) "%a" S.dump s)
 
-  let finished = Capnp_rpc.Exception.v "Tests finished"
-
   let check_finished c s =
     try
-      Alcotest.(check stats) "Client finished" Stats.zero @@ C.stats c;
-      Alcotest.(check stats) "Server finished" Stats.zero @@ S.stats s;
-      C.Conn.check c.C.conn;
-      S.Conn.check s.S.conn;
-      C.Conn.disconnect c.C.conn finished;
-      S.Conn.disconnect s.S.conn finished;
+      C.check_finished c ~name:"Client";
+      S.check_finished s ~name:"Server";
     with ex ->
       dump c s;
       raise ex

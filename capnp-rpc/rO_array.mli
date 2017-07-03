@@ -7,6 +7,7 @@ val map : ('a -> 'b) -> 'a t -> 'b t
 val mapi : (int -> 'a -> 'b) -> 'a t -> 'b t
 val iter : ('a -> unit) -> 'a t -> unit
 val iteri : (int -> 'a -> unit) -> 'a t -> unit
+val fold_left : ('a -> 'b -> 'a) -> 'a -> 'b t -> 'a
 val find : ('a -> bool) -> 'a t -> 'a option
 val empty : 'a t
 val pp : 'a Fmt.t -> 'a t Fmt.t

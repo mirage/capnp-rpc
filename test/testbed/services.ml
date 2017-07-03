@@ -2,8 +2,16 @@ open Capnp_direct.Core_types
 
 module RO_array = Capnp_rpc.RO_array
 
+class virtual test_service = object
+  inherit service
+
+  val mutable released = false
+  method released = released
+  method! release = assert (not released); released <- true;
+end
+
 let echo_service () = object
-  inherit service as super
+  inherit test_service as super
   method call x caps =
     super#check_refcount;
     return ("got:" ^ x, caps)
@@ -12,7 +20,7 @@ end
 
 (* A service which just queues incoming messages and lets the test driver handle them. *)
 let manual () = object
-  inherit service as super
+  inherit test_service as super
   val queue = Queue.create ()
 
   method call x caps =
@@ -42,7 +50,7 @@ end
 
 (* Callers can swap their arguments for the slot's contents. *)
 let swap_service slot = object
-  inherit service as super
+  inherit test_service as super
 
   method call x caps =
     super#check_refcount;
@@ -54,7 +62,7 @@ let swap_service slot = object
 end
 
 let logger () = object
-  inherit service as super
+  inherit test_service as super
 
   val log = Queue.create ()
 

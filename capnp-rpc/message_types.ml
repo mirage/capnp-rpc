@@ -95,7 +95,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | `Release of ImportId.t * int
     | `Disembargo_request of disembargo_request
     | `Disembargo_reply of message_target * EmbargoId.t
-    | `Return of (AnswerId.t * return)
+    | `Return of (AnswerId.t * return * bool)   (* bool is release-caps *)
     | `Resolve of (ExportId.t * (desc, Exception.t) result)
   ]
   (** A message sent over the network. *)

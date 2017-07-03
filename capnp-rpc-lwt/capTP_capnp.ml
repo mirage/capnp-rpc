@@ -106,16 +106,17 @@ let read_exn ex =
 let handle_return t return =
   let open Reader in
   let qid = Return.answer_id_get return |> QuestionId.of_uint32 in
+  let release_param_caps = Return.release_param_caps_get return in
   match Return.get return with
   | Return.Results results ->
     let descs = parse_descs (Payload.cap_table_get_list results |> RO_array.of_list) in
-    Conn.handle_msg t.conn (`Return (qid, `Results (Rpc.Readonly return, descs)))
+    Conn.handle_msg t.conn (`Return (qid, `Results (Rpc.Readonly return, descs), release_param_caps))
   | Return.Exception ex ->
     let ex = read_exn ex in
     Log.info (fun f -> f ~tags:(tags ~qid t) "Got exception %a" Capnp_rpc.Exception.pp ex);
-    Conn.handle_msg t.conn (`Return (qid, `Exception ex))
+    Conn.handle_msg t.conn (`Return (qid, `Exception ex, release_param_caps))
   | Return.Canceled ->
-    Conn.handle_msg t.conn (`Return (qid, `Cancelled))
+    Conn.handle_msg t.conn (`Return (qid, `Cancelled, release_param_caps))
   | _ ->
     Log.warn (fun f -> f ~tags:(tags ~qid t) "Got unknown return type");
     failwith "Unexpected return type received"
@@ -297,7 +298,7 @@ let serialise ~tags : Endpoint_types.Out.t -> _ =
     set_target (Disembargo.target_init dis) target;
     Disembargo.Context.receiver_loopback_set ctx (EmbargoId.uint32 embargo_id);
     Message.to_message m
-  | `Return (aid, return) ->
+  | `Return (aid, return, release) ->
     let ret =
       match return with
         | `Results (msg, descs) ->
@@ -318,6 +319,7 @@ let serialise ~tags : Endpoint_types.Out.t -> _ =
         | _ -> failwith "TODO: other return type"
     in
     Return.answer_id_set ret (AnswerId.uint32 aid);
+    Return.release_param_caps_set ret release;
     Return.to_message ret
   | `Resolve (id, new_target) ->
     let m = Message.init_root () in

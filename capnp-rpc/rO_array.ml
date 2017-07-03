@@ -7,6 +7,7 @@ let map = Array.map
 let mapi = Array.mapi
 let iter = Array.iter
 let iteri = Array.iteri
+let fold_left = Array.fold_left
 
 let find fn t =
   let rec loop i =
