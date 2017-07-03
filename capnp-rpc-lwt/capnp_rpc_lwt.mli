@@ -168,10 +168,12 @@ module CapTP : sig
   type t
   (** A CapTP connection to a remote peer. *)
 
-  val of_endpoint : ?offer:'a Capability.t -> ?tags:Logs.Tag.set -> switch:Lwt_switch.t -> Endpoint.t -> t
-  (** [of_endpoint ?offer ~switch endpoint] is fresh CapTP connection wrapping [endpoint].
+  val connect : ?offer:'a Capability.t -> ?tags:Logs.Tag.set -> switch:Lwt_switch.t -> Endpoint.t -> t
+  (** [connect ?offer ~switch endpoint] is fresh CapTP protocol handler that sends and
+      receives messages using [endpoint].
       If [offer] is given, the peer can use the "Bootstrap" message to get access to it.
-      If the connection fails then [switch] will be turned off. *)
+      If the connection fails then [switch] will be turned off, and turning off the switch
+      will release all resources used by the connection. *)
 
   val bootstrap : t -> 'a Capability.t
   (** [bootstrap t] is the peer's public bootstrap object, if any. *)

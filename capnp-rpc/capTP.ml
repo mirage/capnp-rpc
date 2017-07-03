@@ -180,7 +180,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | Some x -> x#inc_ref
     end;
     {
-      queue_send;
+      queue_send = (queue_send :> EP.Out.t -> unit);
       tags;
       bootstrap = (bootstrap :> Core_types.cap option);
       questions = Questions.make ();
@@ -192,12 +192,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
       disconnected = None;
     }
 
-  let tags ?qid ?aid t =
-    match qid, aid with
-    | None, None -> t.tags
-    | Some qid, None -> Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) t.tags
-    | None, Some aid -> Logs.Tag.add Debug.qid_tag (EP.Table.AnswerId.uint32 aid) t.tags
-    | Some _, Some _ -> assert false
+  let with_qid qid t =
+    Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) t.tags
+
+  let with_aid aid t =
+    Logs.Tag.add Debug.qid_tag (EP.Table.AnswerId.uint32 aid) t.tags
+
+  let tags t = t.tags
 
   let pp_promise f = function
     | Some (q, _) -> pp_question f q
@@ -367,7 +368,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let rec send_call t target msg caps =
     let result = make_remote_promise t in
     let question, qid, message_target, descs = Send.call t (result :> Core_types.struct_resolver) target caps in
-    Log.info (fun f -> f ~tags:(tags ~qid t) "Sending: (%a).call %a"
+    Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
                  pp_cap target
                  Core_types.Request_payload.pp (msg, caps));
     result#set_question question;
@@ -398,7 +399,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       method set_question q =
         let finish = lazy (
           let qid = Send.finish t q in
-          Log.info (fun f -> f ~tags:(tags ~qid t) "Send finish %t" self#pp);
+          Log.info (fun f -> f ~tags:(with_qid qid t) "Send finish %t" self#pp);
           t.queue_send (`Finish (qid, false));
         ) in
         self#update_target (Some (q, finish))
@@ -433,7 +434,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let result = make_remote_promise t in
     let question, qid = Send.bootstrap t (result :> Core_types.struct_resolver) in
     result#set_question question;
-    Log.info (fun f -> f ~tags:(tags ~qid t) "Sending: bootstrap");
+    Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
     t.queue_send (`Bootstrap qid);
     let service = result#cap Wire.Path.root in
     result#finish;
@@ -449,14 +450,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | Some (Ok (msg, caps)) ->
         RO_array.iter (fun c -> c#inc_ref) caps;        (* Copy everything stored in [answer]. *)
         let aid, ret = Send.return_results t answer msg caps in
-        Log.info (fun f -> f ~tags:(tags ~aid t) "Returning results: %a"
+        Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
                      Core_types.Response_payload.pp (msg, caps));
         RO_array.iter dec_ref caps;
-        Log.info (fun f -> f ~tags:(tags ~aid t) "Wire results: %a" Out.pp_return ret);
+        Log.info (fun f -> f ~tags:(with_aid aid t) "Wire results: %a" Out.pp_return ret);
         aid, ret
       | Some (Error err) ->
         let aid, ret = Send.return_error t answer err in
-        Log.info (fun f -> f ~tags:(tags ~aid t) "Returning error: %a" Error.pp err);
+        Log.info (fun f -> f ~tags:(with_aid aid t) "Returning error: %a" Error.pp err);
         aid, ret
     in
     t.queue_send (`Return (aid, ret, false))
@@ -735,7 +736,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let call t aid (message_target : In.message_target) msg descs =
       (* TODO: allowThirdPartyTailCall, sendResultsTo *)
-      Log.info (fun f -> f ~tags:(tags ~aid t) "Received call to %a with args %a"
+      Log.info (fun f -> f ~tags:(with_aid aid t) "Received call to %a with args %a"
                    EP.In.pp_desc message_target
                    (RO_array.pp EP.In.pp_desc) descs
                );
@@ -814,23 +815,23 @@ module Make (EP : Message_types.ENDPOINT) = struct
       maybe_release_question t question;
       match ret with
       | `Results (msg, descs) ->
-        Log.info (fun f -> f ~tags:(tags ~qid t) "Received return results: %a"
+        Log.info (fun f -> f ~tags:(with_qid qid t) "Received return results: %a"
                      (RO_array.pp In.pp_desc) descs
                  );
         let result, caps = return_results t question msg descs in
-        Log.info (fun f -> f ~tags:(tags ~qid t) "Got results: %a"
+        Log.info (fun f -> f ~tags:(with_qid qid t) "Got results: %a"
                      Core_types.Response_payload.pp (msg, caps)
                  );
         result#resolve (Ok (msg, caps))
       | #Error.t as err ->
         let result = question.question_data in
-        Log.info (fun f -> f ~tags:(tags ~qid t) "Got error: %a" Error.pp err);
+        Log.info (fun f -> f ~tags:(with_qid qid t) "Got error: %a" Error.pp err);
         result#resolve (Error err)
       | _ -> failwith "TODO: other return"
 
     let finish t aid ~release_result_caps =
       let answer = Answers.find_exn t.answers aid in
-      Log.info (fun f -> f ~tags:(tags ~aid t) "Received finish for %t" answer.answer_promise#pp);
+      Log.info (fun f -> f ~tags:(with_aid aid t) "Received finish for %t" answer.answer_promise#pp);
       match answer.answer_state with
       | `Finished -> assert false
       | `Not_finished disembargo_on_finish ->
@@ -922,7 +923,32 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   end
 
-  let handle_msg t (msg : EP.In.t) =
+  let handle_unimplemented t msg =
+    match msg with
+    | `Resolve (_, Error _) -> ()
+    | `Resolve (_, Ok new_target) ->
+      (* If the peer doesn't understand resolve messages, we can just release target. *)
+      begin match new_target with
+      | `None
+      | `ReceiverHosted _
+      | `ReceiverAnswer _ -> ()
+      | `SenderHosted id
+      | `SenderPromise id
+      | `ThirdPartyHosted (_, id) -> Input.release t id ~ref_count:1
+      end
+    | `Bootstrap qid ->
+      (* If the peer didn't understand our question, pretend it returned an exception. *)
+      Input.return t qid ~release_param_caps:true
+        (Error.exn ~ty:`Unimplemented "Bootstrap message not implemented by peer")
+    | `Call (qid, _, _, _) ->
+      (* This could happen if we asked for the bootstrap object from a peer that doesn't
+         offer any services, and then tried to pipeline on the result. *)
+      Input.return t qid ~release_param_caps:true
+        (Error.exn ~ty:`Unimplemented "Call message not implemented by peer!")
+    | _ ->
+      failwith "Protocol error: peer unexpectedly responded with Unimplemented"
+
+  let handle_msg t msg =
     check_connected t;
     match msg with
     | `Call (aid, target, msg, descs) -> Input.call t aid target msg descs
@@ -933,6 +959,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Disembargo_request req         -> Input.disembargo_request t req
     | `Disembargo_reply (target, id)  -> Input.disembargo_reply t target id
     | `Resolve (id, target)           -> Input.resolve t id target
+    | `Unimplemented x                -> handle_unimplemented t x
 
   let dump_embargo f (id, proxy) =
     Fmt.pf f "%a: @[%t@]" EmbargoId.pp id proxy#pp

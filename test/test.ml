@@ -651,64 +651,93 @@ let test_ref_counts () =
   Alcotest.(check int) "Embargo released" 0 (Hashtbl.length objects);
   Gc.full_major ()
 
-(* Pretend that the peer only supports level 0, and therefore
-   sets the auto-release flags. *)
-let test_level0 () =
+module Level0 = struct
   (* Client is level 0, server is level 1.
      We don't have a level 0 implementation, so we'll do it manually.
      Luckily, level 0 is very easy. *)
-  let from_server = Queue.create () in
-  let to_server = Queue.create () in
+
+  type t = {
+    from_server : [S.EP.Out.t | `Unimplemented of S.EP.In.t] Queue.t;
+    to_server : [S.EP.In.t | `Unimplemented of S.EP.Out.t] Queue.t;
+  }
+
+  let send t m = Queue.add m t.to_server
+
+  let qid_of_int x = S.EP.In.QuestionId.of_uint32 (Uint32.of_int x)
+
+  let init ~bootstrap =
+    let from_server = Queue.create () in
+    let to_server = Queue.create () in
+    let c = { from_server; to_server } in
+    let s = S.create ~tags:Test_utils.server_tags from_server to_server ~bootstrap in
+    bootstrap#dec_ref;
+    send c @@ `Bootstrap (qid_of_int 0);
+    S.handle_msg s ~expect:"bootstrap";
+    send c @@ `Finish (qid_of_int 0, false);
+    S.handle_msg s ~expect:"finish";
+    let bs =
+      match Queue.pop from_server with
+      | `Return (_, `Results (_, caps), false) ->
+        begin match RO_array.get caps 0 with
+          | `SenderHosted id -> id
+          | _ -> assert false
+        end
+      | _ -> assert false
+    in
+    c, s, bs
+
+  let expect t expected =
+    match Queue.pop t.from_server with
+    | msg -> Alcotest.(check string) "Read message from server" expected (Testbed.Connection.summary_of_msg msg)
+    | exception Queue.Empty -> Alcotest.fail "No messages found!"
+
+  let expect_bs t =
+    let bs_request = Queue.pop t.from_server in
+    match bs_request with
+    | `Bootstrap qid -> qid
+    | _ -> Alcotest.fail (Fmt.strf "Expecting bootstrap, got %s" (Testbed.Connection.summary_of_msg bs_request))
+
+  let expect_call t expected =
+    match Queue.pop t.from_server with
+    | `Call (qid, _, msg, _) ->
+      Alcotest.(check string) "Get call" expected msg;
+      qid
+    | request -> Alcotest.fail (Fmt.strf "Expecting call, got %s" (Testbed.Connection.summary_of_msg request))
+
+  let call t target ~qid msg =
+    send t @@ `Call (qid_of_int qid, `ReceiverHosted target, msg, RO_array.empty)
+
+  let finish t ~qid =
+    send t @@ `Finish (qid_of_int qid, true)
+end
+
+(* Pretend that the peer only supports level 0, and therefore
+   sets the auto-release flags. *)
+let test_auto_release () =
   let service = Services.manual () in
-  let s = S.create ~tags:Test_utils.server_tags from_server to_server ~bootstrap:service in
-  service#dec_ref;
-  let send m = Queue.add m to_server in
-  let qid x = S.EP.In.QuestionId.of_uint32 (Uint32.of_int x) in
-  send @@ `Bootstrap (qid 0);
-  S.handle_msg s ~expect:"bootstrap";
-  send @@ `Finish (qid 0, false);
-  S.handle_msg s ~expect:"finish";
-  let bs =
-    match Queue.pop from_server with
-    | `Return (_, `Results (_, caps), false) ->
-      begin match RO_array.get caps 0 with
-        | `SenderHosted id -> id
-        | _ -> assert false
-      end
-    | _ -> assert false
-  in
+  let c, s, bs = Level0.init ~bootstrap:service in
+  let send = Level0.send c in
   (* Client makes a call. *)
-  send @@ `Call (qid 0, `ReceiverHosted bs, "q0", RO_array.empty);
+  Level0.call c ~qid:0 bs "q0";
   S.handle_msg s ~expect:"call:q0";
   (* Server replies with some caps, which the client doesn't understand. *)
   let a0 = service#pop0 "q0" in
   let echo_service = Services.echo_service () in
   resolve_ok a0 "a0" [echo_service];
-  ignore (Queue.pop from_server);        (* Return *)
+  Level0.expect c "return:a0";
   (* Client asks it to drop all caps *)
-  send @@ `Finish (qid 0, true);
+  Level0.finish c ~qid:0;
   S.handle_msg s ~expect:"finish";
   Alcotest.(check bool) "Echo released" true echo_service#released;
-  assert (Queue.is_empty from_server);
   (* Now test the other direction. Service invokes bootstap on client. *)
   let proxy_to_client = S.bootstrap s in
   let logger = Services.logger () in
   let _q1 = call proxy_to_client "q1" [logger] in
   logger#dec_ref;
-  let bs_request = Queue.pop from_server in
-  let bs_qid =
-    match bs_request with
-    | `Bootstrap qid -> qid
-    | _ -> assert false
-  in
+  let bs_qid = Level0.expect_bs c in
   let client_bs_id = S.EP.In.ExportId.zero in
   send @@ `Return (bs_qid, `Results ("bs", RO_array.of_list [`SenderHosted client_bs_id]), true);
-  let q1_call = Queue.pop from_server in
-  let q1_qid =
-    match q1_call with
-    | `Call (qid, _, "q1", _) -> qid
-    | _ -> assert false
-  in
+  let q1_qid = Level0.expect_call c "q1" in
   send @@ `Return (q1_qid, `Results ("a1", RO_array.empty), true);
   S.handle_msg s ~expect:"return:bs";
   S.handle_msg s ~expect:"return:a1";
@@ -718,6 +747,68 @@ let test_level0 () =
      A real level-0 client would just disconnect, but release cleanly so we can
      check nothing else was leaked. *)
   send @@ `Release (S.EP.Out.ExportId.zero, 1);
+  S.handle_msg s ~expect:"release";
+  try S.check_finished s ~name:"Server"
+  with ex ->
+    Logs.err (fun f -> f "Error: %a@\n%a" Fmt.exn ex S.dump s);
+    raise ex
+
+(* We send a resolve to a level 0 implementation, which echoes it back as
+   "unimplemented". We release the cap. *)
+let test_unimplemented () =
+  let service = Services.manual () in
+  let c, s, bs = Level0.init ~bootstrap:service in
+  (* The client makes a call on [service] and gets back a promise. *)
+  Level0.call c ~qid:0 bs "q0";
+  S.handle_msg s ~expect:"call:q0";
+  let a0 = service#pop0 "q0" in
+  let promise = Cap_proxy.local_promise () in
+  promise#inc_ref;
+  resolve_ok a0 "a0" [promise];
+  (* The server resolves the promise *)
+  let echo_service = Services.echo_service () in
+  promise#resolve (echo_service :> Core_types.cap);
+  promise#dec_ref;
+  (* The client doesn't understand the resolve message. *)
+  Level0.expect c "return:a0";
+  Level0.finish c ~qid:0;
+  S.handle_msg s ~expect:"finish";
+  let resolve =
+    match Queue.pop c.from_server with
+    | `Resolve _ as r -> r
+    | _ -> assert false
+  in
+  Level0.send c @@ `Unimplemented resolve;
+  S.handle_msg s ~expect:"unimplemented";
+  (* The server releases the export. *)
+  Alcotest.(check bool) "Echo released" true echo_service#released;
+  (* The server tries to get the client's bootstrap object *)
+  let bs = S.bootstrap s in
+  let q2 = call bs "q2" [] in
+  (* The client doesn't support bootstrap or call *)
+  let bs_msg =
+    match Queue.pop c.from_server with
+    | `Bootstrap _ as bs -> bs
+    | _ -> assert false
+  in
+  Level0.send c @@ `Unimplemented bs_msg;
+  let call_msg =
+    match Queue.pop c.from_server with
+    | `Call _ as call -> call
+    | _ -> assert false
+  in
+  Level0.send c @@ `Unimplemented call_msg;
+  S.handle_msg s ~expect:"unimplemented";
+  S.handle_msg s ~expect:"unimplemented";
+  bs#dec_ref;
+  Alcotest.(check response_promise) "Server got error"
+    (Some (Error (Error.exn ~ty:`Unimplemented "Call message not implemented by peer!")))
+    q2#response;
+  q2#finish;
+  (* Clean up.
+     A real level-0 client would just disconnect, but release cleanly so we can
+     check nothing else was leaked. *)
+  Level0.send c @@ `Release (S.EP.Out.ExportId.zero, 1);
   S.handle_msg s ~expect:"release";
   try S.check_finished s ~name:"Server"
   with ex ->
@@ -747,7 +838,8 @@ let tests = [
   "Resolve 2", `Quick, test_resolve_2;
   "Resolve 3", `Quick, test_resolve_3;
   "Ref-counts", `Quick, test_ref_counts;
-  "Level 0", `Quick, test_level0;
+  "Auto-release", `Quick, test_auto_release;
+  "Unimplemented", `Quick, test_unimplemented;
 ] |> List.map (fun (name, speed, test) ->
     name, speed, (fun () -> test (); Gc.full_major ())
   )
