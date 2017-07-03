@@ -67,7 +67,9 @@ let test_return () =
   (* Server echos args back *)
   S.handle_msg s ~expect:"call:c1";
   C.handle_msg c ~expect:"return:got:c1";
-  Alcotest.(check response_promise) "Client got response" (Some (Ok ("got:c1", RO_array.of_list [local]))) q#response;
+  Alcotest.(check response_promise) "Client got response"
+    (Some (Ok ("got:c1", RO_array.of_list [(local :> Core_types.cap)])))
+    q#response;
   bs#dec_ref;
   S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"release";
@@ -588,7 +590,7 @@ let test_resolve_3 () =
   resolve_ok a2 "a2" [echo];
   C.handle_msg c ~expect:"return:a2";
   (* Service now resolves first answer *)
-  a1_promise#resolve echo;
+  a1_promise#resolve (echo :> Core_types.cap);
   a1_promise#dec_ref;
   proxy_to_service#dec_ref;
   CS.flush c s;
@@ -649,6 +651,79 @@ let test_ref_counts () =
   Alcotest.(check int) "Embargo released" 0 (Hashtbl.length objects);
   Gc.full_major ()
 
+(* Pretend that the peer only supports level 0, and therefore
+   sets the auto-release flags. *)
+let test_level0 () =
+  (* Client is level 0, server is level 1.
+     We don't have a level 0 implementation, so we'll do it manually.
+     Luckily, level 0 is very easy. *)
+  let from_server = Queue.create () in
+  let to_server = Queue.create () in
+  let service = Services.manual () in
+  let s = S.create ~tags:Test_utils.server_tags from_server to_server ~bootstrap:service in
+  service#dec_ref;
+  let send m = Queue.add m to_server in
+  let qid x = S.EP.In.QuestionId.of_uint32 (Uint32.of_int x) in
+  send @@ `Bootstrap (qid 0);
+  S.handle_msg s ~expect:"bootstrap";
+  send @@ `Finish (qid 0, false);
+  S.handle_msg s ~expect:"finish";
+  let bs =
+    match Queue.pop from_server with
+    | `Return (_, `Results (_, caps), false) ->
+      begin match RO_array.get caps 0 with
+        | `SenderHosted id -> id
+        | _ -> assert false
+      end
+    | _ -> assert false
+  in
+  (* Client makes a call. *)
+  send @@ `Call (qid 0, `ReceiverHosted bs, "q0", RO_array.empty);
+  S.handle_msg s ~expect:"call:q0";
+  (* Server replies with some caps, which the client doesn't understand. *)
+  let a0 = service#pop0 "q0" in
+  let echo_service = Services.echo_service () in
+  resolve_ok a0 "a0" [echo_service];
+  ignore (Queue.pop from_server);        (* Return *)
+  (* Client asks it to drop all caps *)
+  send @@ `Finish (qid 0, true);
+  S.handle_msg s ~expect:"finish";
+  Alcotest.(check bool) "Echo released" true echo_service#released;
+  assert (Queue.is_empty from_server);
+  (* Now test the other direction. Service invokes bootstap on client. *)
+  let proxy_to_client = S.bootstrap s in
+  let logger = Services.logger () in
+  let _q1 = call proxy_to_client "q1" [logger] in
+  logger#dec_ref;
+  let bs_request = Queue.pop from_server in
+  let bs_qid =
+    match bs_request with
+    | `Bootstrap qid -> qid
+    | _ -> assert false
+  in
+  let client_bs_id = S.EP.In.ExportId.zero in
+  send @@ `Return (bs_qid, `Results ("bs", RO_array.of_list [`SenderHosted client_bs_id]), true);
+  let q1_call = Queue.pop from_server in
+  let q1_qid =
+    match q1_call with
+    | `Call (qid, _, "q1", _) -> qid
+    | _ -> assert false
+  in
+  send @@ `Return (q1_qid, `Results ("a1", RO_array.empty), true);
+  S.handle_msg s ~expect:"return:bs";
+  S.handle_msg s ~expect:"return:a1";
+  Alcotest.(check bool) "Logger released" true logger#released;
+  proxy_to_client#dec_ref;
+  (* Clean up.
+     A real level-0 client would just disconnect, but release cleanly so we can
+     check nothing else was leaked. *)
+  send @@ `Release (S.EP.Out.ExportId.zero, 1);
+  S.handle_msg s ~expect:"release";
+  try S.check_finished s ~name:"Server"
+  with ex ->
+    Logs.err (fun f -> f "Error: %a@\n%a" Fmt.exn ex S.dump s);
+    raise ex
+
 let tests = [
   "Return",     `Quick, test_return;
   "Return error", `Quick, test_return_error;
@@ -672,6 +747,7 @@ let tests = [
   "Resolve 2", `Quick, test_resolve_2;
   "Resolve 3", `Quick, test_resolve_3;
   "Ref-counts", `Quick, test_ref_counts;
+  "Level 0", `Quick, test_level0;
 ] |> List.map (fun (name, speed, test) ->
     name, speed, (fun () -> test (); Gc.full_major ())
   )

@@ -44,7 +44,7 @@ module Make(Wire : S.WIRE) = struct
 
   class virtual ref_counted =
     object (self : #cap)
-      val mutable ref_count = 1
+      val mutable ref_count = 1 (* -1 => leaked *)
       method private virtual release : unit
       method virtual pp : Format.formatter -> unit
 
@@ -60,12 +60,14 @@ module Make(Wire : S.WIRE) = struct
         ref_count <- ref_count + 1
 
       method dec_ref =
-        self#check_refcount;
-        ref_count <- ref_count - 1;
-        if ref_count = 0 then (
-          self#release;          (* We can get GC'd once we enter [release], but ref_count is 0 by then so OK. *)
-        );
-        ignore (Sys.opaque_identity self)
+        if ref_count <> -1 then (
+          self#check_refcount;
+          ref_count <- ref_count - 1;
+          if ref_count = 0 then (
+            self#release;          (* We can get GC'd once we enter [release], but ref_count is 0 by then so OK. *)
+          );
+          ignore (Sys.opaque_identity self)
+        ) (* else leaked and fixed by GC'd; another GC bug may be trying to release us *)
 
       method check_invariants = self#check_refcount
 
@@ -80,7 +82,7 @@ module Make(Wire : S.WIRE) = struct
                 ) else (
                   Log.warn (fun f -> f "@[<v2>Capability reference GC'd with ref-count of %d!@,%t@]"
                                ref_count self#pp);
-                  ref_count <- 0;
+                  ref_count <- -1;
                   self#release
                 )
               )

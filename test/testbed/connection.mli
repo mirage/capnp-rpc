@@ -18,6 +18,8 @@ module type ENDPOINT = sig
   val bootstrap : t -> cap
 
   val stats : t -> Capnp_rpc.Stats.t
+
+  val check_finished : t -> name:string -> unit
 end
 
 module Endpoint (EP : Capnp_direct.ENDPOINT) : ENDPOINT
