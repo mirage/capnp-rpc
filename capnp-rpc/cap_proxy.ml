@@ -91,6 +91,11 @@ module Make(C : S.CORE_TYPES) = struct
         | Unresolved _ -> (self :> cap)
         | Resolved cap -> cap#shortest
 
+      method problem =
+        match state with
+        | Unresolved _ -> None
+        | Resolved cap -> cap#problem
+
       method blocker =
         match state with
         | Unresolved _ -> Some (self :> base_ref)

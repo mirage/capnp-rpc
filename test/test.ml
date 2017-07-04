@@ -549,6 +549,11 @@ let ensure_is_cycle_error (x:#Core_types.struct_ref) : unit =
     when (String.is_prefix ~affix:"Attempt to create a cycle detected:" ex.Exception.reason) -> ()
   | _ -> Alcotest.fail (Fmt.strf "Not a cycle error: %t" x#pp)
 
+let ensure_is_cycle_error_cap cap =
+  match cap#problem with
+  | Some ex when (String.is_prefix ~affix:"<cycle: " ex.Exception.reason) -> ()
+  | _ -> Alcotest.fail (Fmt.strf "Not a cycle error: %t" cap#pp)
+
 let test_cycle () =
   (* Cap cycles *)
   let module P = Testbed.Capnp_direct.Cap_proxy in
@@ -561,7 +566,7 @@ let test_cycle () =
   let p1 = Local_struct_promise.make () in
   let c = p1#cap 0 in
   p1#resolve (Ok ("msg", RO_array.of_list [c]));
-  ensure_is_cycle_error p1;
+  ensure_is_cycle_error_cap c;
   (* Connect struct to itself *)
   let p1 = Local_struct_promise.make () in
   p1#connect (p1 :> Core_types.struct_ref);
@@ -573,7 +578,20 @@ let test_cycle_2 () =
   let s1 = Local_struct_promise.make () in
   let s2 = call (s1#cap 0) "get-s2" [] in
   s1#resolve (Ok ("a7", RO_array.of_list [s2#cap 0]));
-  ensure_is_cycle_error s1
+  ensure_is_cycle_error_cap (s1#cap 0)
+
+(* It's not a cycle if one field resolves to another. *)
+let test_cycle_3 () =
+  let echo = Services.echo_service () in
+  let a1 = Local_struct_promise.make () in
+  resolve_ok a1 "a1" [a1#cap 1; (echo :> Core_types.cap)];
+  let target = a1#cap 1 in
+  let q2 = call target "q2" [] in
+  Alcotest.(check response_promise) "Field 1 OK"
+    (Some (Ok ("got:q2", RO_array.empty)))
+    q2#response;
+  target#dec_ref;
+  a1#finish
 
 (* The server returns an answer containing a promise. Later, it resolves the promise
    to a resource at the client. The client must be able to invoke the service locally. *)
@@ -898,6 +916,7 @@ let tests = [
   "Shorten field", `Quick, test_shorten_field;
   "Cycle", `Quick, test_cycle;
   "Cycle 2", `Quick, test_cycle_2;
+  "Cycle 3", `Quick, test_cycle_3;
   "Resolve", `Quick, test_resolve;
   "Resolve 2", `Quick, test_resolve_2;
   "Resolve 3", `Quick, test_resolve_3;

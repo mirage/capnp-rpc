@@ -131,6 +131,9 @@ module type CORE_TYPES = sig
 
       method sealed_dispatch : 'a. 'a brand -> 'a option
       (** [c#sealed_dispatch brand] extracts some private data of the given type. *)
+
+      method problem : Exception.t option
+      (** [c#problem] is the exception for a broken reference, or [None] if it is not known to be broken. *)
           
     end
   (** A capability reference to an object that can handle calls.
@@ -193,6 +196,7 @@ module type CORE_TYPES = sig
     method virtual call : Wire.Request.t -> cap RO_array.t -> struct_ref
     method virtual shortest : cap
     method virtual when_more_resolved : (cap -> unit) -> unit
+    method virtual problem : Exception.t option
     method sealed_dispatch : 'a. 'a brand -> 'a option
   end
   (** A mix-in to help with writing reference-counted objects.
@@ -205,6 +209,7 @@ module type CORE_TYPES = sig
     method shortest : cap
     method private release : unit
     method when_more_resolved : (cap -> unit) -> unit
+    method problem : Exception.t option
   end
   (** A convenience base class for creating local services.
       The capability is always resolved, and the default [release] method does nothing. *)
