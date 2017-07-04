@@ -73,10 +73,16 @@ module Make (EP : Message_types.ENDPOINT) = struct
   type answer = {
     answer_id : AnswerId.t;
     mutable exports_for_release : ExportId.t list;
+
+    (* Keep for disembargo requests.
+       If the peer is going to send a disembargo request, it will do so as soon as it receives
+       the return message. At that point, the descs must be valid and so we don't need to
+       increment any ref-counts for them. *)
+    mutable answer_descs : [Out.message_target | `Local | `None] RO_array.t;
+
     answer_promise : Core_types.struct_resolver;
 
-    mutable answer_state : [`Finished | `Not_finished of Cap_proxy.embargo_cap Queue.t];
-    (* If not finished, there may be some embargoes that need to be lifted when finished. *)
+    mutable answer_finished : bool;
   }
 
   let flag_returned = 1
@@ -86,6 +92,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
     export_id : ExportId.t;
     mutable export_count : int; (* Number of times sent to remote and not yet released *)
     export_service : Core_types.cap;
+
+    (* Keep for disembargo requests.
+       If the peer is going to send a disembargo request, it will do so as soon as it receives
+       the resolve message. At that point, the desc must still be valid, so we don't need to
+       increase any ref-count for it. *)
+    mutable export_resolve_target : [Out.message_target | `Local | `None];
   }
 
   type import = {
@@ -234,9 +246,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
     val finish : t -> question -> Out.QuestionId.t
     (** [finish t qid] tells the system that we're about to send a Finish message
         (with [releaseResultCaps=false]). *)
-
-    val disembargo_reply : t -> message_target_cap -> Out.message_target
   end = struct
+
+    let at_receiver = function
+      | #Out.message_target as target -> target
+      | `None -> `None
+      | `SenderHosted _ | `SenderPromise _ -> `Local
+      | `ThirdPartyHosted _ -> failwith "TODO: at_receiver: ThirdPartyHosted"
 
     (** [export t cap] is a descriptor for [cap].
         If [cap] is a proxy object for a service at the peer, tell the peer the target directly.
@@ -257,7 +273,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | exception Not_found ->
             cap#inc_ref;
             let ex = Exports.alloc t.exports (fun export_id ->
-                { export_count = 1; export_service = cap; export_id }
+                { export_count = 1; export_service = cap; export_id; export_resolve_target = `None }
               )
             in
             let id = ex.export_id in
@@ -268,6 +284,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                   if ex.export_count > 0 then (
                     (* TODO: resolves to broken? *)
                     let new_export = export t x in
+                    ex.export_resolve_target <- at_receiver new_export;
                     Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending notification to use %a"
                                  ExportId.pp ex.export_id
                                  x#pp
@@ -331,11 +348,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let return_results t answer msg caps =
       let result =
-        if answer.answer_state = `Finished then `Cancelled
+        if answer.answer_finished then `Cancelled
         else (
-          let descrs = RO_array.map (export t) caps in
-          answer.exports_for_release <- exports_of descrs;
-          `Results (msg, descrs)
+          let descs = RO_array.map (export t) caps in
+          answer.exports_for_release <- exports_of descs;
+          answer.answer_descs <- RO_array.map at_receiver descs;
+          `Results (msg, descs)
         )
       in
       answer.answer_id, result
@@ -356,10 +374,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
       question.question_flags <- flags;
       maybe_release_question t question;
       question.question_id
-
-    let disembargo_reply _t = function
-      | `Import import -> `ReceiverHosted import.import_id
-      | `QuestionCap (question, path) -> `ReceiverAnswer (question.question_id, path)
   end
 
   type target = (question * unit Lazy.t) option  (* question, finish *)
@@ -420,11 +434,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
           end;
         | _ -> None
     end
-
-  let reply_to_disembargo t target embargo_id =
-    let target = Send.disembargo_reply t target in
-    Log.info (fun f -> f ~tags:t.tags "Sending disembargo response to %a" EP.Out.pp_desc target);
-    t.queue_send (`Disembargo_reply (target, embargo_id))
 
   let disembargo t request =
     Log.info (fun f -> f ~tags:t.tags "Sending disembargo %a" EP.Out.pp_disembargo_request request);
@@ -674,8 +683,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* Turn a connection-scoped cap reference received from our peer into a general-purpose
        cap for users. The caller owns the new reference and should [dec_ref] it when done.
        If [embargo_path] is passed then we have already pipelined messages over this cap, and
-       may therefore need to embargo it (sending the disembargo via the old [embargo_path]).
-    *)
+       may therefore need to embargo it (sending the disembargo via the old [embargo_path]). *)
     let import t ?embargo_path : In.desc -> Core_types.cap = function
       | `SenderPromise id ->
         import_sender t id ~settled:false ~mark_dirty:(embargo_path <> None)
@@ -687,11 +695,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `ReceiverHosted id ->
         let export = Exports.find_exn t.exports id in
         (* The sender's best guess at the time of sending was that we hosted the target.
-           However, we may have since resolved it to point elsewhere. We only send one
-           Resolve per export, so the cases are:
-           - We didn't send a Resolve yet -> send a local embargo
-           - We did send a Resolve -> find out what we said the new target was TODO
-         *)
+           We may have since resolved it to point elsewhere, but the remote will return any disembargo
+           request back to us. *)
         maybe_embargo t ~old_path:embargo_path (with_inc_ref export.export_service)
       | `ReceiverAnswer (id, path) ->
         let answer = Answers.find_exn t.answers id in
@@ -704,32 +709,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
             maybe_embargo t ~old_path:embargo_path (answer_promise#cap path)
           | Some (Error _) -> answer_promise#cap path (* No need to embargo errors *)
           | Some (Ok payload) ->
-            (* We've already replied to this question. Decide what to do about embargoes.
-               The cases are:
-               - The field is hosted here. Treat as for ReceiverHosted. TODO
-               - The field we want isn't in the payload. We can't embargo, because
-                 the peer has no way to return the response, but we don't need to for errors.
-               - The field is hosted at the peer. There might be messages we pipelined to it
-                 currently heading back to us. Embargo until we get the finish message - nothing
-                 can arrive after that.
-               - The field is hosted elsewhere (level 3 only). TODO
-            *)
+            (* We've already replied to this question. If we returned a capability at the
+               requested path then send a disembargo request to it. If not, we can't embargo,
+               because the peer has no way to return the response, but we don't need to for errors. *)
             match Core_types.Response_payload.field payload path with
             | Error (`Invalid_index _) -> answer_promise#cap path (* Don't embargo errors *)
-            | Ok cap ->
-              let cap = with_inc_ref cap#shortest in
-              match my_target_of t cap with
-              | None ->
-                (* Hosted locally *)
-                maybe_embargo t ~old_path:embargo_path cap
-              | Some _ ->
-                (* Hosted at peer *)
-                match answer.answer_state with
-                | `Finished -> failwith "Bug: finished answer in answers table!"
-                | `Not_finished disembargo_on_finish ->
-                  let embargo = Cap_proxy.embargo cap in
-                  embargo#inc_ref; Queue.add embargo disembargo_on_finish;
-                  (embargo :> Core_types.cap)
+            | Ok _ -> maybe_embargo t ~old_path:embargo_path (answer_promise#cap path)
         end
       | `None -> Core_types.null
       | `ThirdPartyHosted _ -> failwith "TODO: import"
@@ -744,8 +729,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let answer = {
         answer_id = aid;
         exports_for_release = [];
+        answer_descs = RO_array.empty;
         answer_promise;
-        answer_state = `Not_finished (Queue.create ());
+        answer_finished = false;
       } in
       Answers.set t.answers aid answer;
       let target =
@@ -765,8 +751,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let answer = {
         answer_id = id;
         exports_for_release = [];
+        answer_descs = RO_array.empty;
         answer_promise;
-        answer_state = `Not_finished (Queue.create ());
+        answer_finished = false;
       } in
       Answers.set t.answers id answer;
       reply_to_call t (`Bootstrap answer)
@@ -832,40 +819,39 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let finish t aid ~release_result_caps =
       let answer = Answers.find_exn t.answers aid in
       Log.info (fun f -> f ~tags:(with_aid aid t) "Received finish for %t" answer.answer_promise#pp);
-      match answer.answer_state with
-      | `Finished -> assert false
-      | `Not_finished disembargo_on_finish ->
-        answer.answer_state <- `Finished;
-        Queue.iter (fun e -> e#disembargo; e#dec_ref) disembargo_on_finish;
-        Answers.release t.answers aid;
-        if release_result_caps then List.iter (release t ~ref_count:1) answer.exports_for_release;
-        answer.answer_promise#finish
+      assert (not answer.answer_finished);
+      answer.answer_finished <- true;
+      Answers.release t.answers aid;
+      if release_result_caps then List.iter (release t ~ref_count:1) answer.exports_for_release;
+      answer.answer_promise#finish
+
+    let send_disembargo t embargo_id = function
+      | `None -> Debug.failf "Protocol error: disembargo request for None cap"
+      | `Local -> Debug.failf "Protocol error: disembargo request for local target"
+      | `ReceiverAnswer _ | `ReceiverHosted _ as target ->
+      Log.info (fun f -> f ~tags:t.tags "Sending disembargo response to %a" EP.Out.pp_desc target);
+        t.queue_send (`Disembargo_reply (target, embargo_id))
 
     let disembargo_request t request =
       Log.info (fun f -> f ~tags:t.tags "Received disembargo request %a" EP.In.pp_disembargo_request request);
       match request with
-      | `Loopback (old_path, id) ->
-        let cap =
-          match old_path with
-          | `ReceiverHosted eid -> (Exports.find_exn t.exports eid).export_service
-          | `ReceiverAnswer (aid, path) ->
-            let answer = Answers.find_exn t.answers aid in
-            let answer_promise = answer.answer_promise in
-            begin match answer_promise#response with
-              | None -> failwith "Got disembargo for unresolved promise!"
-              | Some (Error _) -> failwith "Got disembargo for exception!"
-              | Some (Ok payload) ->
-                match Core_types.Response_payload.field payload path with
-                | Ok cap -> cap
-                | Error (`Invalid_index i) ->
-                  (* The peer must have sent the answer before the disembargo request. *)
-                  Debug.failf "Protocol error: peer asked to disembargo a capability index (%d) knew didn't exist" i
-            end
-        in
-        (* Check that [cap] points back at sender. *)
-        match my_target_of t cap with
-        | Some (`Import _ | `QuestionCap _ as target) -> reply_to_disembargo t target id
-        | None -> Debug.failf "Protocol error: disembargo request for invalid target %t" cap#pp
+      | `Loopback (old_path, embargo_id) ->
+        match old_path with
+        | `ReceiverHosted eid ->
+          send_disembargo t embargo_id (Exports.find_exn t.exports eid).export_resolve_target;
+        | `ReceiverAnswer (aid, path) ->
+          let answer = Answers.find_exn t.answers aid in
+          let answer_promise = answer.answer_promise in
+          begin match answer_promise#response with
+            | None -> failwith "Got disembargo for unresolved promise!"
+            | Some (Error _) -> failwith "Got disembargo for exception!"
+            | Some (Ok (msg, _)) ->
+              match Core_types.Wire.Response.cap_index msg path with
+              | Some i when i >= 0 && i < RO_array.length answer.answer_descs ->
+                send_disembargo t embargo_id (RO_array.get answer.answer_descs i)
+              | _ ->
+                failwith "Got disembargo for invalid answer cap"
+          end
 
     let disembargo_reply t target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
