@@ -28,10 +28,10 @@ end
 let run_server ~switch ~service () =
   let server_socket, client_socket = Unix.(socketpair PF_UNIX SOCK_STREAM 0) in
   let server =
-    CapTP.of_endpoint ~tags:Test_utils.server_tags ~switch ~offer:service (Endpoint.of_socket ~switch server_socket)
+    CapTP.connect ~tags:Test_utils.server_tags ~switch ~offer:service (Endpoint.of_socket ~switch server_socket)
   in
   let client =
-    CapTP.of_endpoint ~tags:Test_utils.client_tags ~switch (Endpoint.of_socket ~switch client_socket)
+    CapTP.connect ~tags:Test_utils.client_tags ~switch (Endpoint.of_socket ~switch client_socket)
   in
   Capability.dec_ref service;
   { client; server }

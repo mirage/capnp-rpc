@@ -1,5 +1,25 @@
 open Capnp_direct.Core_types
 
+val summary_of_msg :
+  [< `Bootstrap of _
+  | `Call of _ * _ * string * _
+  | `Disembargo_reply of _
+  | `Disembargo_request of _
+  | `Finish of _
+  | `Release of _
+  | `Resolve of _
+  | `Return of
+       _ *
+       [< `AcceptFromThirdParty
+       | `Cancelled
+       | `Exception of Capnp_rpc.Exception.t
+       | `Results of string * _
+       | `ResultsSentElsewhere
+       | `TakeFromOtherQuestion ] *
+       _
+  | `Unimplemented of _ ] ->
+  string
+
 module type ENDPOINT = sig
   type t
 
@@ -7,7 +27,10 @@ module type ENDPOINT = sig
 
   val dump : t Fmt.t
 
-  val create : ?bootstrap:#cap -> tags:Logs.Tag.set -> EP.Out.t Queue.t -> EP.In.t Queue.t -> t
+  val create : ?bootstrap:#cap -> tags:Logs.Tag.set ->
+    [EP.Out.t | `Unimplemented of EP.In.t] Queue.t ->
+    [EP.In.t | `Unimplemented of EP.Out.t] Queue.t ->
+    t
 
   val handle_msg : ?expect:string -> t -> unit
 

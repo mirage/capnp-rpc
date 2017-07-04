@@ -6,6 +6,22 @@ module Log = (val Logs.src_log src: Logs.LOG)
 module Stats = Capnp_rpc.Stats
 let stats_t = Alcotest.of_pp Stats.pp
 
+let summary_of_msg = function
+  | `Bootstrap _ -> "bootstrap"
+  | `Call (_, _, msg, _) -> "call:" ^ msg
+  | `Return (_, `Results (msg, _), _) -> "return:" ^ msg
+  | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
+  | `Return (_, `Cancelled, _) -> "return:(cancelled)"
+  | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
+  | `Return (_, `ResultsSentElsewhere, _) -> "return:sent-elsewhere"
+  | `Return (_, `TakeFromOtherQuestion, _) -> "return:take-from-other"
+  | `Finish _ -> "finish"
+  | `Release _ -> "release"
+  | `Disembargo_request _ -> "disembargo-request"
+  | `Disembargo_reply _ -> "disembargo-reply"
+  | `Resolve _ -> "resolve"
+  | `Unimplemented _ -> "unimplemented"
+
 module type ENDPOINT = sig
   open Capnp_direct.Core_types
 
@@ -15,7 +31,10 @@ module type ENDPOINT = sig
 
   val dump : t Fmt.t
 
-  val create : ?bootstrap:#cap -> tags:Logs.Tag.set -> EP.Out.t Queue.t -> EP.In.t Queue.t -> t
+  val create : ?bootstrap:#cap -> tags:Logs.Tag.set ->
+    [EP.Out.t | `Unimplemented of EP.In.t] Queue.t ->
+    [EP.In.t | `Unimplemented of EP.Out.t] Queue.t ->
+    t
 
   val handle_msg : ?expect:string -> t -> unit
 
@@ -35,7 +54,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 
   type t = {
     conn : Conn.t;
-    recv_queue : EP.In.t Queue.t;
+    recv_queue : [EP.In.t | `Unimplemented of EP.Out.t] Queue.t;
   }
 
   let dump f t =
@@ -44,27 +63,12 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   module EP = EP
 
   let create ?bootstrap ~tags xmit_queue recv_queue =
-    let queue_send x = Queue.add x xmit_queue in
+    let queue_send x = Queue.add (x :> [EP.Out.t | `Unimplemented of EP.In.t]) xmit_queue in
     let conn = Conn.create ?bootstrap ~tags ~queue_send in
     {
       conn;
       recv_queue;
     }
-
-  let summary_of_msg = function
-    | `Bootstrap _ -> "bootstrap"
-    | `Call (_, _, msg, _) -> "call:" ^ msg
-    | `Return (_, `Results (msg, _), _) -> "return:" ^ msg
-    | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
-    | `Return (_, `Cancelled, _) -> "return:(cancelled)"
-    | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
-    | `Return (_, `ResultsSentElsewhere, _) -> "return:sent-elsewhere"
-    | `Return (_, `TakeFromOtherQuestion, _) -> "return:take-from-other"
-    | `Finish _ -> "finish"
-    | `Release _ -> "release"
-    | `Disembargo_request _ -> "disembargo-request"
-    | `Disembargo_reply _ -> "disembargo-reply"
-    | `Resolve _ -> "resolve"
 
   let pop_msg ?expect t =
     match Queue.pop t.recv_queue, expect with
@@ -75,8 +79,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
     | exception Queue.Empty -> Alcotest.fail "No messages found!"
 
   let handle_msg ?expect t =
-    let msg = pop_msg ?expect t in
-    Conn.handle_msg t.conn msg
+    pop_msg ?expect t |> Conn.handle_msg t.conn
 
   let maybe_handle_msg t =
     if Queue.length t.recv_queue > 0 then handle_msg t

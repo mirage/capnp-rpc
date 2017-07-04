@@ -99,6 +99,31 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | `Resolve of (ExportId.t * (desc, Exception.t) result)
   ]
   (** A message sent over the network. *)
+
+  let with_qid_tag tags = function
+    | `Finish (qid, _)
+    | `Bootstrap qid
+    | `Call (qid, _, _, _) -> Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) tags
+    | `Return (aid, _, _) -> Logs.Tag.add Debug.qid_tag (AnswerId.uint32 aid) tags
+    | `Release _
+    | `Disembargo_request _
+    | `Disembargo_reply _
+    | `Resolve _ -> tags
+
+  (* Describe message from the point of view of the receiver. *)
+  let pp_recv pp_msg : t Fmt.t = fun f -> function
+    | `Bootstrap _ -> Fmt.pf f "Bootstrap"
+    | `Call (_, target, msg, caps) -> Fmt.pf f "Call %a.%a with %a"
+                                        pp_desc target
+                                        pp_msg msg
+                                        (RO_array.pp pp_desc) caps
+    | `Finish (_, release) -> Fmt.pf f "Finish (release_result_caps=%b)" release
+    | `Release (id, count) -> Fmt.pf f "Release export %a (count=%d)" ImportId.pp id count
+    | `Disembargo_request disembargo_request -> pp_disembargo_request f disembargo_request
+    | `Disembargo_reply (x, id) -> Fmt.pf f "Disembargo reply for %a (embargo ID = %a)" pp_desc x EmbargoId.pp id
+    | `Return (_, return, release) -> Fmt.pf f "Return %a (release_param_caps = %b)" pp_return return release
+    | `Resolve (id, Ok desc) -> Fmt.pf f "Resolve export %a -> %a" ExportId.pp id pp_desc desc
+    | `Resolve (id, Error e) -> Fmt.pf f "Resolve export %a -> %a" ExportId.pp id Exception.pp e
 end
 
 module type ENDPOINT = sig

@@ -1,5 +1,4 @@
-let src = Logs.Src.create "capnp-rpc" ~doc:"Cap'n Proto RPC"
-module Log = (val Logs.src_log src: Logs.LOG)
+module Log = Capnp_rpc.Debug.Log
 
 module RO_array = Capnp_rpc.RO_array
 
