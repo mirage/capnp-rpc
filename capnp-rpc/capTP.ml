@@ -82,8 +82,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     answer_promise : Core_types.struct_resolver;
 
-    mutable answer_state : [`Finished | `Not_finished of Cap_proxy.embargo_cap Queue.t];
-    (* If not finished, there may be some embargoes that need to be lifted when finished. *)
+    mutable answer_finished : bool;
   }
 
   let flag_returned = 1
@@ -349,7 +348,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let return_results t answer msg caps =
       let result =
-        if answer.answer_state = `Finished then `Cancelled
+        if answer.answer_finished then `Cancelled
         else (
           let descs = RO_array.map (export t) caps in
           answer.exports_for_release <- exports_of descs;
@@ -732,7 +731,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         exports_for_release = [];
         answer_descs = RO_array.empty;
         answer_promise;
-        answer_state = `Not_finished (Queue.create ());
+        answer_finished = false;
       } in
       Answers.set t.answers aid answer;
       let target =
@@ -754,7 +753,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         exports_for_release = [];
         answer_descs = RO_array.empty;
         answer_promise;
-        answer_state = `Not_finished (Queue.create ());
+        answer_finished = false;
       } in
       Answers.set t.answers id answer;
       reply_to_call t (`Bootstrap answer)
@@ -820,14 +819,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let finish t aid ~release_result_caps =
       let answer = Answers.find_exn t.answers aid in
       Log.info (fun f -> f ~tags:(with_aid aid t) "Received finish for %t" answer.answer_promise#pp);
-      match answer.answer_state with
-      | `Finished -> assert false
-      | `Not_finished disembargo_on_finish ->
-        answer.answer_state <- `Finished;
-        Queue.iter (fun e -> e#disembargo; e#dec_ref) disembargo_on_finish;
-        Answers.release t.answers aid;
-        if release_result_caps then List.iter (release t ~ref_count:1) answer.exports_for_release;
-        answer.answer_promise#finish
+      assert (not answer.answer_finished);
+      answer.answer_finished <- true;
+      Answers.release t.answers aid;
+      if release_result_caps then List.iter (release t ~ref_count:1) answer.exports_for_release;
+      answer.answer_promise#finish
 
     let send_disembargo t embargo_id = function
       | `None -> Debug.failf "Protocol error: disembargo request for None cap"
