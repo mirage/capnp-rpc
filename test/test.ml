@@ -301,12 +301,14 @@ let test_local_embargo_6 () =
   Logs.info (fun f -> f "target = %t" target#pp);
   let _ = call target "Message-2" [] in         (* Client tries to send message-2, but it gets embargoed *)
   target#dec_ref;
+  S.handle_msg s ~expect:"disembargo-request";
   S.handle_msg s ~expect:"finish";              (* Finish for q1 *)
   C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
   C.handle_msg c ~expect:"disembargo-request";  (* (the server is doing its own embargo on q2) *)
   C.handle_msg c ~expect:"finish";              (* Finish of q2 shows pipeline is clear; embargo lifted *)
   S.handle_msg s ~expect:"call:Message-1";
   S.handle_msg s ~expect:"disembargo-reply";    (* (the server is doing its own embargo on q2) *)
+  C.handle_msg c ~expect:"disembargo-reply";
   S.handle_msg s ~expect:"call:Message-2";
   let m1 = service#pop0 "Message-1" in
   let m2 = service#pop0 "Message-2" in
@@ -363,6 +365,67 @@ let test_local_embargo_7 () =
   local#dec_ref;
   bs#dec_ref;
   target#dec_ref;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* The client tries to disembargo a resolved local switchable. *)
+let test_local_embargo_8 () =
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let local = Services.manual () in
+  (* Client calls the server, giving it [local]. *)
+  let q1 = call bs "q1" [local] in
+  let target = q1#cap 0 in
+  q1#finish;
+  let _ = call target "Message-1" [] in
+  S.handle_msg s ~expect:"call:q1";
+  let proxy_to_local, a1 = service#pop1 "q1" in
+  (* Server makes a call on [local] and uses that promise to answer [q1]. *)
+  let q2 = call proxy_to_local "q2" [] in
+  (* Client resolves a2 to a local promise. *)
+  C.handle_msg c ~expect:"call:q2";
+  let a2 = local#pop0 "q2" in
+  let local_promise = Cap_proxy.local_promise () in
+  resolve_ok a2 "a2" [local_promise];
+  (* The server then answers q1 with that [local_promise]. *)
+  S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
+  S.handle_msg s ~expect:"return:a2";
+  resolve_ok a1 "a1" [q2#cap 0];
+  q2#finish;
+  C.handle_msg c ~expect:"finish";
+  (* The client resolves the local promise to a remote one *)
+  let q3 = call bs "q3" [] in
+  let remote_promise = q3#cap 0 in
+  local_promise#resolve remote_promise;
+  (* Client gets answer to a1 and sends disembargo. *)
+  C.handle_msg c ~expect:"call:Message-1";      (* Forwards pipelined call back to the server again *)
+  S.handle_msg s ~expect:"call:q3";
+  S.handle_msg s ~expect:"resolve";
+  S.handle_msg s ~expect:"call:Message-1";
+  CS.dump c s;
+  C.handle_msg c ~expect:"return:a1";
+  (* We should now know that [target] is local, but will have embargoed it. *)
+  let _ = call target "Message-2" [] in
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"disembargo-request"; (* Server is also doing its own embargo *)
+  C.handle_msg c ~expect:"release";
+  S.handle_msg s ~expect:"finish";
+  C.handle_msg c ~expect:"disembargo-reply";
+  S.handle_msg s ~expect:"disembargo-reply";
+  let logger = Services.logger () in
+  let a3 = service#pop0 "q3" in
+  logger#inc_ref;
+  resolve_ok a3 "a3" [logger];
+  C.handle_msg c ~expect:"return:logged";
+  S.handle_msg s ~expect:"call:Message-2";
+  Alcotest.(check string) "Pipelined arrived first" "Message-1" logger#pop;
+  Alcotest.(check string) "Embargoed arrived second" "Message-2" logger#pop;
+  q3#finish;
+  target#dec_ref;
+  proxy_to_local#dec_ref;
+  logger#dec_ref;
+  bs#dec_ref;
+  local#dec_ref;
   CS.flush c s;
   CS.check_finished c s
 
@@ -826,6 +889,7 @@ let tests = [
   "Local embargo 5", `Quick, test_local_embargo_5;
   "Local embargo 6", `Quick, test_local_embargo_6;
   "Local embargo 7", `Quick, test_local_embargo_7;
+  "Local embargo 8", `Quick, test_local_embargo_8;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
