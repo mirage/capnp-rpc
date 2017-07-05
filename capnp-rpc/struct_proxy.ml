@@ -5,6 +5,9 @@ module Log = Debug.Log
 module Make (C : S.CORE_TYPES) = struct
   open C
 
+  (* Only used internally to detect cycles. *)
+  let cycle_marker = C.broken_cap (Exception.v "<cycle marker>")
+
   let cycle_err fmt =
     "@[<v>Attempt to create a cycle detected:@," ^^ fmt ^^ "@]" |> Fmt.kstrf @@ fun msg ->
     Log.info (fun f -> f "%s" msg);
@@ -16,6 +19,8 @@ module Make (C : S.CORE_TYPES) = struct
     method pipeline : Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
     method inc_ref : Wire.Path.t -> unit
     method dec_ref : Wire.Path.t -> unit
+
+    method field_blocker : Wire.Path.t -> base_ref option
 
     method field_when_resolved : Wire.Path.t -> (cap -> unit) -> unit
     (* (can't use [when_resolved] because that checks the promise isn't finished) *)
@@ -37,6 +42,7 @@ module Make (C : S.CORE_TYPES) = struct
     method blocker = failwith "invalid_cap"
     method check_invariants = failwith "invalid_cap"
     method sealed_dispatch _ = failwith "invalid_cap"
+    method problem = failwith "invalid_cap"
   end
 
   module Field_map = Map.Make(Wire.Path)
@@ -56,6 +62,11 @@ module Make (C : S.CORE_TYPES) = struct
     mutable fields : field Field_map.t;
     when_resolved : (struct_ref -> unit) Queue.t;
     mutable cancelling : bool;    (* User called [finish], but results may still arrive. *)
+
+    (* This is non-None only while we are resolving. Then, it initially contains the fields
+       we're resolving to. Asking for the blocker of a field returns it, but also updates the
+       array so you can't ask again. *)
+    mutable cycle_detector : (Wire.Response.t * cap array) option;
   }
 
   type 'a state =
@@ -123,7 +134,12 @@ module Make (C : S.CORE_TYPES) = struct
       method blocker =
         match state with
         | ForwardingField c -> c#blocker
-        | PromiseField (p, _) -> p#blocker
+        | PromiseField (p, i) -> p#field_blocker i
+
+      method problem =
+        match state with
+        | ForwardingField c -> c#problem
+        | PromiseField _ -> None
 
       method when_more_resolved fn =
         match state with
@@ -146,6 +162,7 @@ module Make (C : S.CORE_TYPES) = struct
       Unresolved {
         target = init;
         fields = Field_map.empty;
+        cycle_detector = None;
         when_resolved = Queue.create ();
         cancelling = false
       }
@@ -221,13 +238,24 @@ module Make (C : S.CORE_TYPES) = struct
                 cycle_err "Resolving:@,  %t@,with:@,  %t" self#pp x#pp
               else match x#response with
                 | Some (Error _) | None -> x
-                | Some (Ok (_, caps)) ->
-                  match RO_array.find blocked_on_us caps with
-                  | None -> x
-                  | Some c ->
-                    let err = cycle_err "Resolving:@,  %t@,with:@,  %t@,due to:@,  %t@]" self#pp x#pp c#pp in
-                    x#finish;
-                    err
+                | Some (Ok (msg, caps)) ->
+                  (* Only break the fields which have cycles, not the whole promise.
+                     Otherwise, it can lead to out-of-order delivery where a message
+                     that should have been delivered to a working target instead gets
+                     dropped. Note also that fields can depend on other fields. *)
+                  let detector_caps = Array.make (RO_array.length caps) cycle_marker in
+                  u.cycle_detector <- Some (msg, detector_caps);
+                  let break_cycles c =
+                    for i = 0 to Array.length detector_caps - 1 do
+                      detector_caps.(i) <- RO_array.get caps i
+                    done;
+                    if c#blocker = Some (self :> C.base_ref) then
+                      C.broken_cap (Exception.v (Fmt.strf "<cycle: %t>" c#pp))
+                    else c
+                  in
+                  let fixed_caps = RO_array.map break_cycles caps in
+                  if fixed_caps == caps then x
+                  else C.return (msg, fixed_caps)
             in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->
@@ -275,6 +303,25 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:false
         ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)
         ~forwarding:(fun x -> x#when_resolved fn)
+
+    method field_blocker path =
+      match state with
+      | Unresolved { cycle_detector = Some (msg, caps); _ } ->
+        begin match Wire.Response.cap_index msg path with
+        | Some i when i >= 0 && i < Array.length caps ->
+          (* We're in the process of resolving.
+             Pretend that we've already resolved for the purpose of finding the blocker,
+             because one field might depend on another, and that's OK. But also disable
+             this path from being followed again, in case there's a cycle. *)
+          let cap = caps.(i) in
+          if cap = cycle_marker then Some (self :> C.base_ref)
+          else (
+            caps.(i) <- cycle_marker;
+            cap#blocker
+          )
+        | _ -> None
+        end
+      | _ -> self#blocker
 
     method field_when_resolved i fn =
       let fn : Response_payload.t or_error -> unit = function

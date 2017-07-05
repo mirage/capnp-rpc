@@ -537,6 +537,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | `Unsettled _ -> Some (self :> Core_types.base_ref)
         | `Set x -> x#blocker
 
+      method problem =
+        match state with
+        | `Unsettled _ -> None
+        | `Set x -> x#problem
+
       method when_more_resolved fn =
         match state with
         | `Unsettled (_, q) -> Queue.add fn q
@@ -613,6 +618,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
           method blocker =
             if settled then None
             else Some (self :> Core_types.base_ref)
+
+          method problem = None
 
           method when_more_resolved _ =
             assert settled      (* Otherwise, our switchable should have intercepted this *)

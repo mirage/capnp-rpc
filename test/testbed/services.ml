@@ -15,7 +15,7 @@ let echo_service () = object
   method call x caps =
     super#check_refcount;
     return ("got:" ^ x, caps)
-  method! pp f = Fmt.string f "echo-service"
+  method! pp f = Fmt.pf f "echo-service(%t)" super#pp_refcount
 end
 
 (* A service which just queues incoming messages and lets the test driver handle them. *)

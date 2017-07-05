@@ -30,6 +30,7 @@ module Make(Wire : S.WIRE) = struct
     method shortest : cap
     method when_more_resolved : (cap -> unit) -> unit
     method sealed_dispatch : 'a. 'a S.brand -> 'a option
+    method problem : Exception.t option
   end
 
   class type struct_resolver = object
@@ -112,6 +113,7 @@ module Make(Wire : S.WIRE) = struct
     method when_more_resolved _ = ()
     method check_invariants = ()
     method sealed_dispatch _ = None
+    method problem = Some ex
   end
   and broken_struct err = object (_ : struct_ref)
     method response = Some (Error err)
@@ -225,6 +227,7 @@ module Make(Wire : S.WIRE) = struct
     method shortest = (self :> cap)
     method blocker = None
     method when_more_resolved _ = ()
+    method problem = None
   end
 
   let fail ?(ty=`Failed) msg =
