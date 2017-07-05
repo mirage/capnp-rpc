@@ -60,6 +60,7 @@ let send t msg =
 
 let rec recv t =
   match Capnp.Codecs.FramedStream.get_next_frame t.decoder with
+  | _ when not (Lwt_switch.is_on t.switch) -> Lwt.return @@ Error `Closed
   | Ok msg -> Lwt.return (Ok (Capnp.BytesMessage.Message.readonly msg))
   | Error Capnp.Codecs.FramingError.Unsupported -> failwith "Unsupported Cap'n'Proto frame received"
   | Error Capnp.Codecs.FramingError.Incomplete ->

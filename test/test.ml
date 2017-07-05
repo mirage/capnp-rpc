@@ -305,10 +305,9 @@ let test_local_embargo_6 () =
   S.handle_msg s ~expect:"finish";              (* Finish for q1 *)
   C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
   C.handle_msg c ~expect:"disembargo-request";  (* (the server is doing its own embargo on q2) *)
-  C.handle_msg c ~expect:"finish";              (* Finish of q2 shows pipeline is clear; embargo lifted *)
   S.handle_msg s ~expect:"call:Message-1";
   S.handle_msg s ~expect:"disembargo-reply";    (* (the server is doing its own embargo on q2) *)
-  C.handle_msg c ~expect:"disembargo-reply";
+  C.handle_msg c ~expect:"disembargo-reply";    (* XXX: disembargo for finished answer! *)
   S.handle_msg s ~expect:"call:Message-2";
   let m1 = service#pop0 "Message-1" in
   let m2 = service#pop0 "Message-2" in
@@ -351,7 +350,6 @@ let test_local_embargo_7 () =
      to resolve the promise at some point in the future. *)
   S.handle_msg s ~expect:"disembargo-request";
   C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
-  C.handle_msg c ~expect:"finish";
   C.handle_msg c ~expect:"disembargo-reply";
   let client_logger = Services.logger () in
   client_logger#inc_ref;
@@ -408,7 +406,6 @@ let test_local_embargo_8 () =
   let _ = call target "Message-2" [] in
   S.handle_msg s ~expect:"disembargo-request";
   C.handle_msg c ~expect:"disembargo-request"; (* Server is also doing its own embargo *)
-  C.handle_msg c ~expect:"release";
   S.handle_msg s ~expect:"finish";
   C.handle_msg c ~expect:"disembargo-reply";
   S.handle_msg s ~expect:"disembargo-reply";
@@ -416,6 +413,7 @@ let test_local_embargo_8 () =
   let a3 = service#pop0 "q3" in
   logger#inc_ref;
   resolve_ok a3 "a3" [logger];
+  C.handle_msg c ~expect:"release";
   C.handle_msg c ~expect:"return:logged";
   S.handle_msg s ~expect:"call:Message-2";
   Alcotest.(check string) "Pipelined arrived first" "Message-1" logger#pop;
