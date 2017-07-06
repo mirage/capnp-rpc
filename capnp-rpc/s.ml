@@ -124,9 +124,10 @@ module type CORE_TYPES = sig
 
       method when_more_resolved : (cap -> unit) -> unit
       (** [c#when_more_resolved fn] calls [fn x] when this cap becomes more resolved.
-          [fn c] gets a reference to [c] and needs to [dec_ref] it.
+          [fn x] gets a reference to [x] and needs to [dec_ref] it.
           Note that the new capability can be another promise.
-          If [c] is already resolved to a value, this does nothing.
+          If [c] is already resolved to its final value, this does nothing.
+          If [c] is a far-ref, [fn x] will be called when it breaks.
           If [c] is forwarding to another cap, it will forward this call. *)
 
       method sealed_dispatch : 'a. 'a brand -> 'a option

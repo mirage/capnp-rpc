@@ -113,7 +113,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     mutable import_proxy_released : bool; (* Implies import_proxy = Uninitialised *)
     mutable import_proxy : [
       | `Uninitialised
-      | `Settled of Core_types.cap Weak_ptr.t
+      | `Settled of Cap_proxy.resolver_cap Weak_ptr.t
       | `Unsettled of Cap_proxy.resolver_cap Weak_ptr.t   (* Note: might be resolved to a settled value *)
     ]
   }
@@ -187,8 +187,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let get_import_proxy import =
     match import.import_proxy with
     | `Uninitialised -> None
-    | `Settled p -> Weak_ptr.get p
-    | `Unsettled p -> (Weak_ptr.get p :> Core_types.cap option)
+    | `Settled p | `Unsettled p -> Weak_ptr.get p
 
   let pp_question f q =
     Fmt.pf f "q%a" QuestionId.pp q.question_id
@@ -265,11 +264,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
     open EP.Core_types
 
     val bootstrap : t -> struct_resolver -> question * Out.QuestionId.t
-    val call : t -> struct_resolver -> message_target_cap -> Core_types.cap RO_array.t ->
-      question * Out.QuestionId.t * Out.message_target * Out.desc RO_array.t
+    val call : t -> struct_resolver -> message_target_cap -> Wire.Request.t -> Core_types.cap RO_array.t -> question
 
-    val return_results : t -> answer -> Wire.Response.t -> Core_types.cap RO_array.t -> Out.AnswerId.t * Out.return
-    val return_error : t -> answer -> Error.t -> Out.AnswerId.t * Out.return
+    val return : t -> answer -> unit
 
     val release : t -> import -> unit
     (** [release t i] tells the peer that [i] is no longer needed by us. *)
@@ -296,10 +293,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | Some _ (* TODO: third-party *)
       | None -> `Local
 
-    (** [export t cap] is a descriptor for [cap].
+    (** [export ~broken_caps t cap] is a descriptor for [cap].
         If [cap] is a proxy object for a service at the peer, tell the peer the target directly.
-        Otherwise, export it to the peer (reusing an existing export, if any). *)
-    let rec export : t -> Core_types.cap -> Out.desc = fun t cap ->
+        Otherwise, export it to the peer (reusing an existing export, if any).
+        If the cap is broken and needs a fresh export, we queue up a suitable resolve message
+        on [broken_caps]. This is needed for return messages. *)
+    let rec export ?broken_caps : t -> Core_types.cap -> Out.desc = fun t cap ->
       let cap = cap#shortest in
       match my_target_of t cap with
       | Some (`Import import) -> `ReceiverHosted import.import_id
@@ -320,24 +319,35 @@ module Make (EP : Message_types.ENDPOINT) = struct
             in
             let id = ex.export_id in
             Hashtbl.add t.exported_caps cap id;
-            if not settled then (
+            begin match cap#problem, broken_caps with
+            | Some problem, Some broken_caps -> Queue.add (ex, problem) broken_caps
+            | Some _, _ -> failwith "Cap is broken, but [broken_caps] not provided!"
+            | None, _ when settled -> ()
+            | None, _ ->
               Log.info (fun f -> f ~tags:t.tags "Monitoring promise export %a -> %a" ExportId.pp ex.export_id dump_export ex);
               cap#when_more_resolved (fun x ->
                   if ex.export_count > 0 then (
-                    (* TODO: resolves to broken? *)
                     let x = x#shortest in
-                    let new_export = export t x in
-                    Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending notification to use %a"
-                                 ExportId.pp ex.export_id
-                                 x#pp
-                                 Out.pp_desc new_export
-                             );
-                    ex.export_resolve_target <- get_resolve_target t x;
-                    t.queue_send (`Resolve (ex.export_id, Ok new_export));
+                    match x#problem with
+                    | Some problem ->
+                      Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending exception"
+                                   ExportId.pp ex.export_id
+                                   x#pp
+                               );
+                      t.queue_send (`Resolve (ex.export_id, Error problem));
+                    | None ->
+                      let new_export = export t x in
+                      Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending notification to use %a"
+                                   ExportId.pp ex.export_id
+                                   x#pp
+                                   Out.pp_desc new_export
+                               );
+                      ex.export_resolve_target <- get_resolve_target t x;
+                      t.queue_send (`Resolve (ex.export_id, Ok new_export));
                   ); (* else: no longer an export *)
                   x#dec_ref
-                );
-            );
+                )
+            end;
             ex
         in
         let id = ex.export_id in
@@ -367,20 +377,31 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | `None | `ReceiverAnswer _ | `ReceiverHosted _ -> acc
         ) []
 
-    let call t remote_promise (target : message_target_cap) caps =
-      let descrs = RO_array.map (export t) caps in
+    (* For some reason, we can't send broken caps in a payload message. So, if
+       any of them are broken, we send a resolve for them immediately afterwards. *)
+    let resolve_broken t =
+      Queue.iter @@ fun (ex, problem) ->
+      Log.info (fun f -> f ~tags:t.tags "Sending resolve for already-broken export %a : %t"
+                   ExportId.pp ex.export_id
+                   ex.export_service#pp
+               );
+      t.queue_send (`Resolve (ex.export_id, Error problem))
+
+    let call t remote_promise (target : message_target_cap) msg caps =
+      let broken_caps = Queue.create () in
+      let descs = RO_array.map (export ~broken_caps t) caps in
       let question = Questions.alloc t.questions (fun question_id ->
           {
             question_flags = QFlags.empty;
             question_resolve_refs = 0;
-            params_for_release = exports_of descrs;
+            params_for_release = exports_of descs;
             question_id;
             remote_promise;
             question_pipelined_fields = PathSet.empty
           }
         )
       in
-      let target =
+      let message_target =
         match target with
         | `Import import ->
           import.import_used <- true;
@@ -389,23 +410,44 @@ module Make (EP : Message_types.ENDPOINT) = struct
           question.question_pipelined_fields <- PathSet.add i question.question_pipelined_fields;
           `ReceiverAnswer (question.question_id, i)
       in
-      question, question.question_id, target, descrs
+      let qid = question.question_id in
+      Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
+                   pp_cap target
+                   Core_types.Request_payload.pp (msg, caps));
+      t.queue_send (`Call (qid, message_target, msg, descs));
+      resolve_broken t broken_caps;
+      question
 
-    let return_results t answer msg caps =
-      let result =
-        if answer.answer_finished then `Cancelled
-        else (
-          let caps = RO_array.map (fun c -> c#shortest) caps in
-          let descs = RO_array.map (export t) caps in
-          answer.exports_for_release <- exports_of descs;
-          answer.answer_resolve_targets <- RO_array.map (get_resolve_target t) caps;
-          `Results (msg, descs)
-        )
-      in
-      answer.answer_id, result
+    let return_results t answer (msg, caps) =
+      let aid = answer.answer_id in
+      let caps = RO_array.map (fun c -> c#shortest) caps in
+      Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
+                   Core_types.Response_payload.pp (msg, caps));
+      RO_array.iter (fun c -> c#inc_ref) caps;        (* Copy everything stored in [answer]. *)
+      let broken_caps = Queue.create () in
+      let descs = RO_array.map (export ~broken_caps t) caps in
+      answer.exports_for_release <- exports_of descs;
+      answer.answer_resolve_targets <- RO_array.map (get_resolve_target t) caps;
+      RO_array.iter dec_ref caps;
+      let ret = `Results (msg, descs) in
+      Log.info (fun f -> f ~tags:(with_aid aid t) "Wire results: %a" Out.pp_return ret);
+      t.queue_send (`Return (aid, ret, false));
+      resolve_broken t broken_caps
 
-    let return_error _t answer err =
-      answer.answer_id, (err : Error.t :> Out.return)
+    let return t answer =
+      let answer_promise = answer.answer_promise in
+      let aid = answer.answer_id in
+      match answer_promise#response with
+      | None -> assert false
+      | _ when answer.answer_finished ->
+        Log.info (fun f -> f ~tags:(with_aid aid t) "Returning cancelled");
+        t.queue_send (`Return (aid, `Cancelled, false));
+      | Some (Ok payload) ->
+        return_results t answer payload
+      | Some (Error err) ->
+        let ret = (err : Error.t :> Out.return) in
+        Log.info (fun f -> f ~tags:(with_aid aid t) "Returning error: %a" Error.pp err);
+        t.queue_send (`Return (aid, ret, false))
 
     let release t import =
       assert (import.import_resolve_refs = 0);
@@ -439,13 +481,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
   (* Note: takes ownership of [caps] *)
   let rec send_call t target msg caps =
     let result = make_remote_promise t in
-    let question, qid, message_target, descs = Send.call t (result :> Core_types.struct_resolver) target caps in
-    Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
-                 pp_cap target
-                 Core_types.Request_payload.pp (msg, caps));
-    result#set_question question;
-    t.queue_send (`Call (qid, message_target, msg, descs));
+    let question = Send.call t (result :> Core_types.struct_resolver) target msg caps in
     RO_array.iter dec_ref caps;
+    result#set_question question;
     (result :> Core_types.struct_ref)
 
   (* A cap that sends to a promised answer's cap at other *)
@@ -508,26 +546,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   let answer_promise answer = answer.answer_promise
 
-  let return_results t answer =
-    let aid, ret =
-      let answer_promise = answer_promise answer in
-      match answer_promise#response with
-      | None -> assert false
-      | Some (Ok (msg, caps)) ->
-        RO_array.iter (fun c -> c#inc_ref) caps;        (* Copy everything stored in [answer]. *)
-        let aid, ret = Send.return_results t answer msg caps in
-        Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
-                     Core_types.Response_payload.pp (msg, caps));
-        RO_array.iter dec_ref caps;
-        Log.info (fun f -> f ~tags:(with_aid aid t) "Wire results: %a" Out.pp_return ret);
-        aid, ret
-      | Some (Error err) ->
-        let aid, ret = Send.return_error t answer err in
-        Log.info (fun f -> f ~tags:(with_aid aid t) "Returning error: %a" Error.pp err);
-        aid, ret
-    in
-    t.queue_send (`Return (aid, ret, false))
-
   let reply_to_call t = function
     | `Bootstrap answer ->
       let promise = answer_promise answer in
@@ -538,19 +556,16 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | None ->
           promise#resolve (Error (Error.exn "No bootstrap service available"));
       end;
-      return_results t answer
+      Send.return t answer
     | `Call (answer, target, msg, caps) ->
       Log.info (fun f -> f ~tags:t.tags "Handling call: (%t).call %a" target#pp Core_types.Request_payload.pp (msg, caps));
       let resp = target#call msg caps in  (* Takes ownership of [caps]. *)
       target#dec_ref;
       (answer_promise answer)#connect resp;
-      resp#when_resolved (fun _ -> return_results t answer)
+      resp#when_resolved (fun _ -> Send.return t answer)
 
   class switchable init =
-    (* We initially forward to an unsettled promise (otherwise there's no point using a switchable).
-       Later, we resolve and become set. The resolution may be settled or unsettled. *)
     let released = Core_types.broken_cap (Exception.v "(released)") in
-    let is_settled x = (x#blocker = None) in
     let pp_state f = function
       | `Unsettled (x, _) -> Fmt.pf f "(unsettled) -> %t" x#pp
       | `Set x -> Fmt.pf f "(set) -> %t" x#pp
@@ -565,7 +580,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
       val id = Debug.OID.next ()
 
       val mutable state =
-        assert (not (is_settled init));
         `Unsettled (init, Queue.create ())
 
       method call msg caps =
@@ -619,7 +633,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
       method pp f =
         Fmt.pf f "switchable(%a, %t) %a" Debug.OID.pp id super#pp_refcount pp_state state
     end
-
 
   module Input : sig
     open EP.Core_types
@@ -686,15 +699,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
             | x -> super#sealed_dispatch x
         end
       in
+      (* Imports can resolve to another cap (if unsettled) or break. *)
+      let switchable = new switchable cap in
       assert (import.import_proxy = `Uninitialised);
       if settled then (
-        import.import_proxy <- `Settled (Weak_ptr.wrap cap);
-        cap
+        import.import_proxy <- `Settled (Weak_ptr.wrap switchable)
       ) else (
-        let cap = new switchable cap in
-        import.import_proxy <- `Unsettled (Weak_ptr.wrap cap);
-        (cap :> Core_types.cap)
-      )
+        import.import_proxy <- `Unsettled (Weak_ptr.wrap switchable)
+      );
+      switchable
 
     let import_sender t ~mark_dirty ~settled id =
       let new_import () =
@@ -707,7 +720,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           import_used = mark_dirty;
         } in
         Imports.set t.imports id import;
-        set_import_proxy t ~settled import
+        (set_import_proxy t ~settled import :> Core_types.cap)
       in
       match Imports.find t.imports id with
       | None -> new_import ()
@@ -717,7 +730,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         match get_import_proxy import with
         | Some proxy ->
           proxy#inc_ref;
-          proxy
+          (proxy :> Core_types.cap)
         | None ->
           (* The user let the proxy get GC'd without dropping the reference,
              but it hasn't been reported yet. It will try to release in a bit,
@@ -959,36 +972,37 @@ module Make (EP : Message_types.ENDPOINT) = struct
                    ImportId.pp import_id
                    (Fmt.result ~ok:In.pp_desc ~error:Exception.pp) new_target
                );
-      let new_target ~embargo_path =
+      let import_new_target ~embargo_path =
         match new_target with
         | Error e -> Core_types.broken_cap e
         | Ok desc -> import t desc ?embargo_path
       in
       match Imports.find t.imports import_id with
       | None ->
-        let new_target = new_target ~embargo_path:None in
+        let new_target = import_new_target ~embargo_path:None in
         Log.info (fun f -> f ~tags:t.tags "Import %a no longer used - releasing new resolve target %t"
                      ImportId.pp import_id new_target#pp);
         new_target#dec_ref
       | Some im ->
         let import () =
           if im.import_used
-          then new_target ~embargo_path:(Some (`ReceiverHosted import_id))
-          else new_target ~embargo_path:None
+          then import_new_target ~embargo_path:(Some (`ReceiverHosted import_id))
+          else import_new_target ~embargo_path:None
         in
-        match im.import_proxy with
-        | `Uninitialised -> assert false
-        | `Settled x ->
+        match im.import_proxy, new_target with
+        | `Uninitialised, _ -> assert false
+        | `Settled x, Ok _ ->
           let new_target = import () in
           Debug.failf "Got a Resolve (to %t) for settled import %a!"
             new_target#pp pp_weak (Weak_ptr.get x)
-        | `Unsettled x ->
+        | `Settled x, _
+        | `Unsettled x, _ ->
           (* This will also dec_ref the old remote-promise, releasing the import. *)
           match Weak_ptr.get x with
           | Some x -> x#resolve (import ())
           | None ->
             (* We can only get here if the user messed up their ref-counting, but try to handle it. *)
-            let new_target = new_target ~embargo_path:None in
+            let new_target = import_new_target ~embargo_path:None in
             Log.info (fun f -> f ~tags:t.tags "Import %a was GC'd! Releasing new resolve target %t"
                          ImportId.pp import_id new_target#pp);
             new_target#dec_ref
@@ -1112,7 +1126,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
         if not (QFlags.(mem finished) q.question_flags) then q.remote_promise#resolve (Error (`Exception ex));
       );
     Answers.drop_all t.answers (fun _ a -> a.answer_promise#finish);
-    Imports.drop_all t.imports (fun _ i -> i.import_proxy <- `Uninitialised);
+    let broken_cap = Core_types.broken_cap ex in
+    Imports.drop_all t.imports (fun _ i ->
+        begin match get_import_proxy i with
+          | Some switchable when switchable#problem = None -> switchable#resolve broken_cap
+          | _ -> ()
+        end;
+        i.import_proxy <- `Uninitialised
+      );
     Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; e#dec_ref);
     (* TODO: break existing caps *)
     ()
