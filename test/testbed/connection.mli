@@ -43,6 +43,8 @@ module type ENDPOINT = sig
   val stats : t -> Capnp_rpc.Stats.t
 
   val check_finished : t -> name:string -> unit
+
+  val disconnect : t -> Capnp_rpc.Exception.t -> unit
 end
 
 module Endpoint (EP : Capnp_direct.ENDPOINT) : ENDPOINT

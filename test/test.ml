@@ -23,6 +23,8 @@ let cap : Core_types.cap Alcotest.testable = Alcotest.of_pp pp_cap
 let ro_array x = Alcotest.testable (RO_array.pp (Alcotest.pp x)) (RO_array.equal (Alcotest.equal x))
 let response_promise = Alcotest.(option (result (pair string (ro_array cap)) error))
 
+let exn = Alcotest.of_pp Capnp_rpc.Exception.pp
+
 (* Takes ownership of caps *)
 let resolve_ok (ans:#Core_types.struct_resolver) msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
@@ -677,6 +679,71 @@ let test_resolve_3 () =
   CS.flush c s;
   CS.check_finished c s
 
+(* Returning an already-broken capability. *)
+let test_broken_return () =
+  let err = Exception.v "Broken" in
+  let broken = Core_types.broken_cap err in
+  let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags broken in
+  let bs = C.bootstrap c in
+  Alcotest.check (Alcotest.option exn) "Initially a promise" None bs#problem;
+  S.handle_msg s ~expect:"bootstrap";
+  C.handle_msg c ~expect:"return:(boot)";
+  C.handle_msg c ~expect:"resolve";
+  S.handle_msg s ~expect:"finish";
+  Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
+  CS.flush c s;
+  CS.check_finished c s
+
+let test_broken_call () =
+  let err = Exception.v "Broken" in
+  let broken = Core_types.broken_cap err in
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let q1 = call bs "q1" [broken] in
+  S.handle_msg s ~expect:"call:q1";
+  let broken_proxy, a1 = service#pop1 "q1" in
+  Alcotest.check (Alcotest.option exn) "Initially a promise" None broken_proxy#problem;
+  S.handle_msg s ~expect:"resolve";
+  Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) broken_proxy#problem;
+  resolve_ok a1 "a1" [];
+  broken_proxy#dec_ref;
+  bs#dec_ref;
+  q1#finish;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* Server returns a capability reference that later breaks. *)
+let test_broken_later () =
+  let err = Exception.v "Broken" in
+  let broken = Core_types.broken_cap err in
+  let promise = Cap_proxy.local_promise () in
+  let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags promise in
+  let bs = C.bootstrap c in
+  Alcotest.check (Alcotest.option exn) "Initially a promise" None bs#problem;
+  S.handle_msg s ~expect:"bootstrap";
+  C.handle_msg c ~expect:"return:(boot)";
+  S.handle_msg s ~expect:"finish";
+  (* Server breaks promise *)
+  promise#resolve broken;
+  C.handle_msg c ~expect:"resolve";
+  Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
+  CS.flush c s;
+  CS.check_finished c s
+
+let test_broken_connection () =
+  let service = Services.echo_service () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let q1 = call bs "Message-1" [] in
+  CS.flush c s;
+  Alcotest.check response_promise "Echo reply"
+    (Some (Ok ("got:Message-1", RO_array.empty)))
+    q1#response;
+  q1#finish;
+  let err = Exception.v "Connection lost" in
+  C.disconnect c err;
+  S.disconnect s err;
+  Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem
+
 let test_ref_counts () =
   let objects = Hashtbl.create 3 in
   let make () =
@@ -921,6 +988,10 @@ let tests = [
   "Ref-counts", `Quick, test_ref_counts;
   "Auto-release", `Quick, test_auto_release;
   "Unimplemented", `Quick, test_unimplemented;
+  "Broken return", `Quick, test_broken_return;
+  "Broken call", `Quick, test_broken_call;
+  "Broken later", `Quick, test_broken_later;
+  "Broken connection", `Quick, test_broken_connection;
 ] |> List.map (fun (name, speed, test) ->
     name, speed, (fun () -> test (); Gc.full_major ())
   )

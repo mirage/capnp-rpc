@@ -47,6 +47,8 @@ module type ENDPOINT = sig
   val stats : t -> Capnp_rpc.Stats.t
 
   val check_finished : t -> name:string -> unit
+
+  val disconnect : t -> Capnp_rpc.Exception.t -> unit
 end
 
 module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
@@ -95,9 +97,11 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   let finished = Capnp_rpc.Exception.v "Tests finished"
 
   let check_finished t ~name =
-      Alcotest.(check stats_t) (name ^ " finished") Stats.zero @@ stats t;
-      Conn.check t.conn;
-      Conn.disconnect t.conn finished
+    Alcotest.(check stats_t) (name ^ " finished") Stats.zero @@ stats t;
+    Conn.check t.conn;
+    Conn.disconnect t.conn finished
+
+  let disconnect t = Conn.disconnect t.conn
 end
 
 module Pair ( ) = struct
