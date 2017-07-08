@@ -93,7 +93,16 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
     (* Get target *)
     let target = parse_target (Call.target_get call) in
     let msg = Rpc.Readonly call in
-    `Call (aid, target, msg, descs)
+    let results_to =
+      let r = Call.send_results_to_get call in
+      let open Call.SendResultsTo in
+      match get r with
+      | Caller -> `Caller
+      | Yourself -> `Yourself
+      | ThirdParty _ -> failwith "TODO: parse_call: ThirdParty"
+      | Undefined x -> Capnp_rpc.Debug.failf "Unknown SendResultsTo type %d" x
+    in
+    `Call (aid, target, msg, descs, results_to)
 
   let parse_bootstrap boot =
     let open Reader in

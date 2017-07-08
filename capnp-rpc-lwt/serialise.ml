@@ -69,12 +69,18 @@ let message ~tags : Endpoint_types.Out.t -> _ =
         f ~tags "Requesting bootstrap service"
       );
     Message.to_message b
-  | `Call (qid, target, request, descs) ->
+  | `Call (qid, target, request, descs, results_to) ->
     let c = Rpc.writable_req request in
     Call.question_id_set c (QuestionId.uint32 qid);
     set_target (Call.target_init c) target;
     let p = Call.params_get c in
     write_caps_array descs p;
+    let dest = Call.send_results_to_init c in
+    begin match results_to with
+      | `Caller -> Call.SendResultsTo.caller_set dest
+      | `Yourself -> Call.SendResultsTo.yourself_set dest
+      | `ThirdParty _ -> failwith "TODO: send_results_to ThirdParty"
+    end;
     Call.to_message c
   | `Finish (qid, release_result_caps) ->
     let b = Message.init_root () in

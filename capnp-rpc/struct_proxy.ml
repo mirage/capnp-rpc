@@ -17,8 +17,8 @@ module Make (C : S.CORE_TYPES) = struct
     inherit struct_resolver
 
     method pipeline : Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
-    method inc_ref : Wire.Path.t -> unit
-    method dec_ref : Wire.Path.t -> unit
+    method field_inc_ref : Wire.Path.t -> unit
+    method field_dec_ref : Wire.Path.t -> unit
 
     method field_blocker : Wire.Path.t -> base_ref option
 
@@ -85,7 +85,7 @@ module Make (C : S.CORE_TYPES) = struct
   let dispatch state ~cancelling_ok ~unresolved ~forwarding =
     match state with
     | Finished -> failwith "Already finished"
-    | Unresolved { cancelling = true; _ } when not cancelling_ok -> failwith "Cancelling"
+    | Unresolved { cancelling = true; _ } when not cancelling_ok -> failwith "Promise is cancelling!"
     | Unresolved x -> unresolved x
     | Forwarding x -> forwarding x
 
@@ -111,13 +111,13 @@ module Make (C : S.CORE_TYPES) = struct
 
       method inc_ref =
         match state with
-        | PromiseField (p, path) -> p#inc_ref path
+        | PromiseField (p, path) -> p#field_inc_ref path
         | ForwardingField c -> c#inc_ref
 
       method dec_ref =
         Log.info (fun f -> f "dec_ref %t" self#pp);
         match state with
-        | PromiseField (p, path) -> p#dec_ref path
+        | PromiseField (p, path) -> p#field_dec_ref path
         | ForwardingField c -> c#dec_ref
 
       method resolve cap =
@@ -254,8 +254,12 @@ module Make (C : S.CORE_TYPES) = struct
                     else c
                   in
                   let fixed_caps = RO_array.map break_cycles caps in
-                  if fixed_caps == caps then x
-                  else C.return (msg, fixed_caps)
+                  if RO_array.equal (=) fixed_caps caps then x
+                  else (
+                    RO_array.iter (fun c -> c#inc_ref) fixed_caps;
+                    x#finish;
+                    C.return (msg, fixed_caps)
+                  )
             in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->
@@ -340,7 +344,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)
         ~forwarding:(fun x -> x#when_resolved fn)
 
-    method inc_ref path =
+    method field_inc_ref path =
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
@@ -350,9 +354,9 @@ module Make (C : S.CORE_TYPES) = struct
             assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
             f.ref_count <- f.ref_count + 1
           )
-        ~forwarding:(fun x -> (x#cap path)#inc_ref)
+        ~forwarding:(fun x -> ignore (x#cap path))
 
-    method dec_ref path =
+    method field_dec_ref path =
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
@@ -360,7 +364,11 @@ module Make (C : S.CORE_TYPES) = struct
             assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
             f.ref_count <- f.ref_count - 1
           )
-        ~forwarding:(fun x -> (x#cap path)#dec_ref)
+        ~forwarding:(fun x ->
+            let c = x#cap path in       (* Increases ref by one *)
+            c#dec_ref;
+            c#dec_ref
+          )
 
     method private update_target target =
       dispatch state

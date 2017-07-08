@@ -8,13 +8,13 @@ let stats_t = Alcotest.of_pp Stats.pp
 
 let summary_of_msg = function
   | `Bootstrap _ -> "bootstrap"
-  | `Call (_, _, msg, _) -> "call:" ^ msg
+  | `Call (_, _, msg, _, _) -> "call:" ^ msg
   | `Return (_, `Results (msg, _), _) -> "return:" ^ msg
   | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
   | `Return (_, `Cancelled, _) -> "return:(cancelled)"
   | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
   | `Return (_, `ResultsSentElsewhere, _) -> "return:sent-elsewhere"
-  | `Return (_, `TakeFromOtherQuestion, _) -> "return:take-from-other"
+  | `Return (_, `TakeFromOtherQuestion _, _) -> "return:take-from-other"
   | `Finish _ -> "finish"
   | `Release _ -> "release"
   | `Disembargo_request _ -> "disembargo-request"
@@ -73,12 +73,21 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
     }
 
   let pop_msg ?expect t =
-    match Queue.pop t.recv_queue, expect with
-    | msg, Some expected ->
-      Alcotest.(check string) ("Input " ^ expected) expected (summary_of_msg msg);
-      msg
-    | msg, None -> msg
+    match Queue.pop t.recv_queue with
     | exception Queue.Empty -> Alcotest.fail "No messages found!"
+    | msg ->
+      begin match msg with
+        | #EP.In.t as msg ->
+          let tags = EP.In.with_qid_tag (Conn.tags t.conn) msg in
+          Log.info (fun f -> f ~tags "<- %a" (EP.In.pp_recv Fmt.string) msg)
+        | `Unimplemented out ->
+          Log.info (fun f -> f ~tags:(Conn.tags t.conn) "<- Unimplemented(%a)" (EP.Out.pp_recv Fmt.string) out)
+      end;
+      match expect with
+      | None -> msg
+      | Some expected ->
+        Alcotest.(check string) ("Input " ^ expected) expected (summary_of_msg msg);
+        msg
 
   let handle_msg ?expect t =
     pop_msg ?expect t |> Conn.handle_msg t.conn

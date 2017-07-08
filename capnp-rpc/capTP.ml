@@ -514,7 +514,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
                    pp_cap target
                    Core_types.Request_payload.pp (msg, caps));
-      t.queue_send (`Call (qid, message_target, msg, descs));
+      t.queue_send (`Call (qid, message_target, msg, descs, `Caller));
       resolve_broken t broken_caps;
       question
 
@@ -725,7 +725,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
   module Input : sig
     open EP.Core_types
 
-    val call : t -> In.QuestionId.t -> In.message_target -> Wire.Request.t -> In.desc RO_array.t -> unit
+    val call : t -> In.QuestionId.t -> In.message_target ->
+      Wire.Request.t -> In.desc RO_array.t -> results_to:In.send_results_to ->
+      unit
+
     val bootstrap : t -> In.QuestionId.t -> unit
     val return : t -> In.AnswerId.t -> In.return -> release_param_caps:bool -> unit
     val finish : t -> In.QuestionId.t -> release_result_caps:bool -> unit
@@ -891,8 +894,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `None -> Core_types.null
       | `ThirdPartyHosted _ -> failwith "TODO: import"
 
-    let call t aid (message_target : In.message_target) msg descs =
-      (* TODO: allowThirdPartyTailCall, sendResultsTo *)
+    let call t aid (message_target : In.message_target) msg descs ~results_to =
+      assert (results_to = `Caller);    (* TODO *)
+      (* TODO: allowThirdPartyTailCall *)
       Log.info (fun f -> f ~tags:(with_aid aid t) "Received call to %a with args %a"
                    EP.In.pp_desc message_target
                    (RO_array.pp EP.In.pp_desc) descs
@@ -1091,7 +1095,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   end
 
-  let handle_unimplemented t msg =
+  let handle_unimplemented t (msg : Out.t) =
     match msg with
     | `Resolve (_, Error _) -> ()
     | `Resolve (_, Ok new_target) ->
@@ -1108,7 +1112,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       (* If the peer didn't understand our question, pretend it returned an exception. *)
       Input.return t qid ~release_param_caps:true
         (Error.exn ~ty:`Unimplemented "Bootstrap message not implemented by peer")
-    | `Call (qid, _, _, _) ->
+    | `Call (qid, _, _, _, _) ->
       (* This could happen if we asked for the bootstrap object from a peer that doesn't
          offer any services, and then tried to pipeline on the result. *)
       Input.return t qid ~release_param_caps:true
@@ -1116,10 +1120,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | _ ->
       failwith "Protocol error: peer unexpectedly responded with Unimplemented"
 
-  let handle_msg t msg =
+  let handle_msg t (msg : [<In.t | `Unimplemented of Out.t]) =
     check_connected t;
     match msg with
-    | `Call (aid, target, msg, descs) -> Input.call t aid target msg descs
+    | `Call (aid, target,
+             msg, descs, results_to)  -> Input.call t aid target msg descs ~results_to
     | `Bootstrap x                    -> Input.bootstrap t x
     | `Return (aid, ret, release)     -> Input.return t aid ret ~release_param_caps:release
     | `Finish (aid, release)          -> Input.finish t aid ~release_result_caps:release

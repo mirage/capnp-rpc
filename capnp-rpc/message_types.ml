@@ -57,7 +57,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | `SenderHosted x        -> Fmt.pf f "SenderHosted:%a" ExportId.pp x
     | `SenderPromise x       -> Fmt.pf f "SenderPromise:%a" ExportId.pp x
 
-  type sendResultsTo = [
+  type send_results_to = [
     | `Caller
     | `Yourself
     | `ThirdParty of recipient_id
@@ -67,7 +67,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | Error.t
     | `Results of Response.t * desc RO_array.t
     | `ResultsSentElsewhere
-    | `TakeFromOtherQuestion
+    | `TakeFromOtherQuestion of QuestionId.t
     | `AcceptFromThirdParty
   ]
 
@@ -80,17 +80,17 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | `Exception ex -> Fmt.pf f "Exception:%a" Exception.pp ex
     | `Cancelled -> Fmt.pf f "Cancelled"
     | `ResultsSentElsewhere -> Fmt.pf f "ResultsSentElsewhere"
-    | `TakeFromOtherQuestion -> Fmt.pf f "TakeFromOtherQuestion"
+    | `TakeFromOtherQuestion qid -> Fmt.pf f "TakeFromOtherQuestion(%a)" QuestionId.pp qid
     | `AcceptFromThirdParty -> Fmt.pf f "AcceptFromThirdParty"
 
   let pp_disembargo_request : disembargo_request Fmt.t = fun f -> function
-    | `Loopback (old_path, id) -> Fmt.pf f "senderLoopback for %a (embargo_id = %a)"
+    | `Loopback (old_path, id) -> Fmt.pf f "senderLoopback request for %a (embargo_id = %a)"
                                     pp_desc old_path
                                     EmbargoId.pp id
 
   type t = [
     | `Bootstrap of QuestionId.t
-    | `Call of QuestionId.t * message_target * Request.t * desc RO_array.t
+    | `Call of QuestionId.t * message_target * Request.t * desc RO_array.t * send_results_to
     | `Finish of (QuestionId.t * bool)      (* bool is release-caps *)
     | `Release of ImportId.t * int
     | `Disembargo_request of disembargo_request
@@ -103,20 +103,26 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
   let with_qid_tag tags = function
     | `Finish (qid, _)
     | `Bootstrap qid
-    | `Call (qid, _, _, _) -> Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) tags
+    | `Call (qid, _, _, _, _) -> Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) tags
     | `Return (aid, _, _) -> Logs.Tag.add Debug.qid_tag (AnswerId.uint32 aid) tags
     | `Release _
     | `Disembargo_request _
     | `Disembargo_reply _
     | `Resolve _ -> tags
 
+  let pp_results_to f = function
+    | `Caller -> ()
+    | `Yourself -> Fmt.pf f " (results to yourself)"
+    | `ThirdParty _ -> Fmt.pf f " (results to third party)"
+
   (* Describe message from the point of view of the receiver. *)
   let pp_recv pp_msg : t Fmt.t = fun f -> function
     | `Bootstrap _ -> Fmt.pf f "Bootstrap"
-    | `Call (_, target, msg, caps) -> Fmt.pf f "Call %a.%a with %a"
+    | `Call (_, target, msg, caps, results_to) -> Fmt.pf f "Call %a.%a with %a%a"
                                         pp_desc target
                                         pp_msg msg
                                         (RO_array.pp pp_desc) caps
+                                        pp_results_to results_to
     | `Finish (_, release) -> Fmt.pf f "Finish (release_result_caps=%b)" release
     | `Release (id, count) -> Fmt.pf f "Release export %a (count=%d)" ImportId.pp id count
     | `Disembargo_request disembargo_request -> pp_disembargo_request f disembargo_request

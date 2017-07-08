@@ -2,7 +2,7 @@ open Capnp_direct.Core_types
 
 val summary_of_msg :
   [< `Bootstrap of _
-  | `Call of _ * _ * string * _
+  | `Call of _ * _ * string * _ * _
   | `Disembargo_reply of _
   | `Disembargo_request of _
   | `Finish of _
@@ -15,7 +15,7 @@ val summary_of_msg :
        | `Exception of Capnp_rpc.Exception.t
        | `Results of string * _
        | `ResultsSentElsewhere
-       | `TakeFromOtherQuestion ] *
+       | `TakeFromOtherQuestion of _] *
        _
   | `Unimplemented of _ ] ->
   string
