@@ -487,11 +487,11 @@ let test_duplicates () =
   S.handle_msg s ~expect:"bootstrap";
   C.handle_msg c ~expect:"return:(boot)";       (* [bs] resolves *)
   S.handle_msg s ~expect:"call:c1";
-  S.handle_msg s ~expect:"finish";              (* bootstrap *)
+  S.handle_msg s ~expect:"finish";              (* bootstrap question *)
+  S.handle_msg s ~expect:"release";             (* bootstrap cap *)
   let (_, _, a1) = service#pop in
   a1#resolve (Ok ("a1", empty));
   C.handle_msg c ~expect:"return:a1";
-  S.handle_msg s ~expect:"release";             (* bootstrap *)
   S.handle_msg s ~expect:"finish";              (* c1 *)
   CS.check_finished c s
 

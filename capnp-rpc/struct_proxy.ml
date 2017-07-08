@@ -274,7 +274,10 @@ module Make (C : S.CORE_TYPES) = struct
               );
             self#on_resolve u.target x;
             Queue.iter (fun fn -> fn x) u.when_resolved;
-            if u.cancelling then self#finish
+            if u.cancelling then (
+              self#do_finish u.target;
+              self#finish
+            )
           )
         ~forwarding:(fun t ->
             failwith (Fmt.strf "Already forwarding (to %t)!" t#pp)
