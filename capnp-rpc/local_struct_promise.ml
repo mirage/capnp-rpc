@@ -31,7 +31,7 @@ module Make (C : S.CORE_TYPES) = struct
     method private on_resolve q x =
       Queue.iter (fun fn -> fn x) q
 
-    method private do_finish _ = ()
+    method private send_cancel _ = ()
 
     method! blocker =
       match super#blocker, parent with

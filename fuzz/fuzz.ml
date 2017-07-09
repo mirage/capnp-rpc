@@ -122,7 +122,10 @@ module Endpoint = struct
   let handle_msg t =
     match Queue.pop t.recv_queue with
     | exception Queue.Empty -> Alcotest.fail "No messages found!"
-    | msg -> Conn.handle_msg t.conn msg
+    | msg ->
+      let tags = EP.In.with_qid_tag (Conn.tags t.conn) msg in
+      Logs.info (fun f -> f ~tags "<- %a" (EP.In.pp_recv Msg.Request.pp) msg);
+      Conn.handle_msg t.conn msg
 
   let maybe_handle_msg t =
     if Queue.length t.recv_queue > 0 then handle_msg t
@@ -369,7 +372,6 @@ module Vat = struct
         DynArray.add v.caps (make_cap_ref ~target @@ Endpoint.bootstrap conn)
       );
     DynArray.add v.actions (fun () ->
-        Logs.info (fun f -> f ~tags:(tags_for_id v.id) "Handle next message");
         Endpoint.maybe_handle_msg conn
       )
 

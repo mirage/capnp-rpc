@@ -463,10 +463,26 @@ let test_cancel () =
   S.handle_msg s ~expect:"call:p1";
   S.handle_msg s ~expect:"finish";      (* bootstrap *)
   let (_, _, a1) = service#pop in
-  a1#resolve (Ok ("a1", empty));
+  resolve_ok a1 "a1" [];
   C.handle_msg c ~expect:"return:Invalid cap index 0 in []";
   C.handle_msg c ~expect:"return:a1";
   f0#dec_ref;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* Actually sends a cancel *)
+let test_cancel_2 () =
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let q1 = call bs "c1" [] in
+  q1#finish;    (* Client cancels *)
+  S.handle_msg s ~expect:"call:c1";
+  S.handle_msg s ~expect:"finish";      (* cancel *)
+  let a1 = service#pop0 "c1" in
+  let echo = Services.echo_service () in
+  resolve_ok a1 "a1" [echo];
+  C.handle_msg c ~expect:"return:(cancelled)";
+  bs#dec_ref;
   CS.flush c s;
   CS.check_finished c s
 
@@ -565,7 +581,8 @@ let test_cycle () =
   (* Connect struct to its own field *)
   let p1 = Local_struct_promise.make () in
   let c = p1#cap 0 in
-  p1#resolve (Ok ("msg", RO_array.of_list [c]));
+  c#inc_ref;
+  resolve_ok p1 "msg" [c];
   ensure_is_cycle_error_cap c;
   (* Connect struct to itself *)
   let p1 = Local_struct_promise.make () in
@@ -592,6 +609,17 @@ let test_cycle_3 () =
     q2#response;
   target#dec_ref;
   a1#finish
+
+(* Check ref-counting when resolving loops. *)
+let test_cycle_4 () =
+  let echo = Services.echo_service () in
+  let a1 = Local_struct_promise.make () in
+  let f0 = a1#cap 0 in
+  resolve_ok a1 "a1" [a1#cap 1; (echo :> Core_types.cap)];
+  f0#dec_ref;
+  a1#finish;
+  Logs.info (fun f -> f "echo = %t" echo#pp);
+  Alcotest.(check bool) "Echo released" true echo#released
 
 (* The server returns an answer containing a promise. Later, it resolves the promise
    to a resource at the client. The client must be able to invoke the service locally. *)
@@ -691,6 +719,7 @@ let test_broken_return () =
   C.handle_msg c ~expect:"resolve";
   S.handle_msg s ~expect:"finish";
   Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
+  bs#dec_ref;
   CS.flush c s;
   CS.check_finished c s
 
@@ -727,6 +756,7 @@ let test_broken_later () =
   promise#resolve broken;
   C.handle_msg c ~expect:"resolve";
   Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
+  bs#dec_ref;
   CS.flush c s;
   CS.check_finished c s
 
@@ -742,7 +772,8 @@ let test_broken_connection () =
   let err = Exception.v "Connection lost" in
   C.disconnect c err;
   S.disconnect s err;
-  Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem
+  Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
+  bs#dec_ref
 
 let test_ref_counts () =
   let objects = Hashtbl.create 3 in
@@ -845,13 +876,13 @@ module Level0 = struct
 
   let expect_call t expected =
     match Queue.pop t.from_server with
-    | `Call (qid, _, msg, _) ->
+    | `Call (qid, _, msg, _, _) ->
       Alcotest.(check string) "Get call" expected msg;
       qid
     | request -> Alcotest.fail (Fmt.strf "Expecting call, got %s" (Testbed.Connection.summary_of_msg request))
 
   let call t target ~qid msg =
-    send t @@ `Call (qid_of_int qid, `ReceiverHosted target, msg, RO_array.empty)
+    send t @@ `Call (qid_of_int qid, `ReceiverHosted target, msg, RO_array.empty, `Caller)
 
   let finish t ~qid =
     send t @@ `Finish (qid_of_int qid, true)
@@ -976,12 +1007,14 @@ let tests = [
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
+  "Cancel 2", `Quick, test_cancel_2;
   "Duplicates", `Quick, test_duplicates;
   "Re-export", `Quick, test_single_export;
   "Shorten field", `Quick, test_shorten_field;
   "Cycle", `Quick, test_cycle;
   "Cycle 2", `Quick, test_cycle_2;
   "Cycle 3", `Quick, test_cycle_3;
+  "Cycle 4", `Quick, test_cycle_4;
   "Resolve", `Quick, test_resolve;
   "Resolve 2", `Quick, test_resolve_2;
   "Resolve 3", `Quick, test_resolve_3;
