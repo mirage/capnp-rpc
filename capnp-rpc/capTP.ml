@@ -19,6 +19,10 @@ let pp_check check f (k, v) =
       Fmt.(styled `Red string) "ERROR"
       Debug.pp_exn ex
 
+let pp_weak f = function
+  | None -> Fmt.pf f "(GC'd weak pointer)"
+  | Some x -> x#pp f
+
 let hashtbl_dump ~key pp f items =
   let add k v results = (k, v) :: results in
   Hashtbl.fold add items []
@@ -235,21 +239,113 @@ module Make (EP : Message_types.ENDPOINT) = struct
       }
   end
 
-  type import = {
-    import_id : ImportId.t;
-    mutable import_resolve_refs : int;
-    mutable import_count : int; (* Number of times remote sent us this *)
-    mutable import_used : bool; (* We have sent a message to this target *)
-    mutable import_proxy_released : bool; (* Implies import_proxy = Uninitialised *)
-    mutable import_proxy : [
-      | `Uninitialised
-      | `Settled of Cap_proxy.resolver_cap Weak_ptr.t
-      | `Unsettled of Cap_proxy.resolver_cap Weak_ptr.t   (* Note: might be resolved to a settled value *)
-    ]
-  }
+  module Import = struct
+    (* An entry in the imports table has a corresponding switchable, which the user of the library holds.
+       There are three possible events:
+
+       - The user reduces the switchable's ref-count to zero, indicating that
+         they don't need the import any longer.
+
+       - The peer resolves the import to something else (or the connection is
+         lost, resolving it to an exception).
+
+       - The peer quotes the same import ID again.
+         If we hadn't sent a release before this, it must be for the same object.
+         If we had sent a release then it might or might not be the same object.
+
+       We hold a weak-ref to the switchable so that if the user leaks it we will notice.
+
+       [ref_count] is zero iff [count] is zero:
+       - Initially, both are one.
+       - If we set [ref_count] to zero, we send a release and set [count] to zero.
+       - There is no other way for [count] to become zero.
+     *)
+    type t = {
+      id : ImportId.t;
+      mutable ref_count : int; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
+      mutable count : int;     (* Number of times remote sent us this. *)
+      mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
+      mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
+      proxy : Cap_proxy.resolver_cap Weak_ptr.t (* Our switchable ([Weak_ptr.t] is mutable). *)
+    }
+
+    let id t = t.id
+
+    let pp f t =
+      Fmt.pf f "i%a" ImportId.pp t.id
+
+    let dump f t =
+      Fmt.pf f "%a" pp_weak (Weak_ptr.get t.proxy)
+
+    let get_proxy t = Weak_ptr.get t.proxy
+
+    (* A new export from the peer. *)
+    let inc_count t =
+      assert (t.count > 0);
+      t.count <- t.count + 1
+
+    let maybe_release_import t =
+      if t.ref_count = 0 then (
+        Log.info (fun f -> f "maybe_release_import: count = %d" t.count);
+        assert (t.count > 0);
+        let count = t.count in
+        t.used <- false;
+        t.count <- 0;
+        Weak_ptr.clear t.proxy;
+        [`Release count]
+      ) else []
+
+    (* A new local reference (resolve_target). *)
+    let inc_ref t =
+      assert (t.count > 0);
+      t.ref_count <- t.ref_count + 1
+
+    (* A [resolve_target] or our switchable no longer needs us. *)
+    let dec_ref t =
+      t.ref_count <- t.ref_count - 1;
+      maybe_release_import t
+
+    let mark_used t =
+      t.used <- true
+
+    let message_target t =
+      `ReceiverHosted t.id
+
+    let embargo_path t =
+      if t.used then Some (message_target t) else None
+
+    let init_proxy t proxy =
+      assert (get_proxy t = None);
+      inc_ref t;
+      Weak_ptr.set t.proxy proxy
+
+    let check t =
+      if t.ref_count < 1 then
+        Debug.invariant_broken (fun f -> Fmt.pf f "Import local ref-count < 1, but still in table: %a" dump t);
+      (* Count starts at one and is only incremented, or set to zero when ref_count is zero. *)
+      if t.count < 1 then
+        Debug.invariant_broken (fun f -> Fmt.pf f "Import remote count < 1, but still in table: %a" dump t);
+      match get_proxy t with
+      | Some x -> x#check_invariants
+      | None -> ()
+
+    let lost_connection t ~broken_cap =
+      match get_proxy t with
+      | Some switchable when switchable#problem = None -> switchable#resolve broken_cap
+      | _ -> ()
+
+    let v ~mark_dirty ~settled id = {
+      ref_count = 0;            (* ([init_proxy] will be called immediately after this) *)
+      count = 1;
+      id = id;
+      proxy = Weak_ptr.empty ();
+      settled;
+      used = mark_dirty;
+    }
+  end
 
   type message_target_cap = [
-    | `Import of import
+    | `Import of Import.t
     | `QuestionCap of Question.t * Wire.Path.t
   ]
 
@@ -284,7 +380,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   ]
 
   let pp_cap : [< descr] Fmt.t = fun f -> function
-    | `Import import -> Fmt.pf f "i%a" ImportId.pp import.import_id
+    | `Import import -> Fmt.pf f "i%a" Import.pp import
     | `QuestionCap (question, p) -> Fmt.pf f "%a[%a]" Question.pp question Wire.Path.pp p
     | `ThirdPartyHosted _third_party_desc -> Fmt.pf f "ThirdPartyHosted"
     | `Local local -> Fmt.pf f "local:%t" local#pp
@@ -298,7 +394,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     questions : Question.t Questions.t;
     answers : answer Answers.t;
     exports : export Exports.t;
-    imports : import Imports.t;
+    imports : Import.t Imports.t;
     exported_caps : (Core_types.cap, ExportId.t) Hashtbl.t;
 
     mutable disconnected : Exception.t option;  (* If set, this connection is finished. *)
@@ -314,23 +410,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | Some (t', target) when t == t' -> Some target
     | _ -> None
 
-  let get_import_proxy import =
-    match import.import_proxy with
-    | `Uninitialised -> None
-    | `Settled p | `Unsettled p -> Weak_ptr.get p
-
   let dump_answer f x =
     Fmt.pf f "%t" x.answer_promise#pp
 
   let dump_export f x =
     Fmt.pf f "%t" x.export_service#pp
-
-  let pp_weak f = function
-    | None -> Fmt.pf f "(GC'd weak pointer)"
-    | Some x -> x#pp f
-
-  let dump_import f x =
-    Fmt.pf f "%a" pp_weak (get_import_proxy x)
 
   let stats t =
     { Stats.
@@ -389,14 +473,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     val return : t -> answer -> unit
 
-    val release : t -> import -> unit
-    (** [release t i] tells the peer that [i] is no longer needed by us. *)
+    val release : t -> Import.t -> int -> unit
+    (** [release t i count] tells the peer that [i] is no longer needed by us,
+        decreasing the ref-count by [count]. *)
 
     val finish : t -> Question.t -> unit
     (** [finish t q] sends a Finish message (with [releaseResultCaps=false]). *)
   end = struct
 
-    (** We are sending [cap] to the client, either in a Return or Finish message.
+    (** We are sending [cap] to the client, either in a Return or Resolve message.
         Return the [resolve_target] for it, and increment any required
         ref-count to keep it alive. *)
     let get_resolve_target t cap =
@@ -407,7 +492,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             Question.inc_ref question;
             target
           | `Import import as target ->
-            import.import_resolve_refs <- import.import_resolve_refs + 1;
+            Import.inc_ref import;
             target
         end
       | Some _ (* TODO: third-party *)
@@ -421,7 +506,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let rec export ?broken_caps : t -> Core_types.cap -> Out.desc = fun t cap ->
       let cap = cap#shortest in
       match my_target_of t cap with
-      | Some (`Import import) -> `ReceiverHosted import.import_id
+      | Some (`Import import) -> Import.message_target import
       | Some (`QuestionCap (question, i)) -> Question.message_target question i
       | None ->
         let settled = cap#blocker = None in
@@ -504,8 +589,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let message_target =
         match target with
         | `Import import ->
-          import.import_used <- true;
-          `ReceiverHosted import.import_id
+          Import.mark_used import;
+          Import.message_target import
         | `QuestionCap (question, i) ->
           Question.set_cap_used question i;
           Question.message_target question i
@@ -549,14 +634,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
         Log.info (fun f -> f ~tags:(with_aid aid t) "Returning error: %a" Error.pp err);
         t.queue_send (`Return (aid, ret, false))
 
-    let release t import =
-      assert (import.import_resolve_refs = 0);
-      assert (import.import_count > 0);
-      Imports.release t.imports import.import_id;
-      let count = import.import_count in
-      import.import_count <- 0;       (* Just in case - mark as invalid *)
-      Log.info (fun f -> f ~tags:t.tags "Sending release %a" dump_import import);
-      t.queue_send (`Release (import.import_id, count))
+    let release t import count =
+      Imports.release t.imports (Import.id import);
+      Log.info (fun f -> f ~tags:t.tags "Sending release %a" Import.dump import);
+      t.queue_send (`Release (Import.id import, count))
 
     let finish t question =
       let qid = Question.id question in
@@ -569,8 +650,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Send_finish         -> Send.finish t q
     | `Release_table_entry -> Questions.release t.questions (Question.id q)
 
-  let maybe_release_import t i =
-    if i.import_proxy_released && i.import_resolve_refs = 0 then Send.release t i
+  let apply_import_actions t i =
+    List.iter @@ function
+    | `Release count -> Send.release t i count
 
   (* Note: takes ownership of [caps] *)
   let rec send_call t target msg caps =
@@ -585,6 +667,19 @@ module Make (EP : Message_types.ENDPOINT) = struct
     object (self : #Core_types.struct_resolver)
       inherit [Question.t option] Struct_proxy.t None
 
+      val mutable released_question = false
+
+      (* We send Finish in two cases:
+         - We are unresolved and the user wants to cancel.
+         - We got the result and want the server to free up the question.
+         Send Finish on whichever happens first, but not both.
+       *)
+      method private ensure_released q =
+        if not released_question then (
+          released_question <- true;
+          Question.release q |> apply_question_actions t q
+        )
+
       method do_pipeline question i msg caps =
         match question with
         | Some target_q ->
@@ -592,7 +687,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
           send_call t target msg caps
         | None -> failwith "Not initialised!"
 
-      method on_resolve _ _ = ()
+      method on_resolve q _ =
+        match q with
+        | None -> failwith "Not initialised!"
+        | Some q -> self#ensure_released q
 
       method! pp f =
         Fmt.pf f "remote-promise(%a) -> %a" Debug.OID.pp id (Struct_proxy.pp_state ~pp_promise) state
@@ -600,9 +698,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       method set_question q =
         self#update_target (Some q)
 
-      method do_finish = function
+      method send_cancel = function
         | None -> failwith "Not initialised!"
-        | Some q -> Question.release q |> apply_question_actions t q
+        | Some q -> self#ensure_released q
 
       method field_sealed_dispatch : type a. Wire.Path.t -> a S.brand -> a option = fun path -> function
         | CapTP ->
@@ -652,7 +750,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       (answer_promise answer)#connect resp;
       resp#when_resolved (fun _ -> Send.return t answer)
 
-  class switchable init =
+  (* Forwards messages to [init] until resolved.
+     Forces [release] when resolved or released. *)
+  class switchable ~release init =
     let released = Core_types.broken_cap (Exception.v "(released)") in
     let pp_state f = function
       | `Unsettled (x, _) -> Fmt.pf f "(unsettled) -> %t" x#pp
@@ -680,10 +780,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | `Unsettled (old, q) ->
           state <- `Set cap;
           Queue.iter (fun f -> f (cap#inc_ref; cap)) q;
-          old#dec_ref
+          old#dec_ref;
+          Lazy.force release
 
       method private release =
         (target state)#dec_ref;
+        Lazy.force release;
         state <- `Set released
 
       method shortest =
@@ -764,15 +866,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             else
               Fmt.pf f "remote-promise(%a, %t) -> %a" Debug.OID.pp id self#pp_refcount pp_cap message_target
 
-          method private release =
-            if import.import_proxy = `Uninitialised then (
-              Log.info (fun f -> f ~tags:t.tags "Import proxy removed; can be caused by ref-counting bugs; \
-                                                check for previous warning messages!");
-            ) else (
-              import.import_proxy_released <- true;
-              maybe_release_import t import;
-              import.import_proxy <- `Uninitialised
-            )
+          method private release = ()
 
           method shortest = self
 
@@ -790,47 +884,34 @@ module Make (EP : Message_types.ENDPOINT) = struct
             | x -> super#sealed_dispatch x
         end
       in
+      let release = lazy (
+        (* [init_proxy] below will do the [inc_ref] *)
+        Import.dec_ref import |> apply_import_actions t import
+      ) in
       (* Imports can resolve to another cap (if unsettled) or break. *)
-      let switchable = new switchable cap in
-      assert (import.import_proxy = `Uninitialised);
-      if settled then (
-        import.import_proxy <- `Settled (Weak_ptr.wrap switchable)
-      ) else (
-        import.import_proxy <- `Unsettled (Weak_ptr.wrap switchable)
-      );
+      let switchable = new switchable ~release cap in
+      Import.init_proxy import switchable;
       switchable
 
     let import_sender t ~mark_dirty ~settled id =
       let new_import () =
-        let import = {
-          import_resolve_refs = 0;
-          import_count = 1;
-          import_id = id;
-          import_proxy = `Uninitialised;
-          import_proxy_released = false;
-          import_used = mark_dirty;
-        } in
+        let import = Import.v id ~mark_dirty ~settled in
         Imports.set t.imports id import;
         (set_import_proxy t ~settled import :> Core_types.cap)
       in
       match Imports.find t.imports id with
       | None -> new_import ()
       | Some import ->
-        import.import_count <- import.import_count + 1;
-        if mark_dirty then import.import_used <- true;
-        match get_import_proxy import with
+        Import.inc_count import;
+        if mark_dirty then Import.mark_used import;
+        match Import.get_proxy import with
         | Some proxy ->
           proxy#inc_ref;
           (proxy :> Core_types.cap)
         | None ->
-          (* The user let the proxy get GC'd without dropping the reference,
-             but it hasn't been reported yet. It will try to release in a bit,
-             (when next entering main loop, so not right now), and will see
-             that the old struct's import proxy is Uninitialised and do nothing. *)
-          import.import_count <- 0;
-          import.import_proxy <- `Uninitialised;
-          Imports.release t.imports import.import_id;
-          new_import ()
+          (* The switchable got GC'd. It may have already dec-ref'd the import, or
+             it may do so later. Make a new one. *)
+          (set_import_proxy t ~settled import :> Core_types.cap)
 
     (* Create an embargo proxy for [x] and send a disembargo for it down [old_path]. *)
     let local_embargo t ~old_path x =
@@ -937,9 +1018,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let release_resolve_target t = function
       | `None | `Local -> ()
       | `QuestionCap (q, _) -> Question.dec_ref q |> apply_question_actions t q;
-      | `Import i ->
-        i.import_resolve_refs <- i.import_resolve_refs - 1;
-        maybe_release_import t i
+      | `Import i           -> Import.dec_ref   i |> apply_import_actions   t i
 
     let release t export_id ~ref_count =
       assert (ref_count > 0);
@@ -1005,7 +1084,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | `None -> Debug.failf "Protocol error: disembargo request for None cap"
         | `Local -> Debug.failf "Protocol error: disembargo request for local target"
         | `QuestionCap (question, path) -> Question.message_target question path
-        | `Import import -> `ReceiverHosted import.import_id
+        | `Import import -> Import.message_target import
       in
       Log.info (fun f -> f ~tags:t.tags "Sending disembargo response to %a" EP.Out.pp_desc desc);
       t.queue_send (`Disembargo_reply (desc, embargo_id))
@@ -1064,28 +1143,27 @@ module Make (EP : Message_types.ENDPOINT) = struct
                      ImportId.pp import_id new_target#pp);
         new_target#dec_ref
       | Some im ->
-        let import () =
-          if im.import_used
-          then import_new_target ~embargo_path:(Some (`ReceiverHosted import_id))
-          else import_new_target ~embargo_path:None
-        in
-        match im.import_proxy, new_target with
-        | `Uninitialised, _ -> assert false
-        | `Settled x, Ok _ ->
-          let new_target = import () in
-          Debug.failf "Got a Resolve (to %t) for settled import %a!"
-            new_target#pp pp_weak (Weak_ptr.get x)
-        | `Settled x, _
-        | `Unsettled x, _ ->
-          (* This will also dec_ref the old remote-promise, releasing the import. *)
-          match Weak_ptr.get x with
-          | Some x -> x#resolve (import ())
-          | None ->
-            (* We can only get here if the user messed up their ref-counting, but try to handle it. *)
+        (* Check we're not resolving a settled import. *)
+        begin match new_target with
+          | Ok _ when im.Import.settled ->
             let new_target = import_new_target ~embargo_path:None in
-            Log.info (fun f -> f ~tags:t.tags "Import %a was GC'd! Releasing new resolve target %t"
-                         ImportId.pp import_id new_target#pp);
-            new_target#dec_ref
+            let msg = Fmt.strf "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
+            new_target#dec_ref;
+            failwith msg
+          | _ -> ()
+        end;
+        match Import.get_proxy im with
+        | Some x ->
+          (* This will also dec_ref the old remote-promise and the import. *)
+          x#resolve (import_new_target ~embargo_path:(Import.embargo_path im))
+        | None ->
+          (* If we get here:
+             - The user released the switchable, but
+             - Some [resolve_target] kept the import in the table. *)
+          let new_target = import_new_target ~embargo_path:None in
+          Log.info (fun f -> f ~tags:t.tags "Ignoring resolve of import %a, which we no longer need (to %t)"
+                       ImportId.pp import_id new_target#pp);
+          new_target#dec_ref
 
 (* TODO:
     let provide _t _question_id _message_target _recipient_id = ()
@@ -1137,13 +1215,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let dump_embargo f (id, proxy) =
     Fmt.pf f "%a: @[%t@]" EmbargoId.pp id proxy#pp
 
-  let check_import x =
-    if not x.import_proxy_released then (
-      match get_import_proxy x with
-      | Some x -> x#check_invariants
-      | None -> failwith "Import proxy GC'd, but not removed from table!"
-    )
-
   let check_export   x = x.export_service#check_invariants
 
   let check_answer   x = x.answer_promise#check_invariants
@@ -1177,14 +1248,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
       (Questions.dump ~check:Question.check Question.dump) t.questions
       (Answers.dump   ~check:check_answer   dump_answer) t.answers
       (Exports.dump   ~check:check_export   dump_export) t.exports
-      (Imports.dump   ~check:check_import   dump_import) t.imports
+      (Imports.dump   ~check:Import.check   Import.dump) t.imports
       (Embargoes.dump ~check:check_embargo  dump_embargo) t.embargoes
       (hashtbl_dump ~key:exported_sort_key (pp_exported_cap t)) t.exported_caps
 
   let check t =
     Questions.iter  (fun _ -> Question.check) t.questions;
     Answers.iter    (fun _ -> check_answer)   t.answers;
-    Imports.iter    (fun _ -> check_import)   t.imports;
+    Imports.iter    (fun _ -> Import.check)   t.imports;
     Exports.iter    (fun _ -> check_export)   t.exports;
     Embargoes.iter  (fun _ -> check_embargo)  t.embargoes;
     Hashtbl.iter    (check_exported_cap t) t.exported_caps
@@ -1202,13 +1273,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Questions.drop_all t.questions (fun _ -> Question.lost_connection ~ex);
     Answers.drop_all t.answers (fun _ a -> a.answer_promise#finish);
     let broken_cap = Core_types.broken_cap ex in
-    Imports.drop_all t.imports (fun _ i ->
-        begin match get_import_proxy i with
-          | Some switchable when switchable#problem = None -> switchable#resolve broken_cap
-          | _ -> ()
-        end;
-        i.import_proxy <- `Uninitialised
-      );
+    Imports.drop_all t.imports (fun _ -> Import.lost_connection ~broken_cap);
     Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; e#dec_ref);
     (* TODO: break existing caps *)
     ()

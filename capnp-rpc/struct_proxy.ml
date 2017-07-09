@@ -174,7 +174,8 @@ module Make (C : S.CORE_TYPES) = struct
     method private virtual on_resolve : 'promise -> struct_ref -> unit
     (* We have just started forwarding. Send any queued data onwards. *)
 
-    method private virtual do_finish : 'promise -> unit
+    method private virtual send_cancel : 'promise -> unit
+    (* There is no longer a need for this (unresolved) proxy's result. *)
 
     method virtual field_sealed_dispatch : 'a. Wire.Path.t -> 'a S.brand -> 'a option
 
@@ -279,7 +280,6 @@ module Make (C : S.CORE_TYPES) = struct
             self#on_resolve u.target x;
             Queue.iter (fun fn -> fn x) u.when_resolved;
             if u.cancelling then (
-              self#do_finish u.target;
               self#finish
             )
           )
@@ -296,7 +296,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun u ->
             u.cancelling <- true;
             if Field_map.is_empty u.fields then
-              self#do_finish u.target;
+              self#send_cancel u.target;
             (* else disable locally but don't send a cancel because we still
                want the caps. *)
           )
