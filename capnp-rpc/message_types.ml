@@ -100,15 +100,20 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
   ]
   (** A message sent over the network. *)
 
-  let with_qid_tag tags = function
+  let with_qid_tag tags : t -> _ = function
     | `Finish (qid, _)
     | `Bootstrap qid
-    | `Call (qid, _, _, _, _) -> Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) tags
-    | `Return (aid, _, _) -> Logs.Tag.add Debug.qid_tag (AnswerId.uint32 aid) tags
-    | `Release _
-    | `Disembargo_request _
+    | `Call (qid, _, _, _, _)
+    | `Disembargo_request (`Loopback (`ReceiverAnswer (qid, _), _))
+    | `Disembargo_reply (`ReceiverAnswer (qid, _), _) ->
+      Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) tags
+    | `Return (aid, _, _) ->
+      Logs.Tag.add Debug.qid_tag (AnswerId.uint32 aid) tags
     | `Disembargo_reply _
-    | `Resolve _ -> tags
+    | `Disembargo_request _
+    | `Release _
+    | `Resolve _ ->
+      tags
 
   let pp_results_to f = function
     | `Caller -> ()

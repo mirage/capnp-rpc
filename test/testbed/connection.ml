@@ -130,7 +130,7 @@ module Pair ( ) = struct
     let q2 = Queue.create () in
     let c = C.create ~tags:client_tags q1 q2 in
     let s = S.create ~tags:server_tags q2 q1 ~bootstrap in
-    bootstrap#dec_ref; (* [s] took a reference *)
+    Capnp_direct.Core_types.dec_ref bootstrap; (* [s] took a reference *)
     c, s
 
   let rec flush c s =

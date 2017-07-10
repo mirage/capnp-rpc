@@ -1,11 +1,9 @@
 module Make (C : S.CORE_TYPES) = struct
-  open C
-
   module Struct_proxy = Struct_proxy.Make(C)
 
-  type target = (struct_ref -> unit) Queue.t
+  type target = (C.struct_ref -> unit) Queue.t
 
-  let rec local_promise ?parent () = object (self : #struct_resolver)
+  let rec local_promise ?parent () = object (self : #C.struct_resolver)
     inherit [target] Struct_proxy.t (Queue.create ()) as super
 
     method private do_pipeline q i msg caps =
@@ -13,10 +11,10 @@ module Make (C : S.CORE_TYPES) = struct
       q |> Queue.add (fun p ->
           let cap = p#cap i in
           let r = result#connect (cap#call msg caps) in
-          cap#dec_ref;
+          C.dec_ref cap;
           r
         );
-      (result :> struct_ref)
+      (result :> C.struct_ref)
 
     method! pp f =
       let pp_promise f _ =
@@ -42,5 +40,5 @@ module Make (C : S.CORE_TYPES) = struct
     method field_sealed_dispatch _ _ = None
   end
 
-  let make () = (local_promise () :> struct_resolver)
+  let make () = (local_promise () :> C.struct_resolver)
 end

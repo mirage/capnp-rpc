@@ -53,14 +53,14 @@ module Make(C : S.CORE_TYPES) = struct
               let msg = Fmt.strf "@[<v>Attempt to create a cycle detected:@,\
                                   Resolving %t with %t would create a cycle@]" self#pp cap#pp in
               Log.info (fun f -> f "%s" msg);
-              cap#dec_ref;
+              C.dec_ref cap;
               C.broken_cap (Exception.v msg)
             | _ -> cap
           in
           state <- Resolved cap;
           Log.info (fun f -> f "Resolved local cap promise: %t" self#pp);
           let forward = function
-            | Watcher fn -> cap#inc_ref; fn cap
+            | Watcher fn -> C.inc_ref cap; fn cap
             | Call (result, msg, caps) ->
               let r = cap#call msg caps in
               result#connect r      (* Or should it be connect [r] to [result], for tail-recursion? *)
@@ -68,7 +68,7 @@ module Make(C : S.CORE_TYPES) = struct
           Queue.iter forward q;
           if release_pending then (
             Log.info (fun f -> f "Completing delayed release of %t" self#pp);
-            cap#dec_ref;
+            C.dec_ref cap;
             state <- Resolved released
           )
         | Resolved _ -> failwith "Already resolved!"
@@ -83,7 +83,7 @@ module Make(C : S.CORE_TYPES) = struct
           assert (not release_pending);
           state <- Unresolved (target, true)
         | Resolved cap ->
-          cap#dec_ref;
+          C.dec_ref cap;
           state <- Resolved released
 
       method shortest =
@@ -124,7 +124,7 @@ module Make(C : S.CORE_TYPES) = struct
         inherit local_promise as super
 
         method! release =
-          underlying#dec_ref;
+          C.dec_ref underlying;
           state <- Resolved released
 
         method disembargo =

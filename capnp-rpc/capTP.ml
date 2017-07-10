@@ -10,8 +10,6 @@ let rec filter_map f = function
     | None -> filter_map f xs
     | Some y -> y :: filter_map f xs
 
-let dec_ref x = x#dec_ref
-
 let pp_check check f (k, v) =
   try check k v
   with ex ->
@@ -40,6 +38,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
   module Out = EP.Out
   module In = EP.In
 
+  let inc_ref = Core_types.inc_ref
+  let dec_ref = Core_types.dec_ref
+
+  let with_inc_ref x =
+    Core_types.inc_ref x;
+    x
+
   open EP.Table
 
   module PathSet = Set.Make(Wire.Path)
@@ -53,49 +58,43 @@ module Make (EP : Message_types.ENDPOINT) = struct
   module Question = struct
     (* State model for questions:
 
-       1. waiting: finished=false, returned=false (initial state)
-                   released=false
-          We're waiting for some results.
-          On release: if rc=0 then send Finish, goto cancelled
-                      else goto cancelling
-          On return: if rc=0 then send Finish, goto complete
-                     else goto lingering
-
-       2. cancelling: finished=false, returned=false, rc>0
-                      released=true
-          We want to cancel but can't yet because rc>0.
+       1. waiting: returned=false, rc>0 (initial state)
+          We're waiting for some results. (Initially rc=1, from our remote promise)
           On rc=0: send Finish, goto cancelled
           On return: goto lingering
 
-       3. cancelled: finished=true, returned=false, rc=0
-                     released=true
+       2. cancelled: returned=false, rc=0
           We told the peer we don't care about the results.
           It may return them anyway or return "cancelled".
+          We will never send another message referring to this question.
           On return: goto complete (with results=cancelled)
 
-       4. lingering: finished=false, returned=true, rc>0
-          We've got the results and want to finish, but we
-          can't yet because rc>0.
+       3. lingering: returned=true, rc>0
+          We've got the results and want to finish, but we can't yet because rc>0.
           On rc=0: send Finish, goto complete
-          On release: remain in lingering
 
-       5: complete: finished=true, returned=true, rc=0 (final state)
-          No longer in questions table.
-          On release: ignore
+       4: complete: returned=true, rc=0 (final state)
+          Finish has been sent and we are no longer in the questions table.
+          We will never send or receive another message referring to this question.
 
-       The "release" event means the user told us they don't care about the result.
-       After this, released=true.
+       The user releases the remote promise to indicate that they no longer care
+       about the result. The remote promise will then decrement rc.
 
        The "return" event means the peer sent us a Return message.
 
-       rc>0 means that we used this answer in an export. e.g. we told the peer
-       that a capability in the answer to a question they asked us will come
-       from this question that we asked them.
+       rc>0 means that we may still want to send messages about this question.
+       This could be either messages sent via the remote promise, or disembargo
+       replies.
+
+       The disembargo case happens when e.g. we told the peer that a capability
+       in the answer to a question they asked us will come from this question
+       that we asked them.
 
        Initially, our [answer] for the peer's question holds a reference to us
-       so that it can forward any calls. This will prevent us from getting the
-       "release" event. Once we get the results, the answer will update to
-       point directly at the new target and we may get a "release" then.
+       via our remote promise so that it can forward any calls. This will
+       prevent us from reaching rc=0. Once we get the results, the answer will
+       update to point directly at the new target and the remote promise may be
+       released then.
 
        However, the peer may still need to send a disembargo request to the
        answer, which must be sent back to its *original* target (this
@@ -106,17 +105,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
        holding on to their question now that they've got the answer.
 
        Every path contains exactly one Finish, exactly one Return, and exactly
-       one release event.
-
-       Whenever finished=true:
-       - rc=0
-       - We have sent a Finish message.
-       - We can't send any more messages referring to this question.
+       one release (rc=0) event.
      *)
 
     type state =
       | Waiting
-      | Cancelling
       | Cancelled
       | Lingering
       | Complete
@@ -124,7 +117,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     type t = {
       id : QuestionId.t;
       mutable remote_promise : [`Promise of Core_types.struct_resolver | `Released];
-      mutable resolve_refs : int;           (* Number of [resolve_target]s using us. *)
+      mutable ref_count : RC.t;
       mutable state : state;
       params_for_release : ExportId.t list; (* For level 0 peers *)
       mutable pipelined_fields : PathSet.t; (* Fields used while unresolved; will need embargoes *)
@@ -132,46 +125,56 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let id t = t.id
 
+    let pp f q =
+      Fmt.pf f "q%a" QuestionId.pp q.id
+
+    let pp_promise f q =
+      match q.remote_promise with
+      | `Released -> Fmt.string f "(released)"
+      | `Promise p -> Fmt.pf f "%t" p#pp
+
+    let pp_state f x =
+      Fmt.string f @@ match x with
+      | Waiting    -> "waiting"
+      | Cancelled  -> "cancelled"
+      | Lingering  -> "lingering"
+      | Complete   -> "complete"
+
+    let dump f t =
+      Fmt.pf f "(%a) %a" pp_state t.state pp_promise t
+
     let sent_finish t =
       match t.state with
-      | Waiting | Cancelling | Lingering -> false
+      | Waiting | Lingering -> false
       | Cancelled | Complete -> true
 
     let inc_ref t =
       assert (not (sent_finish t));
-      t.resolve_refs <- t.resolve_refs + 1
+      let pp f = pp f t in
+      t.ref_count <- RC.succ t.ref_count ~pp
 
     let dec_ref t =
-      assert (t.resolve_refs > 0);
-      t.resolve_refs <- t.resolve_refs - 1;
-      if t.resolve_refs > 0 then []
-      else match t.state with
-        | Waiting -> []
-        | Cancelling -> t.state <- Cancelled; [`Send_finish]
-        | Lingering ->  t.state <- Complete;  [`Send_finish; `Release_table_entry]
-        | Cancelled | Complete -> failwith "Can't hold refs while cancelled or complete!"
+      let pp f = pp f t in
+      t.ref_count <- RC.pred t.ref_count ~pp;
+      if RC.is_zero t.ref_count then match t.state with
+        | Waiting -> t.state <- Cancelled; [`Send_finish]
+        | Lingering -> t.state <- Complete; [`Send_finish; `Release_table_entry]
+        | Complete -> []
+        | Cancelled -> failwith "Can't hold refs while cancelled!"
+      else
+        []
+
+    let release_proxy t =
+      t.remote_promise <- `Released;
+      dec_ref t
 
     (* A [Return] message has arrived. *)
     let return t =
       match t.state with
-      | Waiting when t.resolve_refs = 0 ->
-                      t.state <- Complete;  [`Send_finish; `Release_table_entry]
-      | Waiting    -> t.state <- Lingering; []
-      | Cancelling -> t.state <- Lingering; []
-      | Cancelled  -> t.state <- Complete;  [`Release_table_entry]
-      | Lingering | Complete -> failwith "Already returned!"
-
-    (* [t.remote_promise] no longer needs [t]. Cancel if possible. *)
-    let release t =
-      match t.remote_promise with
-      | `Released -> failwith "Already released!"
-      | `Promise _ ->
-        t.remote_promise <- `Released;
-        match t.state with
-        | Waiting when t.resolve_refs = 0 -> t.state <- Cancelled; [`Send_finish]
-        | Waiting -> t.state <- Cancelling; []
-        | Lingering | Complete -> []
-        | Cancelling | Cancelled -> failwith "Can't release twice!"
+      | Waiting   -> t.state <- Lingering; []
+      | Cancelled -> t.state <- Complete; [`Release_table_entry]
+      | Lingering
+      | Complete  -> failwith "Already returned!"
 
     let set_cap_used t path =
       t.pipelined_fields <- PathSet.add path t.pipelined_fields
@@ -185,25 +188,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | Some i -> Some (i, path)
         )
       |> IntMap.of_list
-
-    let pp f q =
-      Fmt.pf f "q%a" QuestionId.pp q.id
-
-    let pp_promise f q =
-      match q.remote_promise with
-      | `Released -> Fmt.string f "(released)"
-      | `Promise p -> Fmt.pf f "%t" p#pp
-
-    let pp_state f x =
-      Fmt.string f @@ match x with
-      | Waiting    -> "waiting"
-      | Cancelling -> "cancelling"
-      | Cancelled  -> "cancelled"
-      | Lingering  -> "lingering"
-      | Complete   -> "complete"
-
-    let dump f t =
-      Fmt.pf f "(%a) %a" pp_state t.state pp_promise t
 
     let check t =
       match t.remote_promise with
@@ -225,14 +209,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Promise p -> p#resolve payload
       | `Released ->
         match payload with
-        | Ok (_, caps) -> RO_array.iter (fun x -> x#dec_ref) caps
+        | Ok (_, caps) -> RO_array.iter Core_types.dec_ref caps
         | Error _ -> ()
 
     let v ~params_for_release ~remote_promise id =
       {
         id;
         remote_promise = `Promise remote_promise;
-        resolve_refs = 0;
+        ref_count = RC.one; (* Held by [remote_promise] *)
         state = Waiting;
         params_for_release;
         pipelined_fields = PathSet.empty
@@ -286,7 +270,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let maybe_release_import t =
       if t.ref_count = 0 then (
-        Log.info (fun f -> f "maybe_release_import: count = %d" t.count);
         assert (t.count > 0);
         let count = t.count in
         t.used <- false;
@@ -380,7 +363,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   ]
 
   let pp_cap : [< descr] Fmt.t = fun f -> function
-    | `Import import -> Fmt.pf f "i%a" Import.pp import
+    | `Import import -> Fmt.pf f "%a" Import.pp import
     | `QuestionCap (question, p) -> Fmt.pf f "%a[%a]" Question.pp question Wire.Path.pp p
     | `ThirdPartyHosted _third_party_desc -> Fmt.pf f "ThirdPartyHosted"
     | `Local local -> Fmt.pf f "local:%t" local#pp
@@ -427,7 +410,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let create ?bootstrap ~tags ~queue_send =
     begin match bootstrap with
       | None -> ()
-      | Some x -> x#inc_ref
+      | Some x -> Core_types.inc_ref x
     end;
     {
       queue_send = (queue_send :> EP.Out.t -> unit);
@@ -517,7 +500,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             ex.export_count <- ex.export_count + 1;
             ex
           | exception Not_found ->
-            cap#inc_ref;
+            Core_types.inc_ref cap;
             let ex = Exports.alloc t.exports (fun export_id ->
                 { export_count = 1; export_service = cap; export_id; export_resolve_target = `None }
               )
@@ -550,7 +533,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                       ex.export_resolve_target <- get_resolve_target t x;
                       t.queue_send (`Resolve (ex.export_id, Ok new_export));
                   ); (* else: no longer an export *)
-                  x#dec_ref
+                  Core_types.dec_ref x
                 )
             end;
             ex
@@ -608,7 +591,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let caps = RO_array.map (fun c -> c#shortest) caps in
       Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
                    Core_types.Response_payload.pp (msg, caps));
-      RO_array.iter (fun c -> c#inc_ref) caps;        (* Copy everything stored in [answer]. *)
+      RO_array.iter Core_types.inc_ref caps;        (* Copy everything stored in [answer]. *)
       let broken_caps = Queue.create () in
       let descs = RO_array.map (export ~broken_caps t) caps in
       answer.exports_for_release <- exports_of descs;
@@ -677,7 +660,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       method private ensure_released q =
         if not released_question then (
           released_question <- true;
-          Question.release q |> apply_question_actions t q
+          Question.release_proxy q |> apply_question_actions t q
         )
 
       method do_pipeline question i msg caps =
@@ -737,7 +720,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let promise = answer_promise answer in
       begin match t.bootstrap with
         | Some service ->
-          service#inc_ref;
+          Core_types.inc_ref service;
           promise#resolve (Ok (Wire.Response.bootstrap, RO_array.of_list [service]));
         | None ->
           promise#resolve (Error (Error.exn "No bootstrap service available"));
@@ -746,7 +729,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Call (answer, target, msg, caps) ->
       Log.info (fun f -> f ~tags:t.tags "Handling call: (%t).call %a" target#pp Core_types.Request_payload.pp (msg, caps));
       let resp = target#call msg caps in  (* Takes ownership of [caps]. *)
-      target#dec_ref;
+      dec_ref target;
       (answer_promise answer)#connect resp;
       resp#when_resolved (fun _ -> Send.return t answer)
 
@@ -779,12 +762,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | `Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
         | `Unsettled (old, q) ->
           state <- `Set cap;
-          Queue.iter (fun f -> f (cap#inc_ref; cap)) q;
-          old#dec_ref;
+          Queue.iter (fun f -> f (with_inc_ref cap)) q;
+          dec_ref old;
           Lazy.force release
 
       method private release =
-        (target state)#dec_ref;
+        dec_ref (target state);
         Lazy.force release;
         state <- `Set released
 
@@ -844,10 +827,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
     val join : t -> In.QuestionId.t -> In.message_target -> join_key_part -> unit
 *)
   end = struct
-    let with_inc_ref x =
-      x#inc_ref;
-      x
-
     let set_import_proxy t ~settled import =
       let message_target = `Import import in
       let cap =
@@ -906,7 +885,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         if mark_dirty then Import.mark_used import;
         match Import.get_proxy import with
         | Some proxy ->
-          proxy#inc_ref;
+          Core_types.inc_ref proxy;
           (proxy :> Core_types.cap)
         | None ->
           (* The switchable got GC'd. It may have already dec-ref'd the import, or
@@ -917,7 +896,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let local_embargo t ~old_path x =
       let embargo = Cap_proxy.embargo x in
       (* Store in table *)
-      embargo#inc_ref;
+      inc_ref embargo;
       let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
       (* Send disembargo request *)
       let disembargo_request = `Loopback (old_path, embargo_id) in
@@ -1030,7 +1009,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         Log.info (fun f -> f ~tags:t.tags "Releasing export %a" ExportId.pp export_id);
         Hashtbl.remove t.exported_caps export.export_service;
         Exports.release t.exports export_id;
-        export.export_service#dec_ref;
+        dec_ref export.export_service;
         release_resolve_target t export.export_resolve_target
       )
 
@@ -1124,7 +1103,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         );
       Embargoes.release t.embargoes embargo_id;
       embargo#disembargo;
-      embargo#dec_ref
+      dec_ref embargo
 
     let resolve t import_id new_target =
       Log.info (fun f -> f ~tags:t.tags "Received resolve of import %a to %a"
@@ -1141,14 +1120,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
         let new_target = import_new_target ~embargo_path:None in
         Log.info (fun f -> f ~tags:t.tags "Import %a no longer used - releasing new resolve target %t"
                      ImportId.pp import_id new_target#pp);
-        new_target#dec_ref
+        dec_ref new_target
       | Some im ->
         (* Check we're not resolving a settled import. *)
         begin match new_target with
           | Ok _ when im.Import.settled ->
             let new_target = import_new_target ~embargo_path:None in
             let msg = Fmt.strf "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
-            new_target#dec_ref;
+            dec_ref new_target;
             failwith msg
           | _ -> ()
         end;
@@ -1163,7 +1142,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           let new_target = import_new_target ~embargo_path:None in
           Log.info (fun f -> f ~tags:t.tags "Ignoring resolve of import %a, which we no longer need (to %t)"
                        ImportId.pp import_id new_target#pp);
-          new_target#dec_ref
+          dec_ref new_target
 
 (* TODO:
     let provide _t _question_id _message_target _recipient_id = ()
@@ -1265,16 +1244,16 @@ module Make (EP : Message_types.ENDPOINT) = struct
     t.disconnected <- Some ex;
     begin match t.bootstrap with
     | None -> ()
-    | Some b -> t.bootstrap <- None; b#dec_ref
+    | Some b -> t.bootstrap <- None; dec_ref b
     end;
     t.queue_send <- ignore;
-    Exports.drop_all t.exports (fun _ e -> e.export_service#dec_ref);
+    Exports.drop_all t.exports (fun _ e -> dec_ref e.export_service);
     Hashtbl.clear t.exported_caps;
     Questions.drop_all t.questions (fun _ -> Question.lost_connection ~ex);
     Answers.drop_all t.answers (fun _ a -> a.answer_promise#finish);
     let broken_cap = Core_types.broken_cap ex in
     Imports.drop_all t.imports (fun _ -> Import.lost_connection ~broken_cap);
-    Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; e#dec_ref);
+    Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; dec_ref e);
     (* TODO: break existing caps *)
     ()
 end

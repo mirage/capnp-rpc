@@ -17,8 +17,7 @@ module Make (C : S.CORE_TYPES) = struct
     inherit struct_resolver
 
     method pipeline : Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
-    method field_inc_ref : Wire.Path.t -> unit
-    method field_dec_ref : Wire.Path.t -> unit
+    method field_update_rc : Wire.Path.t -> int -> unit
 
     method field_blocker : Wire.Path.t -> base_ref option
 
@@ -34,8 +33,7 @@ module Make (C : S.CORE_TYPES) = struct
 
   let invalid_cap = object (_ : C.cap)
     method call _ _ = failwith "invalid_cap"
-    method inc_ref = failwith "invalid_cap"
-    method dec_ref = failwith "invalid_cap"
+    method update_rc = failwith "invalid_cap"
     method shortest = failwith "invalid_cap"
     method when_more_resolved _ = failwith "invalid_cap"
     method pp f = Fmt.string f "(invalid cap)"
@@ -54,7 +52,7 @@ module Make (C : S.CORE_TYPES) = struct
 
   type field = {
     cap : field_cap;
-    mutable ref_count : int;
+    mutable ref_count : RC.t;
   }
 
   type 'a unresolved = {
@@ -74,7 +72,7 @@ module Make (C : S.CORE_TYPES) = struct
     | Forwarding of struct_ref
     | Finished
 
-  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:rc=%d" Wire.Path.pp k v.ref_count)
+  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:%a" Wire.Path.pp k RC.pp v.ref_count)
 
   let pp_state ~pp_promise f = function
     | Unresolved {target; cancelling = true; _} -> Fmt.pf f "%a (cancelling)" pp_promise target
@@ -109,16 +107,10 @@ module Make (C : S.CORE_TYPES) = struct
         | PromiseField (p, path) -> Fmt.pf f "field(%a)%t" Debug.OID.pp id (p#field_pp path)
         | ForwardingField c -> Fmt.pf f "field(%a) -> %t" Debug.OID.pp id c#pp
 
-      method inc_ref =
+      method update_rc d =
         match state with
-        | PromiseField (p, path) -> p#field_inc_ref path
-        | ForwardingField c -> c#inc_ref
-
-      method dec_ref =
-        Log.info (fun f -> f "dec_ref %t" self#pp);
-        match state with
-        | PromiseField (p, path) -> p#field_dec_ref path
-        | ForwardingField c -> c#dec_ref
+        | PromiseField (p, path) -> p#field_update_rc path d
+        | ForwardingField c -> c#update_rc d
 
       method resolve cap =
         Log.info (fun f -> f "Resolved field(%a) to %t" Debug.OID.pp id cap#pp);
@@ -211,11 +203,11 @@ module Make (C : S.CORE_TYPES) = struct
               | Some f -> f
               | None ->
                 let cap = field path (self :> struct_ref_internal) in
-                let field = {cap; ref_count = 1} in
+                let field = {cap; ref_count = RC.one} in
                 u.fields <- Field_map.add path field u.fields; (* Map takes initial ref *)
                 field
             in
-            field.ref_count <- field.ref_count + 1;  (* Ref for user *)
+            field.ref_count <- RC.succ field.ref_count ~pp:self#pp;  (* Ref for user *)
             (field.cap :> cap)
           )
         ~forwarding:(fun x -> x#cap path)
@@ -257,24 +249,25 @@ module Make (C : S.CORE_TYPES) = struct
                   let fixed_caps = RO_array.map break_cycles caps in
                   if RO_array.equal (=) fixed_caps caps then x
                   else (
-                    RO_array.iter (fun c -> c#inc_ref) fixed_caps;
+                    RO_array.iter C.inc_ref fixed_caps;
                     x#finish;
                     C.return (msg, fixed_caps)
                   )
             in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->
-                let ref_count = f.ref_count in
-                assert (ref_count > 0);
-                f.ref_count <- 0;
-                if ref_count > 1 then (   (* Someone else is using it too *)
-                  let c = x#cap path in   (* Increases ref by one *)
-                  (* We dropped our ref to [f], and [x#cap] added one above. The rest we pass on. *)
-                  for _ = 3 to ref_count do c#inc_ref done;
-                  f.cap#resolve c
-                ) else (
-                  f.cap#resolve invalid_cap
-                );
+                let pp = self#field_pp path in
+                let ref_count = RC.pred f.ref_count ~pp in (* Count excluding our ref *)
+                f.ref_count <- RC.zero;
+                begin match RC.to_int ref_count with
+                  | None        (* Field was leaked; shouldn't happen since we hold a copy anyway. *)
+                  | Some 0 -> f.cap#resolve invalid_cap (* No other users *)
+                  | Some ref_count ->                   (* Someone else is using it too *)
+                    let c = x#cap path in   (* Increases ref by one *)
+                    (* Transfer our refs to the new target, excluding the one already addded by [x#cap]. *)
+                    c#update_rc (ref_count - 1);
+                    f.cap#resolve c
+                end;
                 self#field_resolved (f.cap :> cap)
               );
             self#on_resolve u.target x;
@@ -336,7 +329,7 @@ module Make (C : S.CORE_TYPES) = struct
         | Error `Cancelled -> fn (C.broken_cap Exception.cancelled)
         | Ok payload ->
           let cap = C.Response_payload.field_or_err payload i in
-          cap#inc_ref;
+          C.inc_ref cap;
           fn cap
       in
       dispatch state
@@ -344,30 +337,34 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)
         ~forwarding:(fun x -> x#when_resolved fn)
 
-    method field_inc_ref path =
+    method field_update_rc path d =
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
             (* When we resolve, we'll be holding references to all the caps in the resolution, so
                so they must still be alive by the time we pass on any extra inc or dec refs. *)
             let f = Field_map.get path u.fields in
-            assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
-            f.ref_count <- f.ref_count + 1
+            assert (f.ref_count > RC.one);   (* rc can't be one because that's our reference *)
+            let pp = self#field_pp path in
+            f.ref_count <- RC.sum f.ref_count d ~pp
           )
-        ~forwarding:(fun x -> ignore (x#cap path))
+        ~forwarding:(fun x ->
+            let c = x#cap path in       (* Increases rc by one *)
+            c#update_rc (d - 1)
+          )
 
     method field_dec_ref path =
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
             let f = Field_map.get path u.fields in
-            assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
-            f.ref_count <- f.ref_count - 1
+            assert (f.ref_count > RC.one);   (* rc can't be one because that's our reference *)
+            let pp = self#field_pp path in
+            f.ref_count <- RC.pred f.ref_count ~pp
           )
         ~forwarding:(fun x ->
             let c = x#cap path in       (* Increases ref by one *)
-            c#dec_ref;
-            c#dec_ref
+            c#update_rc (-2)
           )
 
     method private update_target target =
@@ -381,7 +378,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:true
         ~unresolved:(fun u ->
             let f = Field_map.get i u.fields in
-            assert (f.ref_count > 1)
+            assert (f.ref_count > RC.one)
           )
         ~forwarding:(fun _ -> Debug.failf "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
 
@@ -391,14 +388,18 @@ module Make (C : S.CORE_TYPES) = struct
       | Forwarding _ -> Fmt.pf f "Promise is resolved, but field %a isn't!" Wire.Path.pp path
       | Unresolved u ->
         let field = Field_map.get path u.fields in
-        (* (exclude the ref-count that we hold on it) *)
-        Fmt.pf f "(rc=%d) -> #%a -> %t" (field.ref_count - 1) Wire.Path.pp path self#pp
+        match RC.to_int field.ref_count with
+        | None ->
+          Fmt.pf f "(rc=LEAKED) -> #%a -> %t" Wire.Path.pp path self#pp
+        | Some rc ->
+          (* (separate the ref-count that we hold on it) *)
+          Fmt.pf f "(rc=1+%d) -> #%a -> %t" (rc - 1) Wire.Path.pp path self#pp
 
     method check_invariants =
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
-            Field_map.iter (fun _ f -> assert (f.ref_count > 0)) u.fields
+            Field_map.iter (fun i f -> RC.check f.ref_count ~pp:(self#field_pp i)) u.fields
           )
         ~forwarding:(fun x -> x#check_invariants)
 

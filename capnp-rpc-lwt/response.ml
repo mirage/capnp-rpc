@@ -23,7 +23,7 @@ let create_empty () =
   {msg; n_exports = 0; exports_rev = []}
 
 let export t cap =
-  cap#inc_ref;
+  Core_types.inc_ref cap;
   let i = t.n_exports in
   t.n_exports <- i + 1;
   t.exports_rev <- cap :: t.exports_rev;
@@ -41,6 +41,6 @@ let finish t =
   | _ -> assert false
 
 let release t =
-  List.iter (fun x -> x#dec_ref) t.exports_rev;
+  List.iter Core_types.dec_ref t.exports_rev;
   t.n_exports <- 0;
   t.exports_rev <- []

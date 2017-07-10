@@ -111,12 +111,10 @@ module type CORE_TYPES = sig
       method call : Wire.Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
       (** [c#call msg args] invokes a method on [c]'s target and returns a promise for the result. *)
 
-      method inc_ref : unit
-      (** [c#inc_ref] increases [c]'s (local) reference count. *)
-
-      method dec_ref : unit
-      (** [c#dec_ref] decreases [c]'s (local) reference count. When it reaches zero, [c] must not
-          be used again. A message may be sent releasing any remote resources. *)
+      method update_rc : int -> unit
+      (** [c#update_rc d] adds [d] to [c]'s (local) reference count.
+          When it reaches zero, [c] must not be used again. A message may be
+          sent releasing any remote resources. *)
 
       method shortest : cap
       (** [c#shortest] is the shortest known path to [cap]. i.e. if [c] is forwarding to another cap, we
@@ -140,6 +138,12 @@ module type CORE_TYPES = sig
   (** A capability reference to an object that can handle calls.
       We might not yet know its final location, but we may be able
       to pipeline messages to it anyway. *)
+
+  val inc_ref : #cap -> unit
+  (** [inc_ref x] increases [x]'s ref-count by one. *)
+
+  val dec_ref : #cap -> unit
+  (** [dec_ref x] decreases [x]'s ref-count by one. *)
 
   module Request_payload : sig
     type t = Wire.Request.t * cap RO_array.t
@@ -189,8 +193,7 @@ module type CORE_TYPES = sig
     (** Raise an exception if the ref-count is less than one
         (i.e. check that the object hasn't already been freed). *)
 
-    method inc_ref : unit
-    method dec_ref : unit
+    method update_rc : int -> unit
     method check_invariants : unit
 
     method virtual blocker : base_ref option
