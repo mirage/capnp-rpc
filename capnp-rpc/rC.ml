@@ -9,19 +9,20 @@ let pp f = function
   | 0  -> Fmt.pf f "rc=%a" Fmt.(styled `Red int) 0
   | t  -> Fmt.pf f "rc=%d" t
 
-let succ ~pp:pp_obj t =
+let sum ~pp:pp_obj t d =
   if t > 0 then (
-    let t' = t + 1 in
-    if t' < 0 then Debug.failf "Ref-count %a on %t would wrap if incremented further!" pp t pp_obj;
+    let t' = t + d in
+    if t' < 0 then (
+      if d > 0 then Debug.failf "Ref-count %a + %d would wrap!" pp t d pp_obj
+      else Debug.failf "Ref-count %a - %d would go negative!" pp t (-d) pp_obj
+    );
     t'
   ) else (
-    Debug.failf "Attempt to inc-ref on freed resource %t" pp_obj
+    Debug.failf "Attempt to change ref-count (to %a+%d) on freed resource %t" pp t d pp_obj
   )
 
-let pred ~pp t =
-  if t > 0 then t - 1
-  else if t = 0 then Debug.failf "Attempt to free already-freed resource %t" pp
-  else leaked
+let succ ~pp t = sum ~pp t 1
+let pred ~pp t = sum ~pp t (-1)
 
 let is_zero = function
   | 0 -> true
@@ -31,4 +32,6 @@ let check ~pp t =
   if t < 1 then
     Debug.invariant_broken (fun f -> Fmt.pf f "Already unref'd! %t" pp)
 
-let to_int t = t
+let to_int t =
+  if t >= 0 then Some t
+  else None

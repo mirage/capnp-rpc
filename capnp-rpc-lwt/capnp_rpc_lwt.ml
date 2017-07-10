@@ -12,11 +12,11 @@ module Payload = struct
 
   let import (t:'a t) i =
     let cap = RO_array.get (snd t) (Uint32.to_int i) in       (* TODO: out-of-bounds *)
-    cap#inc_ref;
+    Core_types.inc_ref cap;
     cap
 
   let release (_, caps) =
-    RO_array.iter (fun x -> x#dec_ref) caps
+    RO_array.iter Core_types.dec_ref caps
 end
 
 module Capability = struct
@@ -27,8 +27,8 @@ module Capability = struct
   module Request = Request
   module Response = Payload
 
-  let inc_ref x = x#inc_ref
-  let dec_ref x = x#dec_ref
+  let inc_ref = Core_types.inc_ref
+  let dec_ref = Core_types.dec_ref
   let pp f x = x#pp f
 
   let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) req =

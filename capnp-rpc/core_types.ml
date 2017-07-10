@@ -25,8 +25,7 @@ module Make(Wire : S.WIRE) = struct
   and cap = object
     inherit base_ref
     method call : Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
-    method inc_ref : unit
-    method dec_ref : unit
+    method update_rc : int -> unit
     method shortest : cap
     method when_more_resolved : (cap -> unit) -> unit
     method sealed_dispatch : 'a. 'a S.brand -> 'a option
@@ -43,6 +42,9 @@ module Make(Wire : S.WIRE) = struct
 
   type 'a S.brand += Gc : unit S.brand
 
+  let inc_ref x = x#update_rc 1
+  let dec_ref x = x#update_rc (-1)
+
   class virtual ref_counted =
     object (self : #cap)
       val mutable ref_count = RC.one
@@ -54,11 +56,8 @@ module Make(Wire : S.WIRE) = struct
       method private check_refcount =
         RC.check ref_count ~pp:self#pp
 
-      method inc_ref =
-        ref_count <- RC.succ ref_count ~pp:self#pp
-
-      method dec_ref =
-        ref_count <- RC.pred ref_count ~pp:self#pp;
+      method update_rc d =
+        ref_count <- RC.sum ref_count d ~pp:self#pp;
         if RC.is_zero ref_count then (
           self#release;          (* We can get GC'd once we enter [release], but ref_count is 0 by then so OK. *)
         );
@@ -97,10 +96,9 @@ module Make(Wire : S.WIRE) = struct
 
   let rec broken_cap ex = object (self : cap)
     method call _ caps =
-      RO_array.iter (fun c -> c#dec_ref) caps;
+      RO_array.iter dec_ref caps;
       broken_struct (`Exception ex)
-    method inc_ref = ()
-    method dec_ref = ()
+    method update_rc _ = ()
     method pp f = Exception.pp f ex
     method shortest = self
     method blocker = None
@@ -186,13 +184,13 @@ module Make(Wire : S.WIRE) = struct
     method cap path =
       let i = Response.cap_index msg path in
       let cap = cap_in_cap_list_or_err i caps in
-      cap#inc_ref;
+      inc_ref cap;
       cap
 
     method pp f = Fmt.pf f "returned(%a):%a" Debug.OID.pp id Response_payload.pp (msg, caps)
 
     method finish =
-      RO_array.iter (fun c -> c#dec_ref) caps;
+      RO_array.iter dec_ref caps;
       caps <- RO_array.empty;
       ignore (Sys.opaque_identity self) (* Prevent self from being GC'd until this point *)
 

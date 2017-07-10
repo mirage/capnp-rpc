@@ -10,8 +10,6 @@ let rec filter_map f = function
     | None -> filter_map f xs
     | Some y -> y :: filter_map f xs
 
-let dec_ref x = x#dec_ref
-
 let pp_check check f (k, v) =
   try check k v
   with ex ->
@@ -39,6 +37,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
   module Local_struct_promise = Local_struct_promise.Make(Core_types)
   module Out = EP.Out
   module In = EP.In
+
+  let inc_ref = Core_types.inc_ref
+  let dec_ref = Core_types.dec_ref
+
+  let with_inc_ref x =
+    Core_types.inc_ref x;
+    x
 
   open EP.Table
 
@@ -204,7 +209,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Promise p -> p#resolve payload
       | `Released ->
         match payload with
-        | Ok (_, caps) -> RO_array.iter (fun x -> x#dec_ref) caps
+        | Ok (_, caps) -> RO_array.iter Core_types.dec_ref caps
         | Error _ -> ()
 
     let v ~params_for_release ~remote_promise id =
@@ -405,7 +410,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let create ?bootstrap ~tags ~queue_send =
     begin match bootstrap with
       | None -> ()
-      | Some x -> x#inc_ref
+      | Some x -> Core_types.inc_ref x
     end;
     {
       queue_send = (queue_send :> EP.Out.t -> unit);
@@ -495,7 +500,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             ex.export_count <- ex.export_count + 1;
             ex
           | exception Not_found ->
-            cap#inc_ref;
+            Core_types.inc_ref cap;
             let ex = Exports.alloc t.exports (fun export_id ->
                 { export_count = 1; export_service = cap; export_id; export_resolve_target = `None }
               )
@@ -528,7 +533,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                       ex.export_resolve_target <- get_resolve_target t x;
                       t.queue_send (`Resolve (ex.export_id, Ok new_export));
                   ); (* else: no longer an export *)
-                  x#dec_ref
+                  Core_types.dec_ref x
                 )
             end;
             ex
@@ -586,7 +591,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let caps = RO_array.map (fun c -> c#shortest) caps in
       Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
                    Core_types.Response_payload.pp (msg, caps));
-      RO_array.iter (fun c -> c#inc_ref) caps;        (* Copy everything stored in [answer]. *)
+      RO_array.iter Core_types.inc_ref caps;        (* Copy everything stored in [answer]. *)
       let broken_caps = Queue.create () in
       let descs = RO_array.map (export ~broken_caps t) caps in
       answer.exports_for_release <- exports_of descs;
@@ -715,7 +720,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let promise = answer_promise answer in
       begin match t.bootstrap with
         | Some service ->
-          service#inc_ref;
+          Core_types.inc_ref service;
           promise#resolve (Ok (Wire.Response.bootstrap, RO_array.of_list [service]));
         | None ->
           promise#resolve (Error (Error.exn "No bootstrap service available"));
@@ -724,7 +729,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Call (answer, target, msg, caps) ->
       Log.info (fun f -> f ~tags:t.tags "Handling call: (%t).call %a" target#pp Core_types.Request_payload.pp (msg, caps));
       let resp = target#call msg caps in  (* Takes ownership of [caps]. *)
-      target#dec_ref;
+      dec_ref target;
       (answer_promise answer)#connect resp;
       resp#when_resolved (fun _ -> Send.return t answer)
 
@@ -757,12 +762,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | `Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
         | `Unsettled (old, q) ->
           state <- `Set cap;
-          Queue.iter (fun f -> f (cap#inc_ref; cap)) q;
-          old#dec_ref;
+          Queue.iter (fun f -> f (with_inc_ref cap)) q;
+          dec_ref old;
           Lazy.force release
 
       method private release =
-        (target state)#dec_ref;
+        dec_ref (target state);
         Lazy.force release;
         state <- `Set released
 
@@ -822,10 +827,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
     val join : t -> In.QuestionId.t -> In.message_target -> join_key_part -> unit
 *)
   end = struct
-    let with_inc_ref x =
-      x#inc_ref;
-      x
-
     let set_import_proxy t ~settled import =
       let message_target = `Import import in
       let cap =
@@ -884,7 +885,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         if mark_dirty then Import.mark_used import;
         match Import.get_proxy import with
         | Some proxy ->
-          proxy#inc_ref;
+          Core_types.inc_ref proxy;
           (proxy :> Core_types.cap)
         | None ->
           (* The switchable got GC'd. It may have already dec-ref'd the import, or
@@ -895,7 +896,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let local_embargo t ~old_path x =
       let embargo = Cap_proxy.embargo x in
       (* Store in table *)
-      embargo#inc_ref;
+      inc_ref embargo;
       let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
       (* Send disembargo request *)
       let disembargo_request = `Loopback (old_path, embargo_id) in
@@ -1008,7 +1009,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         Log.info (fun f -> f ~tags:t.tags "Releasing export %a" ExportId.pp export_id);
         Hashtbl.remove t.exported_caps export.export_service;
         Exports.release t.exports export_id;
-        export.export_service#dec_ref;
+        dec_ref export.export_service;
         release_resolve_target t export.export_resolve_target
       )
 
@@ -1102,7 +1103,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         );
       Embargoes.release t.embargoes embargo_id;
       embargo#disembargo;
-      embargo#dec_ref
+      dec_ref embargo
 
     let resolve t import_id new_target =
       Log.info (fun f -> f ~tags:t.tags "Received resolve of import %a to %a"
@@ -1119,14 +1120,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
         let new_target = import_new_target ~embargo_path:None in
         Log.info (fun f -> f ~tags:t.tags "Import %a no longer used - releasing new resolve target %t"
                      ImportId.pp import_id new_target#pp);
-        new_target#dec_ref
+        dec_ref new_target
       | Some im ->
         (* Check we're not resolving a settled import. *)
         begin match new_target with
           | Ok _ when im.Import.settled ->
             let new_target = import_new_target ~embargo_path:None in
             let msg = Fmt.strf "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
-            new_target#dec_ref;
+            dec_ref new_target;
             failwith msg
           | _ -> ()
         end;
@@ -1141,7 +1142,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           let new_target = import_new_target ~embargo_path:None in
           Log.info (fun f -> f ~tags:t.tags "Ignoring resolve of import %a, which we no longer need (to %t)"
                        ImportId.pp import_id new_target#pp);
-          new_target#dec_ref
+          dec_ref new_target
 
 (* TODO:
     let provide _t _question_id _message_target _recipient_id = ()
@@ -1243,16 +1244,16 @@ module Make (EP : Message_types.ENDPOINT) = struct
     t.disconnected <- Some ex;
     begin match t.bootstrap with
     | None -> ()
-    | Some b -> t.bootstrap <- None; b#dec_ref
+    | Some b -> t.bootstrap <- None; dec_ref b
     end;
     t.queue_send <- ignore;
-    Exports.drop_all t.exports (fun _ e -> e.export_service#dec_ref);
+    Exports.drop_all t.exports (fun _ e -> dec_ref e.export_service);
     Hashtbl.clear t.exported_caps;
     Questions.drop_all t.questions (fun _ -> Question.lost_connection ~ex);
     Answers.drop_all t.answers (fun _ a -> a.answer_promise#finish);
     let broken_cap = Core_types.broken_cap ex in
     Imports.drop_all t.imports (fun _ -> Import.lost_connection ~broken_cap);
-    Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; e#dec_ref);
+    Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; dec_ref e);
     (* TODO: break existing caps *)
     ()
 end

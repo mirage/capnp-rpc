@@ -275,7 +275,7 @@ module Vat = struct
       let n_args = Choose.int 3 in
       let args, arg_refs = n_caps state (n_args) in
       let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs |> RO_array.of_list in
-      RO_array.iter (fun c -> c#inc_ref) args;
+      RO_array.iter Core_types.inc_ref args;
       let answer = Direct.make_struct () in
       Logs.info (fun f -> f ~tags:(tags state) "Call %a=%t(%a) (answer %a)"
                     Direct.pp target cap#pp
@@ -294,7 +294,7 @@ module Vat = struct
     | None -> ()
     | Some (answer, answer_id) ->
       let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
-      RO_array.iter (fun c -> c#inc_ref) args;
+      RO_array.iter Core_types.inc_ref args;
       Logs.info (fun f -> f ~tags:(tags state)
                     "Return %a (%a)" (RO_array.pp Core_types.pp) args Direct.pp_struct answer_id);
       Direct.return answer_id (RO_array.of_list arg_ids);
@@ -357,7 +357,7 @@ module Vat = struct
     | Some cr ->
       let c = cr.cr_cap in
       Logs.info (fun f -> f ~tags:(tags state) "Release %t (%a)" c#pp Direct.pp cr.cr_target);
-      c#dec_ref
+      Core_types.dec_ref c
 
   (* Create a new local service *)
   let do_create state () =
@@ -378,7 +378,7 @@ module Vat = struct
   let free_all t =
     let rec free_caps () =
       match DynArray.pop_first t.caps with
-      | Some c -> c.cr_cap#dec_ref; free_caps ()
+      | Some c -> Core_types.dec_ref c.cr_cap; free_caps ()
       | None -> ()
     in
     let rec free_srs () =
@@ -428,7 +428,7 @@ module Vat = struct
   let destroy t =
     begin match t.bootstrap with
     | None -> ()
-    | Some (bs, _) -> bs#dec_ref; t.bootstrap <- None
+    | Some (bs, _) -> Core_types.dec_ref bs; t.bootstrap <- None
     end;
     List.iter (fun (_, e) -> Endpoint.disconnect e) t.connections;
     t.connections <- []

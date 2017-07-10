@@ -15,7 +15,8 @@ module S = CS.S
 
 let empty = RO_array.empty
 
-let dec_ref x = x#dec_ref
+let inc_ref = Core_types.inc_ref
+let dec_ref = Core_types.dec_ref
 
 let error = Alcotest.of_pp Capnp_rpc.Error.pp
 let pp_cap f p = p#pp f
@@ -40,7 +41,7 @@ let test_simple_connection () =
   S.handle_msg s ~expect:"call:my-content";
   C.handle_msg c ~expect:"return:got:my-content";
   Alcotest.(check response_promise) "Client got call response" (Some (Ok ("got:my-content", empty))) q#response;
-  servce_promise#dec_ref;
+  dec_ref servce_promise;
   CS.flush c s;
   CS.check_finished c s
 
@@ -54,7 +55,7 @@ let init_pair ~bootstrap_service =
 
 let call target msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
-  List.iter (fun c -> c#inc_ref) caps;
+  List.iter Core_types.inc_ref caps;
   target#call msg (RO_array.of_list caps)
 
 (* The server gets an object and then sends it back. When the object arrives back
@@ -65,14 +66,14 @@ let test_return () =
   let slot = ref ("empty", empty) in
   let local = Services.swap_service slot in
   let q = call bs "c1" [local] in
-  local#dec_ref;
+  dec_ref local;
   (* Server echos args back *)
   S.handle_msg s ~expect:"call:c1";
   C.handle_msg c ~expect:"return:got:c1";
   Alcotest.(check response_promise) "Client got response"
     (Some (Ok ("got:c1", RO_array.of_list [(local :> Core_types.cap)])))
     q#response;
-  bs#dec_ref;
+  dec_ref bs;
   S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"release";
   C.handle_msg c ~expect:"release";
@@ -85,19 +86,19 @@ let test_return_error () =
   let slot = ref ("empty", empty) in
   let local = Services.swap_service slot in
   let q = call bs "call" [local] in
-  local#dec_ref;
+  dec_ref local;
   (* Server echos args back *)
   CS.flush c s;
   Alcotest.(check response_promise) "Client got response" (Some (Error (Error.exn "test-error"))) q#response;
   q#finish;
-  bs#dec_ref;
+  dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
 
 let test_share_cap () =
   let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   let q = call bs "msg" [bs; bs] in
-  bs#dec_ref;
+  dec_ref bs;
   S.handle_msg s ~expect:"call:msg";
   S.handle_msg s ~expect:"release";       (* Server drops [bs] export *)
   (* Server re-exports [bs] as result of echo *)
@@ -117,6 +118,7 @@ let test_local_embargo () =
   S.handle_msg s ~expect:"call:Get service";
   C.handle_msg c ~expect:"return:got:Get service";
   q#finish;
+  Logs.warn (fun f -> f "service = %t" service#pp);
   (* We've received the bootstrap reply, so we know that [service] is local,
      but the pipelined message we sent to it via [s] hasn't arrived yet. *)
   let _ = service#call "Message-2" empty in
@@ -127,9 +129,9 @@ let test_local_embargo () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   (* Clean up *)
-  local#dec_ref;
-  bs#dec_ref;
-  service#dec_ref;
+  dec_ref local;
+  dec_ref bs;
+  dec_ref service;
   CS.flush c s;
   CS.check_finished c s
 
@@ -149,7 +151,7 @@ let test_local_embargo_2 () =
   (* The server will now make a call on the client registry, and then tell the client
      to use the (unknown) result of that for [service]. *)
   let q2 = call proxy_to_local_reg "q2" [] in
-  proxy_to_local_reg#dec_ref;
+  dec_ref proxy_to_local_reg;
   let proxy_to_local = q2#cap 0 in
   a1#resolve (Ok ("a1", RO_array.of_list [proxy_to_local]));
   (* [proxy_to_local] is now owned by [a1]. *)
@@ -171,9 +173,9 @@ let test_local_embargo_2 () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   (* Clean up *)
-  bs#dec_ref;
-  service#dec_ref;
-  local_reg#dec_ref;
+  dec_ref bs;
+  dec_ref service;
+  dec_ref local_reg;
   CS.flush c s;
   CS.check_finished c s
 
@@ -204,10 +206,10 @@ let test_local_embargo_3 () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   (* Clean up *)
-  local#dec_ref;
+  dec_ref local;
   q1#finish;
-  bs#dec_ref;
-  service#dec_ref;
+  dec_ref bs;
+  dec_ref service;
   CS.flush c s;
   CS.check_finished c s
 
@@ -232,10 +234,10 @@ let test_local_embargo_4 () =
     "Failed: Invalid cap index 0 in []"
    (Fmt.strf "%t" broken#shortest#pp);
   (* Clean up *)
-  local#dec_ref;
-  proxy_to_local#dec_ref;
+  dec_ref local;
+  dec_ref proxy_to_local;
   q1#finish;
-  bs#dec_ref;
+  dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
 
@@ -266,10 +268,10 @@ let test_local_embargo_5 () =
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   CS.flush c s;
   (* Clean up *)
-  local#dec_ref;
-  test#dec_ref;
+  dec_ref local;
+  dec_ref test;
   q1#finish;
-  bs#dec_ref;
+  dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
 
@@ -302,7 +304,7 @@ let test_local_embargo_6 () =
   C.handle_msg c ~expect:"return:a1";
   Logs.info (fun f -> f "target = %t" target#pp);
   let _ = call target "Message-2" [] in         (* Client tries to send message-2, but it gets embargoed *)
-  target#dec_ref;
+  dec_ref target;
   S.handle_msg s ~expect:"disembargo-request";
   S.handle_msg s ~expect:"finish";              (* Finish for q1 *)
   C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
@@ -316,8 +318,8 @@ let test_local_embargo_6 () =
   resolve_ok m1 "m1" [];
   resolve_ok m2 "m2" [];
   q2#finish;
-  proxy_to_local#dec_ref;
-  local#dec_ref;
+  dec_ref proxy_to_local;
+  dec_ref local;
   CS.flush c s;
   CS.check_finished c s
 
@@ -342,7 +344,7 @@ let test_local_embargo_7 () =
   (* Client resolves a2 to a local promise. *)
   let client_promise = Cap_proxy.local_promise () in
   let a2 = local#pop0 "q2" in
-  client_promise#inc_ref;
+  inc_ref client_promise;
   resolve_ok a2 "a2" [client_promise];
   (* Client gets answer to a1 and sends disembargo. *)
   C.handle_msg c ~expect:"return:a1";
@@ -354,17 +356,17 @@ let test_local_embargo_7 () =
   C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
   C.handle_msg c ~expect:"disembargo-reply";
   let client_logger = Services.logger () in
-  client_logger#inc_ref;
+  inc_ref client_logger;
   client_promise#resolve (client_logger :> Core_types.cap);
-  client_promise#dec_ref;
+  dec_ref client_promise;
   CS.flush c s;
   Alcotest.(check string) "Pipelined arrived first" "Message-1" client_logger#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" client_logger#pop;
-  client_logger#dec_ref;
-  proxy_to_local#dec_ref;
-  local#dec_ref;
-  bs#dec_ref;
-  target#dec_ref;
+  dec_ref client_logger;
+  dec_ref proxy_to_local;
+  dec_ref local;
+  dec_ref bs;
+  dec_ref target;
   CS.flush c s;
   CS.check_finished c s
 
@@ -413,7 +415,7 @@ let test_local_embargo_8 () =
   S.handle_msg s ~expect:"disembargo-reply";
   let logger = Services.logger () in
   let a3 = service#pop0 "q3" in
-  logger#inc_ref;
+  inc_ref logger;
   resolve_ok a3 "a3" [logger];
   C.handle_msg c ~expect:"release";
   C.handle_msg c ~expect:"return:logged";
@@ -421,11 +423,11 @@ let test_local_embargo_8 () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" logger#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" logger#pop;
   q3#finish;
-  target#dec_ref;
-  proxy_to_local#dec_ref;
-  logger#dec_ref;
-  bs#dec_ref;
-  local#dec_ref;
+  dec_ref target;
+  dec_ref proxy_to_local;
+  dec_ref logger;
+  dec_ref bs;
+  dec_ref local;
   CS.flush c s;
   CS.check_finished c s
 
@@ -444,7 +446,7 @@ let test_fields () =
   let q2 = call f0 "c2" [] in
   CS.flush c s;
   Alcotest.(check response_promise) "Echo response 2" (Some (Ok ("got:c2", empty))) q2#response;
-  f0#dec_ref;
+  dec_ref f0;
   CS.flush c s;
   CS.check_finished c s
 
@@ -466,7 +468,7 @@ let test_cancel () =
   resolve_ok a1 "a1" [];
   C.handle_msg c ~expect:"return:Invalid cap index 0 in []";
   C.handle_msg c ~expect:"return:a1";
-  f0#dec_ref;
+  dec_ref f0;
   CS.flush c s;
   CS.check_finished c s
 
@@ -482,7 +484,7 @@ let test_cancel_2 () =
   let echo = Services.echo_service () in
   resolve_ok a1 "a1" [echo];
   C.handle_msg c ~expect:"return:(cancelled)";
-  bs#dec_ref;
+  dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
 
@@ -493,13 +495,13 @@ let test_duplicates () =
       (service :> Core_types.cap) in
   let f0 = C.bootstrap c in
   let q1 = call f0 "c1" [] in
-  f0#dec_ref;
+  dec_ref f0;
   let x1 = q1#cap 0 in
   let x2 = q1#cap 0 in
   q1#finish;
   assert (x1 = x2);
-  x1#dec_ref;
-  x2#dec_ref;
+  dec_ref x1;
+  dec_ref x2;
   S.handle_msg s ~expect:"bootstrap";
   C.handle_msg c ~expect:"return:(boot)";       (* [bs] resolves *)
   S.handle_msg s ~expect:"call:c1";
@@ -531,8 +533,8 @@ let test_single_export () =
   in
   ignore "q1";
   ignore "q2";
-  local#dec_ref;
-  bs#dec_ref;
+  dec_ref local;
+  dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
 
@@ -551,9 +553,9 @@ let test_shorten_field () =
   let direct_to_logger, a2 = service#pop1 "q2" in
   assert (direct_to_logger#shortest = (logger :> Core_types.cap));
   resolve_ok a2 "a2" [];
-  direct_to_logger#dec_ref;
-  bs#dec_ref;
-  proxy_to_logger#dec_ref;
+  dec_ref direct_to_logger;
+  dec_ref bs;
+  dec_ref proxy_to_logger;
   q1#finish;
   q2#finish;
   CS.flush c s;
@@ -581,7 +583,7 @@ let test_cycle () =
   (* Connect struct to its own field *)
   let p1 = Local_struct_promise.make () in
   let c = p1#cap 0 in
-  c#inc_ref;
+  inc_ref c;
   resolve_ok p1 "msg" [c];
   ensure_is_cycle_error_cap c;
   (* Connect struct to itself *)
@@ -607,7 +609,7 @@ let test_cycle_3 () =
   Alcotest.(check response_promise) "Field 1 OK"
     (Some (Ok ("got:q2", RO_array.empty)))
     q2#response;
-  target#dec_ref;
+  dec_ref target;
   a1#finish
 
 (* Check ref-counting when resolving loops. *)
@@ -616,7 +618,7 @@ let test_cycle_4 () =
   let a1 = Local_struct_promise.make () in
   let f0 = a1#cap 0 in
   resolve_ok a1 "a1" [a1#cap 1; (echo :> Core_types.cap)];
-  f0#dec_ref;
+  dec_ref f0;
   a1#finish;
   Logs.info (fun f -> f "echo = %t" echo#pp);
   Alcotest.(check bool) "Echo released" true echo#released
@@ -629,25 +631,25 @@ let test_resolve () =
   let c, s, proxy_to_service = init_pair ~bootstrap_service:service in
   (* The client makes a call and gets a reply, but the reply contains a promise. *)
   let q1 = call proxy_to_service "q1" [client_logger] in
-  proxy_to_service#dec_ref;
+  dec_ref proxy_to_service;
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_logger, a1 = service#pop1 "q1" in
   let promise = Cap_proxy.local_promise () in
-  promise#inc_ref;
+  inc_ref promise;
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   (* The server now resolves the promise *)
   promise#resolve proxy_to_logger;
-  promise#dec_ref;
+  dec_ref promise;
   CS.flush c s;
   (* The client can now use the logger directly *)
   let x = q1#cap 0 in
   let q2 = call x "test-message" [] in
   Alcotest.(check string) "Got message directly" "test-message" client_logger#pop;
-  x#dec_ref;
+  dec_ref x;
   q1#finish;
   q2#finish;
-  client_logger#dec_ref;
+  dec_ref client_logger;
   CS.flush c s;
   CS.check_finished c s
 
@@ -659,8 +661,8 @@ let test_resolve_2 () =
   let c, s, proxy_to_service = init_pair ~bootstrap_service:service in
   (* The client makes a call and gets a reply, but the reply contains a promise. *)
   let q1 = call proxy_to_service "q1" [client_logger] in
-  client_logger#dec_ref;
-  proxy_to_service#dec_ref;
+  dec_ref client_logger;
+  dec_ref proxy_to_service;
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_logger, a1 = service#pop1 "q1" in
   let promise = Cap_proxy.local_promise () in
@@ -683,7 +685,7 @@ let test_resolve_3 () =
   S.handle_msg s ~expect:"call:q1";
   let a1 = service#pop0 "q1" in
   let a1_promise = Cap_proxy.local_promise () in
-  a1_promise#inc_ref;
+  inc_ref a1_promise;
   resolve_ok a1 "a1" [a1_promise];
   C.handle_msg c ~expect:"return:a1";
   q1#finish;
@@ -695,13 +697,13 @@ let test_resolve_3 () =
   CS.flush c s;
   let a2 = service#pop0 "q2" in
   let echo = Services.echo_service () in
-  echo#inc_ref;
+  inc_ref echo;
   resolve_ok a2 "a2" [echo];
   C.handle_msg c ~expect:"return:a2";
   (* Service now resolves first answer *)
   a1_promise#resolve (echo :> Core_types.cap);
-  a1_promise#dec_ref;
-  proxy_to_service#dec_ref;
+  dec_ref a1_promise;
+  dec_ref proxy_to_service;
   CS.flush c s;
   q2#finish;
   CS.flush c s;
@@ -719,7 +721,7 @@ let test_broken_return () =
   C.handle_msg c ~expect:"resolve";
   S.handle_msg s ~expect:"finish";
   Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
-  bs#dec_ref;
+  dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
 
@@ -735,8 +737,8 @@ let test_broken_call () =
   S.handle_msg s ~expect:"resolve";
   Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) broken_proxy#problem;
   resolve_ok a1 "a1" [];
-  broken_proxy#dec_ref;
-  bs#dec_ref;
+  dec_ref broken_proxy;
+  dec_ref bs;
   q1#finish;
   CS.flush c s;
   CS.check_finished c s
@@ -756,7 +758,7 @@ let test_broken_later () =
   promise#resolve broken;
   C.handle_msg c ~expect:"resolve";
   Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
-  bs#dec_ref;
+  dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
 
@@ -773,7 +775,7 @@ let test_broken_connection () =
   C.disconnect c err;
   S.disconnect s err;
   Alcotest.check (Alcotest.option exn) "Resolves to broken" (Some err) bs#problem;
-  bs#dec_ref
+  dec_ref bs
 
 let test_ref_counts () =
   let objects = Hashtbl.create 3 in
@@ -805,7 +807,7 @@ let test_ref_counts () =
   let q1 = call f0 "q1" [] in
   f0#when_more_resolved dec_ref;
   resolve_ok promise "ok" [make ()];
-  f0#dec_ref;
+  dec_ref f0;
   promise#finish;
   q1#finish;
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
@@ -813,18 +815,18 @@ let test_ref_counts () =
   let promise = Cap_proxy.local_promise () in
   promise#when_more_resolved dec_ref;
   promise#resolve (make ());
-  promise#dec_ref;
+  dec_ref promise;
   Alcotest.(check int) "Local promise released" 0 (Hashtbl.length objects);
   (* Test embargo *)
   let embargo = Cap_proxy.embargo (make ()) in
   embargo#when_more_resolved dec_ref;
   embargo#disembargo;
-  embargo#dec_ref;
+  dec_ref embargo;
   Alcotest.(check int) "Disembargo released" 0 (Hashtbl.length objects);
   (* Test embargo without disembargo *)
   let embargo = Cap_proxy.embargo (make ()) in
   embargo#when_more_resolved dec_ref;
-  embargo#dec_ref;
+  dec_ref embargo;
   Alcotest.(check int) "Embargo released" 0 (Hashtbl.length objects);
   Gc.full_major ()
 
@@ -847,7 +849,7 @@ module Level0 = struct
     let to_server = Queue.create () in
     let c = { from_server; to_server } in
     let s = S.create ~tags:Test_utils.server_tags from_server to_server ~bootstrap in
-    bootstrap#dec_ref;
+    dec_ref bootstrap;
     send c @@ `Bootstrap (qid_of_int 0);
     S.handle_msg s ~expect:"bootstrap";
     send c @@ `Finish (qid_of_int 0, false);
@@ -910,7 +912,7 @@ let test_auto_release () =
   let proxy_to_client = S.bootstrap s in
   let logger = Services.logger () in
   let _q1 = call proxy_to_client "q1" [logger] in
-  logger#dec_ref;
+  dec_ref logger;
   let bs_qid = Level0.expect_bs c in
   let client_bs_id = S.EP.In.ExportId.zero in
   send @@ `Return (bs_qid, `Results ("bs", RO_array.of_list [`SenderHosted client_bs_id]), true);
@@ -919,7 +921,7 @@ let test_auto_release () =
   S.handle_msg s ~expect:"return:bs";
   S.handle_msg s ~expect:"return:a1";
   Alcotest.(check bool) "Logger released" true logger#released;
-  proxy_to_client#dec_ref;
+  dec_ref proxy_to_client;
   (* Clean up.
      A real level-0 client would just disconnect, but release cleanly so we can
      check nothing else was leaked. *)
@@ -940,12 +942,12 @@ let test_unimplemented () =
   S.handle_msg s ~expect:"call:q0";
   let a0 = service#pop0 "q0" in
   let promise = Cap_proxy.local_promise () in
-  promise#inc_ref;
+  inc_ref promise;
   resolve_ok a0 "a0" [promise];
   (* The server resolves the promise *)
   let echo_service = Services.echo_service () in
   promise#resolve (echo_service :> Core_types.cap);
-  promise#dec_ref;
+  dec_ref promise;
   (* The client doesn't understand the resolve message. *)
   Level0.expect c "return:a0";
   Level0.finish c ~qid:0;
@@ -977,7 +979,7 @@ let test_unimplemented () =
   Level0.send c @@ `Unimplemented call_msg;
   S.handle_msg s ~expect:"unimplemented";
   S.handle_msg s ~expect:"unimplemented";
-  bs#dec_ref;
+  dec_ref bs;
   Alcotest.(check response_promise) "Server got error"
     (Some (Error (Error.exn ~ty:`Unimplemented "Call message not implemented by peer!")))
     q2#response;
