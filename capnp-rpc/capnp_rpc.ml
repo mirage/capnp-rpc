@@ -11,3 +11,4 @@ module Cap_proxy = Cap_proxy
 
 module Message_types = Message_types
 module CapTP = CapTP
+module RC = RC

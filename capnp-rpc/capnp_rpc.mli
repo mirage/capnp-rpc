@@ -10,3 +10,4 @@ module Core_types (W : S.WIRE) : S.CORE_TYPES with module Wire = W
 module Local_struct_promise = Local_struct_promise
 module Cap_proxy = Cap_proxy
 module CapTP = CapTP
+module RC = RC

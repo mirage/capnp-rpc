@@ -112,13 +112,31 @@ module Make (EP : Message_types.ENDPOINT) = struct
     type t = {
       id : QuestionId.t;
       mutable remote_promise : [`Promise of Core_types.struct_resolver | `Released];
-      mutable ref_count : int;
+      mutable ref_count : RC.t;
       mutable state : state;
       params_for_release : ExportId.t list; (* For level 0 peers *)
       mutable pipelined_fields : PathSet.t; (* Fields used while unresolved; will need embargoes *)
     }
 
     let id t = t.id
+
+    let pp f q =
+      Fmt.pf f "q%a" QuestionId.pp q.id
+
+    let pp_promise f q =
+      match q.remote_promise with
+      | `Released -> Fmt.string f "(released)"
+      | `Promise p -> Fmt.pf f "%t" p#pp
+
+    let pp_state f x =
+      Fmt.string f @@ match x with
+      | Waiting    -> "waiting"
+      | Cancelled  -> "cancelled"
+      | Lingering  -> "lingering"
+      | Complete   -> "complete"
+
+    let dump f t =
+      Fmt.pf f "(%a) %a" pp_state t.state pp_promise t
 
     let sent_finish t =
       match t.state with
@@ -127,17 +145,19 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let inc_ref t =
       assert (not (sent_finish t));
-      t.ref_count <- t.ref_count + 1
+      let pp f = pp f t in
+      t.ref_count <- RC.succ t.ref_count ~pp
 
     let dec_ref t =
-      assert (t.ref_count > 0);
-      t.ref_count <- t.ref_count - 1;
-      if t.ref_count > 0 then []
-      else match t.state with
+      let pp f = pp f t in
+      t.ref_count <- RC.pred t.ref_count ~pp;
+      if RC.is_zero t.ref_count then match t.state with
         | Waiting -> t.state <- Cancelled; [`Send_finish]
         | Lingering -> t.state <- Complete; [`Send_finish; `Release_table_entry]
         | Complete -> []
         | Cancelled -> failwith "Can't hold refs while cancelled!"
+      else
+        []
 
     let release_proxy t =
       t.remote_promise <- `Released;
@@ -163,24 +183,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | Some i -> Some (i, path)
         )
       |> IntMap.of_list
-
-    let pp f q =
-      Fmt.pf f "q%a" QuestionId.pp q.id
-
-    let pp_promise f q =
-      match q.remote_promise with
-      | `Released -> Fmt.string f "(released)"
-      | `Promise p -> Fmt.pf f "%t" p#pp
-
-    let pp_state f x =
-      Fmt.string f @@ match x with
-      | Waiting    -> "waiting"
-      | Cancelled  -> "cancelled"
-      | Lingering  -> "lingering"
-      | Complete   -> "complete"
-
-    let dump f t =
-      Fmt.pf f "(%a) %a" pp_state t.state pp_promise t
 
     let check t =
       match t.remote_promise with
@@ -209,7 +211,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       {
         id;
         remote_promise = `Promise remote_promise;
-        ref_count = 1; (* Held by [remote_promise] *)
+        ref_count = RC.one; (* Held by [remote_promise] *)
         state = Waiting;
         params_for_release;
         pipelined_fields = PathSet.empty

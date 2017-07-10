@@ -54,7 +54,7 @@ module Make (C : S.CORE_TYPES) = struct
 
   type field = {
     cap : field_cap;
-    mutable ref_count : int;
+    mutable ref_count : RC.t;
   }
 
   type 'a unresolved = {
@@ -74,7 +74,7 @@ module Make (C : S.CORE_TYPES) = struct
     | Forwarding of struct_ref
     | Finished
 
-  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:rc=%d" Wire.Path.pp k v.ref_count)
+  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:%a" Wire.Path.pp k RC.pp v.ref_count)
 
   let pp_state ~pp_promise f = function
     | Unresolved {target; cancelling = true; _} -> Fmt.pf f "%a (cancelling)" pp_promise target
@@ -211,11 +211,11 @@ module Make (C : S.CORE_TYPES) = struct
               | Some f -> f
               | None ->
                 let cap = field path (self :> struct_ref_internal) in
-                let field = {cap; ref_count = 1} in
+                let field = {cap; ref_count = RC.one} in
                 u.fields <- Field_map.add path field u.fields; (* Map takes initial ref *)
                 field
             in
-            field.ref_count <- field.ref_count + 1;  (* Ref for user *)
+            field.ref_count <- RC.succ field.ref_count ~pp:self#pp;  (* Ref for user *)
             (field.cap :> cap)
           )
         ~forwarding:(fun x -> x#cap path)
@@ -264,13 +264,14 @@ module Make (C : S.CORE_TYPES) = struct
             in
             state <- Forwarding x;
             u.fields |> Field_map.iter (fun path f ->
-                let ref_count = f.ref_count in
-                assert (ref_count > 0);
-                f.ref_count <- 0;
-                if ref_count > 1 then (   (* Someone else is using it too *)
+                let pp = self#field_pp path in
+                let ref_count = RC.pred f.ref_count ~pp in (* Count excluding our ref *)
+                f.ref_count <- RC.zero;
+                let ref_count = RC.to_int ref_count in
+                if ref_count > 0 then (   (* Someone else is using it too *)
                   let c = x#cap path in   (* Increases ref by one *)
                   (* We dropped our ref to [f], and [x#cap] added one above. The rest we pass on. *)
-                  for _ = 3 to ref_count do c#inc_ref done;
+                  for _ = 2 to ref_count do c#inc_ref done;
                   f.cap#resolve c
                 ) else (
                   f.cap#resolve invalid_cap
@@ -351,8 +352,9 @@ module Make (C : S.CORE_TYPES) = struct
             (* When we resolve, we'll be holding references to all the caps in the resolution, so
                so they must still be alive by the time we pass on any extra inc or dec refs. *)
             let f = Field_map.get path u.fields in
-            assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
-            f.ref_count <- f.ref_count + 1
+            assert (f.ref_count > RC.one);   (* rc can't be one because that's our reference *)
+            let pp = self#field_pp path in
+            f.ref_count <- RC.succ f.ref_count ~pp
           )
         ~forwarding:(fun x -> ignore (x#cap path))
 
@@ -361,8 +363,9 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:true
         ~unresolved:(fun u ->
             let f = Field_map.get path u.fields in
-            assert (f.ref_count > 1);   (* rc can't be one because that's our reference *)
-            f.ref_count <- f.ref_count - 1
+            assert (f.ref_count > RC.one);   (* rc can't be one because that's our reference *)
+            let pp = self#field_pp path in
+            f.ref_count <- RC.pred f.ref_count ~pp
           )
         ~forwarding:(fun x ->
             let c = x#cap path in       (* Increases ref by one *)
@@ -381,7 +384,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~cancelling_ok:true
         ~unresolved:(fun u ->
             let f = Field_map.get i u.fields in
-            assert (f.ref_count > 1)
+            assert (f.ref_count > RC.one)
           )
         ~forwarding:(fun _ -> Debug.failf "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
 
@@ -391,14 +394,15 @@ module Make (C : S.CORE_TYPES) = struct
       | Forwarding _ -> Fmt.pf f "Promise is resolved, but field %a isn't!" Wire.Path.pp path
       | Unresolved u ->
         let field = Field_map.get path u.fields in
-        (* (exclude the ref-count that we hold on it) *)
-        Fmt.pf f "(rc=%d) -> #%a -> %t" (field.ref_count - 1) Wire.Path.pp path self#pp
+        let rc = RC.to_int field.ref_count in
+        (* (separate the ref-count that we hold on it) *)
+        Fmt.pf f "(rc=1+%d) -> #%a -> %t" (rc - 1) Wire.Path.pp path self#pp
 
     method check_invariants =
       dispatch state
         ~cancelling_ok:true
         ~unresolved:(fun u ->
-            Field_map.iter (fun _ f -> assert (f.ref_count > 0)) u.fields
+            Field_map.iter (fun i f -> RC.check f.ref_count ~pp:(self#field_pp i)) u.fields
           )
         ~forwarding:(fun x -> x#check_invariants)
 
