@@ -309,7 +309,7 @@ let test_local_embargo_6 () =
   C.handle_msg c ~expect:"disembargo-request";  (* (the server is doing its own embargo on q2) *)
   S.handle_msg s ~expect:"call:Message-1";
   S.handle_msg s ~expect:"disembargo-reply";    (* (the server is doing its own embargo on q2) *)
-  C.handle_msg c ~expect:"disembargo-reply";    (* XXX: disembargo for finished answer! *)
+  C.handle_msg c ~expect:"disembargo-reply";
   S.handle_msg s ~expect:"call:Message-2";
   let m1 = service#pop0 "Message-1" in
   let m2 = service#pop0 "Message-2" in

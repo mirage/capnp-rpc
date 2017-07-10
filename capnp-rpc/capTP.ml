@@ -53,49 +53,43 @@ module Make (EP : Message_types.ENDPOINT) = struct
   module Question = struct
     (* State model for questions:
 
-       1. waiting: finished=false, returned=false (initial state)
-                   released=false
-          We're waiting for some results.
-          On release: if rc=0 then send Finish, goto cancelled
-                      else goto cancelling
-          On return: if rc=0 then send Finish, goto complete
-                     else goto lingering
-
-       2. cancelling: finished=false, returned=false, rc>0
-                      released=true
-          We want to cancel but can't yet because rc>0.
+       1. waiting: returned=false, rc>0 (initial state)
+          We're waiting for some results. (Initially rc=1, from our remote promise)
           On rc=0: send Finish, goto cancelled
           On return: goto lingering
 
-       3. cancelled: finished=true, returned=false, rc=0
-                     released=true
+       2. cancelled: returned=false, rc=0
           We told the peer we don't care about the results.
           It may return them anyway or return "cancelled".
+          We will never send another message referring to this question.
           On return: goto complete (with results=cancelled)
 
-       4. lingering: finished=false, returned=true, rc>0
-          We've got the results and want to finish, but we
-          can't yet because rc>0.
+       3. lingering: returned=true, rc>0
+          We've got the results and want to finish, but we can't yet because rc>0.
           On rc=0: send Finish, goto complete
-          On release: remain in lingering
 
-       5: complete: finished=true, returned=true, rc=0 (final state)
-          No longer in questions table.
-          On release: ignore
+       4: complete: returned=true, rc=0 (final state)
+          Finish has been sent and we are no longer in the questions table.
+          We will never send or receive another message referring to this question.
 
-       The "release" event means the user told us they don't care about the result.
-       After this, released=true.
+       The user releases the remote promise to indicate that they no longer care
+       about the result. The remote promise will then decrement rc.
 
        The "return" event means the peer sent us a Return message.
 
-       rc>0 means that we used this answer in an export. e.g. we told the peer
-       that a capability in the answer to a question they asked us will come
-       from this question that we asked them.
+       rc>0 means that we may still want to send messages about this question.
+       This could be either messages sent via the remote promise, or disembargo
+       replies.
+
+       The disembargo case happens when e.g. we told the peer that a capability
+       in the answer to a question they asked us will come from this question
+       that we asked them.
 
        Initially, our [answer] for the peer's question holds a reference to us
-       so that it can forward any calls. This will prevent us from getting the
-       "release" event. Once we get the results, the answer will update to
-       point directly at the new target and we may get a "release" then.
+       via our remote promise so that it can forward any calls. This will
+       prevent us from reaching rc=0. Once we get the results, the answer will
+       update to point directly at the new target and the remote promise may be
+       released then.
 
        However, the peer may still need to send a disembargo request to the
        answer, which must be sent back to its *original* target (this
@@ -106,17 +100,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
        holding on to their question now that they've got the answer.
 
        Every path contains exactly one Finish, exactly one Return, and exactly
-       one release event.
-
-       Whenever finished=true:
-       - rc=0
-       - We have sent a Finish message.
-       - We can't send any more messages referring to this question.
+       one release (rc=0) event.
      *)
 
     type state =
       | Waiting
-      | Cancelling
       | Cancelled
       | Lingering
       | Complete
@@ -124,7 +112,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     type t = {
       id : QuestionId.t;
       mutable remote_promise : [`Promise of Core_types.struct_resolver | `Released];
-      mutable resolve_refs : int;           (* Number of [resolve_target]s using us. *)
+      mutable ref_count : int;
       mutable state : state;
       params_for_release : ExportId.t list; (* For level 0 peers *)
       mutable pipelined_fields : PathSet.t; (* Fields used while unresolved; will need embargoes *)
@@ -134,44 +122,34 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let sent_finish t =
       match t.state with
-      | Waiting | Cancelling | Lingering -> false
+      | Waiting | Lingering -> false
       | Cancelled | Complete -> true
 
     let inc_ref t =
       assert (not (sent_finish t));
-      t.resolve_refs <- t.resolve_refs + 1
+      t.ref_count <- t.ref_count + 1
 
     let dec_ref t =
-      assert (t.resolve_refs > 0);
-      t.resolve_refs <- t.resolve_refs - 1;
-      if t.resolve_refs > 0 then []
+      assert (t.ref_count > 0);
+      t.ref_count <- t.ref_count - 1;
+      if t.ref_count > 0 then []
       else match t.state with
-        | Waiting -> []
-        | Cancelling -> t.state <- Cancelled; [`Send_finish]
-        | Lingering ->  t.state <- Complete;  [`Send_finish; `Release_table_entry]
-        | Cancelled | Complete -> failwith "Can't hold refs while cancelled or complete!"
+        | Waiting -> t.state <- Cancelled; [`Send_finish]
+        | Lingering -> t.state <- Complete; [`Send_finish; `Release_table_entry]
+        | Complete -> []
+        | Cancelled -> failwith "Can't hold refs while cancelled!"
+
+    let release_proxy t =
+      t.remote_promise <- `Released;
+      dec_ref t
 
     (* A [Return] message has arrived. *)
     let return t =
       match t.state with
-      | Waiting when t.resolve_refs = 0 ->
-                      t.state <- Complete;  [`Send_finish; `Release_table_entry]
-      | Waiting    -> t.state <- Lingering; []
-      | Cancelling -> t.state <- Lingering; []
-      | Cancelled  -> t.state <- Complete;  [`Release_table_entry]
-      | Lingering | Complete -> failwith "Already returned!"
-
-    (* [t.remote_promise] no longer needs [t]. Cancel if possible. *)
-    let release t =
-      match t.remote_promise with
-      | `Released -> failwith "Already released!"
-      | `Promise _ ->
-        t.remote_promise <- `Released;
-        match t.state with
-        | Waiting when t.resolve_refs = 0 -> t.state <- Cancelled; [`Send_finish]
-        | Waiting -> t.state <- Cancelling; []
-        | Lingering | Complete -> []
-        | Cancelling | Cancelled -> failwith "Can't release twice!"
+      | Waiting   -> t.state <- Lingering; []
+      | Cancelled -> t.state <- Complete; [`Release_table_entry]
+      | Lingering
+      | Complete  -> failwith "Already returned!"
 
     let set_cap_used t path =
       t.pipelined_fields <- PathSet.add path t.pipelined_fields
@@ -197,7 +175,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let pp_state f x =
       Fmt.string f @@ match x with
       | Waiting    -> "waiting"
-      | Cancelling -> "cancelling"
       | Cancelled  -> "cancelled"
       | Lingering  -> "lingering"
       | Complete   -> "complete"
@@ -232,7 +209,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       {
         id;
         remote_promise = `Promise remote_promise;
-        resolve_refs = 0;
+        ref_count = 1; (* Held by [remote_promise] *)
         state = Waiting;
         params_for_release;
         pipelined_fields = PathSet.empty
@@ -286,7 +263,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let maybe_release_import t =
       if t.ref_count = 0 then (
-        Log.info (fun f -> f "maybe_release_import: count = %d" t.count);
         assert (t.count > 0);
         let count = t.count in
         t.used <- false;
@@ -380,7 +356,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   ]
 
   let pp_cap : [< descr] Fmt.t = fun f -> function
-    | `Import import -> Fmt.pf f "i%a" Import.pp import
+    | `Import import -> Fmt.pf f "%a" Import.pp import
     | `QuestionCap (question, p) -> Fmt.pf f "%a[%a]" Question.pp question Wire.Path.pp p
     | `ThirdPartyHosted _third_party_desc -> Fmt.pf f "ThirdPartyHosted"
     | `Local local -> Fmt.pf f "local:%t" local#pp
@@ -677,7 +653,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       method private ensure_released q =
         if not released_question then (
           released_question <- true;
-          Question.release q |> apply_question_actions t q
+          Question.release_proxy q |> apply_question_actions t q
         )
 
       method do_pipeline question i msg caps =
