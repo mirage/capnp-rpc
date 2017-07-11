@@ -78,10 +78,10 @@ module Make(C : S.CORE_TYPES) = struct
 
       method private release =
         match state with
-        | Unresolved (target, release_pending) ->
+        | Unresolved (q, release_pending) ->
           Log.info (fun f -> f "Delaying release of %t until resolved" self#pp);
           assert (not release_pending);
-          state <- Unresolved (target, true)
+          state <- Unresolved (q, true)
         | Resolved cap ->
           C.dec_ref cap;
           state <- Resolved released
@@ -123,9 +123,15 @@ module Make(C : S.CORE_TYPES) = struct
       object
         inherit local_promise as super
 
-        method! release =
-          C.dec_ref underlying;
-          state <- Resolved released
+        method! private release =
+          match state with
+          | Unresolved (_, release_pending) ->
+            assert (not release_pending);
+            C.dec_ref underlying;
+            state <- Resolved released
+          | Resolved cap ->
+            C.dec_ref cap;      (* Note: might be different to underlying if we hit a cycle *)
+            state <- Resolved released
 
         method disembargo =
           super#check_refcount;
