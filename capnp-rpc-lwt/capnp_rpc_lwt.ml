@@ -43,7 +43,7 @@ module Capability = struct
   let call_for_value cap m req =
     let p, r = Lwt.task () in
     let result = call cap m req in
-    let finish = lazy result#finish in
+    let finish = lazy (Core_types.dec_ref result) in
     Lwt.on_cancel p (fun () -> Lazy.force finish);
     result#when_resolved (function
         | Error _ as e -> Lwt.wakeup r e
@@ -71,14 +71,15 @@ module Capability = struct
   let call_for_caps cap m req fn =
     let q = call cap m req in
     match fn q with
-    | r -> q#finish; r
-    | exception ex -> q#finish; raise ex
+    | r -> Core_types.dec_ref q; r
+    | exception ex -> Core_types.dec_ref q; raise ex
 end
 
 module StructRef = struct
   type 'a t = Core_types.struct_ref
 
-  let finish t = t#finish
+  let inc_ref = Core_types.inc_ref
+  let dec_ref = Core_types.dec_ref
 end
 
 module Untyped = struct
@@ -90,7 +91,8 @@ module Untyped = struct
       method cap path = t#cap (Xform.Field i :: path)
       method when_resolved _ = failwith "Can't use when_resolved on a sub-struct"
       method response = failwith "Can't use response on a sub-struct"
-      method finish = failwith "Can't use finish on a sub-struct"
+      method update_rc = failwith "Can't use rec-counts on a sub-struct"
+      method sealed_dispatch _ = None
       method pp f = Fmt.pf f "pointer %d in %t" i t#pp
       method blocker = failwith "struct_field: blocker"
       method check_invariants = ()

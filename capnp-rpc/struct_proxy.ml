@@ -57,9 +57,9 @@ module Make (C : S.CORE_TYPES) = struct
 
   type 'a unresolved = {
     mutable target : 'a;
+    mutable rc : RC.t;
     mutable fields : field Field_map.t;
     when_resolved : (struct_ref -> unit) Queue.t;
-    mutable cancelling : bool;    (* User called [finish], but results may still arrive. *)
 
     (* This is non-None only while we are resolving. Then, it initially contains the fields
        we're resolving to. Asking for the blocker of a field returns it, but also updates the
@@ -75,15 +75,13 @@ module Make (C : S.CORE_TYPES) = struct
   let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:%a" Wire.Path.pp k RC.pp v.ref_count)
 
   let pp_state ~pp_promise f = function
-    | Unresolved {target; cancelling = true; _} -> Fmt.pf f "%a (cancelling)" pp_promise target
     | Unresolved {target; _} -> Fmt.pf f "%a" pp_promise target
     | Forwarding p -> p#pp f
     | Finished -> Fmt.pf f "(finished)"
 
-  let dispatch state ~cancelling_ok ~unresolved ~forwarding =
+  let dispatch state ~unresolved ~forwarding =
     match state with
     | Finished -> failwith "Already finished"
-    | Unresolved { cancelling = true; _ } when not cancelling_ok -> failwith "Promise is cancelling!"
     | Unresolved x -> unresolved x
     | Forwarding x -> forwarding x
 
@@ -156,10 +154,15 @@ module Make (C : S.CORE_TYPES) = struct
         fields = Field_map.empty;
         cycle_detector = None;
         when_resolved = Queue.create ();
-        cancelling = false
+        rc = RC.one;
       }
 
+    val virtual name : string
+    (* e.g. "local-promise" *)
+
     val id = Debug.OID.next ()
+
+    method private virtual pp_unresolved : 'promise Fmt.t
 
     method private virtual do_pipeline : 'promise -> Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
 
@@ -176,27 +179,21 @@ module Make (C : S.CORE_TYPES) = struct
 
     method pipeline path msg caps =
       dispatch state
-        ~cancelling_ok:true
         ~unresolved:(fun x -> self#do_pipeline x.target path msg caps)
         ~forwarding:(fun x -> (x#cap path)#call msg caps)
 
     method response =
-      match state with
-      | Unresolved {cancelling = true; _} | Finished -> Some (Error `Cancelled)
-      | Unresolved _ -> None
-      | Forwarding x -> x#response
+      dispatch state
+        ~unresolved:(fun _ -> None)
+        ~forwarding:(fun x -> x#response)
 
     method blocker =
-      (* It's OK to have a cancelling struct_ref here. Although the struct_ref itself
-         can't be used by users, it is still available to its fields, which may call this. *)
       dispatch state
-        ~cancelling_ok:true
         ~unresolved:(fun _ -> Some (self :> base_ref))
         ~forwarding:(fun x -> x#blocker)
 
     method cap path =
       dispatch state
-        ~cancelling_ok:false
         ~unresolved:(fun u ->
             let field =
               match Field_map.find path u.fields with
@@ -205,6 +202,7 @@ module Make (C : S.CORE_TYPES) = struct
                 let cap = field path (self :> struct_ref_internal) in
                 let field = {cap; ref_count = RC.one} in
                 u.fields <- Field_map.add path field u.fields; (* Map takes initial ref *)
+                C.inc_ref self;    (* Field takes ref on us too *)
                 field
             in
             field.ref_count <- RC.succ field.ref_count ~pp:self#pp;  (* Ref for user *)
@@ -213,94 +211,104 @@ module Make (C : S.CORE_TYPES) = struct
         ~forwarding:(fun x -> x#cap path)
 
     method pp f =
-      let pp_promise f _ = Fmt.string f "(unresolved)" in
-      Fmt.pf f "proxy[%a] -> %a"
-        Debug.OID.pp id
-        (pp_state ~pp_promise) state
+      match state with
+      | Unresolved u ->
+        Fmt.pf f "%s(%a, %a) -> %a"
+          name
+          Debug.OID.pp id RC.pp u.rc
+          self#pp_unresolved u.target
+      | Forwarding x ->
+        Fmt.pf f "%s(%a) -> %t"
+          name
+          Debug.OID.pp id
+          x#pp
+      | Finished ->
+        Fmt.pf f "%s(%a) (finished)"
+          name
+          Debug.OID.pp id
 
     method connect x =
       Log.info (fun f -> f "@[Updating: %t@\n\
                             @      to: -> %t" self#pp x#pp);
-      dispatch state
-        ~cancelling_ok:true
-        ~unresolved:(fun u ->
-            (* Check for cycles *)
-            let x =
-              let blocked_on_us r = r#blocker = Some (self :> base_ref) in
-              if blocked_on_us x then
-                cycle_err "Resolving:@,  %t@,with:@,  %t" self#pp x#pp
-              else match x#response with
-                | Some (Error _) | None -> x
-                | Some (Ok (msg, caps)) ->
-                  (* Only break the fields which have cycles, not the whole promise.
-                     Otherwise, it can lead to out-of-order delivery where a message
-                     that should have been delivered to a working target instead gets
-                     dropped. Note also that fields can depend on other fields. *)
-                  let detector_caps = Array.make (RO_array.length caps) cycle_marker in
-                  u.cycle_detector <- Some (msg, detector_caps);
-                  let break_cycles c =
-                    for i = 0 to Array.length detector_caps - 1 do
-                      detector_caps.(i) <- RO_array.get caps i
-                    done;
-                    if c#blocker = Some (self :> C.base_ref) then
-                      C.broken_cap (Exception.v (Fmt.strf "<cycle: %t>" c#pp))
-                    else c
-                  in
-                  let fixed_caps = RO_array.map break_cycles caps in
-                  if RO_array.equal (=) fixed_caps caps then x
-                  else (
-                    RO_array.iter C.inc_ref fixed_caps;
-                    x#finish;
-                    C.return (msg, fixed_caps)
-                  )
-            in
-            state <- Forwarding x;
-            u.fields |> Field_map.iter (fun path f ->
-                let pp = self#field_pp path in
-                let ref_count = RC.pred f.ref_count ~pp in (* Count excluding our ref *)
-                f.ref_count <- RC.zero;
-                begin match RC.to_int ref_count with
-                  | None        (* Field was leaked; shouldn't happen since we hold a copy anyway. *)
-                  | Some 0 -> f.cap#resolve invalid_cap (* No other users *)
-                  | Some ref_count ->                   (* Someone else is using it too *)
-                    let c = x#cap path in   (* Increases ref by one *)
-                    (* Transfer our refs to the new target, excluding the one already addded by [x#cap]. *)
-                    c#update_rc (ref_count - 1);
-                    f.cap#resolve c
-                end;
-                self#field_resolved (f.cap :> cap)
-              );
-            self#on_resolve u.target x;
-            Queue.iter (fun fn -> fn x) u.when_resolved;
-            if u.cancelling then (
-              self#finish
-            )
-          )
-        ~forwarding:(fun t ->
-            failwith (Fmt.strf "Already forwarding (to %t)!" t#pp)
-          )
+      match state with
+      | Finished -> dec_ref x (* Cancelled *)
+      | Forwarding x -> failwith (Fmt.strf "Already forwarding (to %t)!" x#pp)
+      | Unresolved u ->
+        (* Check for cycles *)
+        let x =
+          let blocked_on_us r = r#blocker = Some (self :> base_ref) in
+          if blocked_on_us x then
+            cycle_err "Resolving:@,  %t@,with:@,  %t" self#pp x#pp
+          else match x#response with
+            | Some (Error _) | None -> x
+            | Some (Ok (msg, caps)) ->
+              (* Only break the fields which have cycles, not the whole promise.
+                 Otherwise, it can lead to out-of-order delivery where a message
+                 that should have been delivered to a working target instead gets
+                 dropped. Note also that fields can depend on other fields. *)
+              let detector_caps = Array.make (RO_array.length caps) cycle_marker in
+              u.cycle_detector <- Some (msg, detector_caps);
+              let break_cycles c =
+                for i = 0 to Array.length detector_caps - 1 do
+                  detector_caps.(i) <- RO_array.get caps i
+                done;
+                if c#blocker = Some (self :> C.base_ref) then
+                  C.broken_cap (Exception.v (Fmt.strf "<cycle: %t>" c#pp))
+                else c
+              in
+              let fixed_caps = RO_array.map break_cycles caps in
+              if RO_array.equal (=) fixed_caps caps then x
+              else (
+                RO_array.iter C.inc_ref fixed_caps;
+                C.dec_ref x;
+                C.return (msg, fixed_caps)
+              )
+        in
+        state <- Forwarding x;
+        begin match RC.to_int u.rc with
+          | None -> assert false            (* Can't happen; we don't detect leaks *)
+          | Some rc -> x#update_rc rc;      (* Transfer our ref-count to [x]. *)
+        end;
+        u.fields |> Field_map.iter (fun path f ->
+            let pp = self#field_pp path in
+            let ref_count = RC.pred f.ref_count ~pp in (* Count excluding our ref *)
+            f.ref_count <- RC.zero;
+            begin match RC.to_int ref_count with
+              | None        (* Field was leaked; shouldn't happen since we hold a copy anyway. *)
+              | Some 0 -> f.cap#resolve invalid_cap (* No other users *)
+              | Some ref_count ->                   (* Someone else is using it too *)
+                let c = x#cap path in   (* Increases ref by one *)
+                (* Transfer our refs to the new target, excluding the one already addded by [x#cap]. *)
+                c#update_rc (ref_count - 1);
+                f.cap#resolve c
+            end;
+            self#field_resolved (f.cap :> cap)
+          );
+        self#on_resolve u.target x;
+        Queue.iter (fun fn -> fn x) u.when_resolved;
+        let refs_dropped = Field_map.cardinal u.fields in
+        x#update_rc (-(refs_dropped + 1)) (* Also, we take ownership of [x]. *)
 
     method resolve result =
       self#connect (resolved result)
 
-    method finish =
+    method update_rc d =
       dispatch state
-        ~cancelling_ok:false
         ~unresolved:(fun u ->
-            u.cancelling <- true;
-            if Field_map.is_empty u.fields then
-              self#send_cancel u.target;
-            (* else disable locally but don't send a cancel because we still
-               want the caps. *)
+            let { target; rc; fields; when_resolved; cycle_detector = _ } = u in
+            u.rc <- RC.sum rc d ~pp:self#pp;
+            if RC.is_zero u.rc then (
+              assert (Field_map.is_empty fields);
+              state <- Finished;
+              let err = C.broken_struct `Cancelled in
+              Queue.iter (fun fn -> fn err) when_resolved;
+              self#send_cancel target;
+            )
           )
-        ~forwarding:(fun x ->
-            state <- Finished;
-            x#finish
-          )
+        ~forwarding:(fun x -> x#update_rc d)
 
     method when_resolved fn =
       dispatch state
-        ~cancelling_ok:false
         ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)
         ~forwarding:(fun x -> x#when_resolved fn)
 
@@ -333,13 +341,11 @@ module Make (C : S.CORE_TYPES) = struct
           fn cap
       in
       dispatch state
-        ~cancelling_ok:true
         ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)
         ~forwarding:(fun x -> x#when_resolved fn)
 
     method field_update_rc path d =
       dispatch state
-        ~cancelling_ok:true
         ~unresolved:(fun u ->
             (* When we resolve, we'll be holding references to all the caps in the resolution, so
                so they must still be alive by the time we pass on any extra inc or dec refs. *)
@@ -355,7 +361,6 @@ module Make (C : S.CORE_TYPES) = struct
 
     method field_dec_ref path =
       dispatch state
-        ~cancelling_ok:true
         ~unresolved:(fun u ->
             let f = Field_map.get path u.fields in
             assert (f.ref_count > RC.one);   (* rc can't be one because that's our reference *)
@@ -369,13 +374,11 @@ module Make (C : S.CORE_TYPES) = struct
 
     method private update_target target =
       dispatch state
-        ~cancelling_ok:false
         ~unresolved:(fun u -> u.target <- target)
         ~forwarding:(fun _ -> failwith "Already forwarding!")
 
     method field_check_invariants i =
       dispatch state
-        ~cancelling_ok:true
         ~unresolved:(fun u ->
             let f = Field_map.get i u.fields in
             assert (f.ref_count > RC.one)
@@ -397,11 +400,13 @@ module Make (C : S.CORE_TYPES) = struct
 
     method check_invariants =
       dispatch state
-        ~cancelling_ok:true
         ~unresolved:(fun u ->
+            RC.check ~pp:self#pp u.rc;
             Field_map.iter (fun i f -> RC.check f.ref_count ~pp:(self#field_pp i)) u.fields
           )
         ~forwarding:(fun x -> x#check_invariants)
+
+    method sealed_dispatch _ = None
 
     initializer
       Log.info (fun f -> f "Created %t" self#pp)

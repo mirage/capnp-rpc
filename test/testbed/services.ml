@@ -3,25 +3,35 @@ open Capnp_direct.Core_types
 module RO_array = Capnp_rpc.RO_array
 
 class virtual test_service = object
-  inherit service
+  inherit service as super
 
   val mutable released = false
+  val virtual name : string
+  val id = Capnp_rpc.Debug.OID.next ()
+
   method released = released
   method! release = assert (not released); released <- true;
+
+  method! pp f =
+    Fmt.pf f "%s(%a, %t)"
+      name
+      Capnp_rpc.Debug.OID.pp id
+      super#pp_refcount
 end
 
 let echo_service () = object
   inherit test_service as super
+  val name = "echo-service"
   method call x caps =
     super#check_refcount;
     return ("got:" ^ x, caps)
-  method! pp f = Fmt.pf f "echo-service(%t)" super#pp_refcount
 end
 
 (* A service which just queues incoming messages and lets the test driver handle them. *)
 let manual () = object
   inherit test_service as super
   val queue = Queue.create ()
+  val name = "manual"
 
   method call x caps =
     super#check_refcount;
@@ -45,24 +55,23 @@ let manual () = object
     Alcotest.(check int) "Has one arg" 1 @@ RO_array.length args;
     RO_array.get args 0, answer
 
-  method! pp f = Fmt.string f "manual"
 end
 
 (* Callers can swap their arguments for the slot's contents. *)
 let swap_service slot = object
   inherit test_service as super
+  val name = "swap"
 
   method call x caps =
     super#check_refcount;
     let old_msg, old_caps = !slot in
     slot := (x, caps);
     return (old_msg, old_caps)
-
-  method! pp f = Fmt.pf f "swap-service(%t)" super#pp_refcount
 end
 
 let logger () = object
   inherit test_service as super
+  val name = "logger"
 
   val log = Queue.create ()
 
@@ -71,8 +80,6 @@ let logger () = object
     assert (RO_array.length caps = 0);
     Queue.add x log;
     return ("logged", RO_array.empty)
-
-  method! pp f = Fmt.string f "logger-service"
 
   method pop =
     try Queue.pop log

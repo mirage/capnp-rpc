@@ -1,24 +1,38 @@
 module RO_array = Capnp_rpc.RO_array
 module Test_utils = Testbed.Test_utils
+module OID = Capnp_rpc.Debug.OID
+
+let running_under_afl =
+  match Array.to_list Sys.argv with
+  | [] -> assert false
+  | [_] -> false
+  | [_; "--fuzz"] -> true
+  | prog :: _ -> Capnp_rpc.Debug.failf "Usage: %s < input-data" prog
 
 let three_vats = true
 
 let stop_after =
   match Sys.getenv "FUZZ_STOP" with
   | s ->
-    print_endline "vi: foldmethod=marker syntax=capnp-rpc";
     int_of_string s
   | exception Not_found -> -1
 (* If the ref-counting seems off after a while, try setting this to a low-ish number.
    This will cause it to try to clean up early and hopefully discover the problem sooner. *)
 
-let dump_state_at_each_step = (stop_after >= 0)
+let dump_state_at_each_step = not running_under_afl
 
-let sanity_checks = dump_state_at_each_step
+let sanity_checks = not running_under_afl
 (* Check that the state is valid after every step (slow). *)
 
 let () =
-  if sanity_checks then Printexc.record_backtrace true
+  if running_under_afl then (
+    Logs.set_level ~all:true (Some Logs.Error);
+  ) else (
+    Fmt.epr "vi: foldmethod=marker syntax=capnp-rpc@.";
+    Printexc.record_backtrace true
+  )
+
+let step = ref 0
 
 let failf msg = Fmt.kstrf failwith msg
 
@@ -49,13 +63,16 @@ module Msg = struct
 
   module Request = struct
     type t = {
+      sender : OID.t;
       target : Direct.cap;
       seq : int;
       counters : cap_ref_counters;
       arg_ids : Direct.cap RO_array.t;
       answer : Direct.struct_ref;
     }
-    let pp f {seq; counters; _} = Fmt.pf f "{seq=%d; cap_ref=%a}" seq pp_counters counters
+    let pp f {sender; seq; counters; _} = Fmt.pf f "{call_id=%a:%d; cap_ref=%a}"
+        OID.pp sender seq
+        pp_counters counters
 
     let cap_index _ i = Some i
   end
@@ -151,8 +168,9 @@ let () =
 
 let dummy_answer = object (self : Core_types.struct_resolver)
   method cap _ = failwith "dummy_answer"
-  method connect x = x#finish
-  method finish = failwith "dummy_answer"
+  method connect x = Core_types.dec_ref x
+  method update_rc = failwith "dummy_answer"
+  method sealed_dispatch _ = None
   method pp f = Fmt.string f "dummy_answer"
   method resolve x = self#connect (Core_types.resolved x)
   method response = failwith "dummy_answer"
@@ -162,6 +180,7 @@ let dummy_answer = object (self : Core_types.struct_resolver)
 end
 
 type cap_ref = {
+  cr_id : OID.t;
   cr_cap : Core_types.cap;
   cr_target : Direct.cap;
   cr_counters : cap_ref_counters;
@@ -169,6 +188,7 @@ type cap_ref = {
 
 let make_cap_ref ~target cap =
   {
+    cr_id = OID.next ();
     cr_cap = cap;
     cr_target = target;
     cr_counters = { next_to_send = 0; next_expected = 0 };
@@ -194,8 +214,9 @@ module Vat = struct
         Fmt.(styled `Red string) "ERROR"
         Capnp_rpc.Debug.pp_exn ex
 
-  let dump_cap f {cr_target; cr_cap; cr_counters} =
-    Fmt.pf f "%a : @[%t %a;%a@]"
+  let dump_cap f {cr_id; cr_target; cr_cap; cr_counters} =
+    Fmt.pf f "%a -> %a : @[%t %a;%a@]"
+      OID.pp cr_id
       Direct.pp cr_target
       cr_cap#pp
       pp_counters cr_counters
@@ -277,11 +298,13 @@ module Vat = struct
       let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs |> RO_array.of_list in
       RO_array.iter Core_types.inc_ref args;
       let answer = Direct.make_struct () in
-      Logs.info (fun f -> f ~tags:(tags state) "Call %a=%t(%a) (answer %a)"
+      let sender = cap_ref.cr_id in
+      Logs.info (fun f -> f ~tags:(tags state) "Call %a=%t(%a) (call_id=%a:%d answer=%a)"
                     Direct.pp target cap#pp
                     (RO_array.pp Core_types.pp) args
+                    OID.pp sender counters.next_to_send
                     Direct.pp_struct answer);
-      let msg = { Msg.Request.target; counters; seq = counters.next_to_send; answer; arg_ids } in
+      let msg = { Msg.Request.target; sender; counters; seq = counters.next_to_send; answer; arg_ids } in
       counters.next_to_send <- succ counters.next_to_send;
       DynArray.add state.structs (cap#call msg args, answer)
 
@@ -298,7 +321,8 @@ module Vat = struct
       Logs.info (fun f -> f ~tags:(tags state)
                     "Return %a (%a)" (RO_array.pp Core_types.pp) args Direct.pp_struct answer_id);
       Direct.return answer_id (RO_array.of_list arg_ids);
-      answer#resolve (Ok ("reply", args))
+      answer#resolve (Ok ("reply", args));
+      Core_types.dec_ref answer
       (* TODO: reply with another promise or with an error *)
 
   let test_service ~target:self_id vat =
@@ -314,20 +338,23 @@ module Vat = struct
 
       method call msg caps =
         super#check_refcount;
-        let {Msg.Request.target; counters; seq; arg_ids; answer} = msg in
+        let {Msg.Request.target; sender; counters; seq; arg_ids; answer} = msg in
         if not (Direct.equal target self_id) then
           failf "Call received by %a, but expected target was %a (answer %a)"
             Direct.pp self_id
             Direct.pp target
             Direct.pp_struct answer;
         if seq <> counters.next_expected then
-          failf "Expecting message number %d, but got %d (target %a)" counters.next_expected seq Direct.pp target;
+          failf "Expecting message call_id=%a:%d, but got %d (target %a)"
+            OID.pp sender counters.next_expected
+            seq Direct.pp target;
         counters.next_expected <- succ counters.next_expected;
         caps |> RO_array.iteri (fun i c ->
             let target = RO_array.get arg_ids i in
             DynArray.add vat.caps (make_cap_ref ~target c)
           );
         let answer_promise = Local_struct_promise.make () in
+        Core_types.inc_ref answer_promise;
         DynArray.add vat.answers_needed (answer_promise, answer);
         (answer_promise :> Core_types.struct_ref)
     end
@@ -349,7 +376,7 @@ module Vat = struct
     | None -> ()
     | Some (s, _id) ->
       Logs.info (fun f -> f ~tags:(tags state) "Finish %t" s#pp);
-      s#finish
+      Core_types.dec_ref s
 
   let do_release state () =
     match DynArray.pop state.caps with
@@ -383,12 +410,12 @@ module Vat = struct
     in
     let rec free_srs () =
       match DynArray.pop_first t.structs with
-      | Some (q, _) -> q#finish; free_srs ()
+      | Some (q, _) -> Core_types.dec_ref q; free_srs ()
       | None -> ()
     in
     let rec free_ans () =
       match DynArray.pop_first t.answers_needed with
-      | Some (a, _) -> a#resolve (Error (Capnp_rpc.Error.exn "Free all")); free_ans ()
+      | Some (a, _) -> a#resolve (Error (Capnp_rpc.Error.exn "Free all")); Core_types.dec_ref a; free_ans ()
       | None -> ()
     in
     free_caps ();
@@ -493,7 +520,8 @@ let run_test () =
     if stop_after >= 0 then failwith "Everything freed!"
   in
 
-  let step = ref 0 in
+  OID.reset ();
+  step := 0;
   try
     let rec loop () =
       let v = Choose.array vats in
@@ -525,7 +553,6 @@ let run_test () =
 
 let () =
   (* Logs.set_level (Some Logs.Error); *)
-  assert (Array.length (Sys.argv) = 1);
   AflPersistent.run @@ fun () ->
   run_test ();
   Gc.full_major ()

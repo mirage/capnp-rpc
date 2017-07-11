@@ -6,6 +6,8 @@ module Make (C : S.CORE_TYPES) = struct
   let rec local_promise ?parent () = object (self : #C.struct_resolver)
     inherit [target] Struct_proxy.t (Queue.create ()) as super
 
+    val name = "local-promise"
+
     method private do_pipeline q i msg caps =
       let result = local_promise ~parent:self () in
       q |> Queue.add (fun p ->
@@ -16,15 +18,10 @@ module Make (C : S.CORE_TYPES) = struct
         );
       (result :> C.struct_ref)
 
-    method! pp f =
-      let pp_promise f _ =
-        match parent with
-        | None -> Fmt.string f "(unresolved)"
-        | Some p -> Fmt.pf f "blocked on %t" p#pp
-      in
-      Fmt.pf f "local-struct-ref(%a) -> %a"
-        Debug.OID.pp id
-        (Struct_proxy.pp_state ~pp_promise) state
+    method pp_unresolved f _ =
+      match parent with
+      | None -> Fmt.string f "(unresolved)"
+      | Some p -> Fmt.pf f "blocked on %t" p#pp
 
     method private on_resolve q x =
       Queue.iter (fun fn -> fn x) q
