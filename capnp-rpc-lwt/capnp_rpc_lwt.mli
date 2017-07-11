@@ -5,11 +5,15 @@ module StructRef : sig
   (** An ['a t] is a reference to a response message (that may not have arrived yet)
       with content type ['a]. *)
 
-  val finish : 'a t -> unit
-  (** [finish t] indicates that this result will never be used again.
-      If the results have not yet arrived, we send a cancellation request (which
-      may or may not succeed). As soon as the results are available, they are
-      released. It is an error to use [t] after calling this. *)
+  val inc_ref : 'a t -> unit
+  (** [inc_ref t] increases the reference count on [t] by one. *)
+
+  val dec_ref : 'a t -> unit
+  (** [dec_ref t] reduces the reference count on [t] by one.
+      When the count reaches zero, this result must never be used again.
+      If the results have not yet arrived when the count reaches zero, we send
+      a cancellation request (which may or may not succeed). As soon as the
+      results are available, they are released. *)
 end
 
 module rec Payload : sig
@@ -63,12 +67,13 @@ and Capability : sig
   (** [call m req] invokes [m req] and returns a promise for the result.
       Messages may be sent to the capabilities that will be in the result
       before the result arrives - they will be pipelined to the service
-      responsible for resolving the promise. *)
+      responsible for resolving the promise. The caller must call [StructRef.dec_ref]
+      when finished with the result (consider using one of the [call_for_*] functions
+      instead for a simpler interface). *)
 
   val call_for_value : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b Payload.t or_error Lwt.t
   (** [call_for_value m req] invokes [m ret] and waits for the response.
-      It is the same as [snd (call_full m req)].
-      This is simpler than using [call_full], but doesn't support pipelining
+      This is simpler than using [call], but doesn't support pipelining
       (you can't use any capabilities in the response in another message until the
       response arrives).
       Doing [Lwt.cancel] on the result will send a cancel message to the target

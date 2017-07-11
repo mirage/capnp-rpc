@@ -41,6 +41,7 @@ let test_simple_connection () =
   S.handle_msg s ~expect:"call:my-content";
   C.handle_msg c ~expect:"return:got:my-content";
   Alcotest.(check response_promise) "Client got call response" (Some (Ok ("got:my-content", empty))) q#response;
+  dec_ref q;
   dec_ref servce_promise;
   CS.flush c s;
   CS.check_finished c s
@@ -77,7 +78,7 @@ let test_return () =
   S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"release";
   C.handle_msg c ~expect:"release";
-  q#finish;
+  dec_ref q;
   CS.check_finished c s
 
 let test_return_error () =
@@ -90,7 +91,7 @@ let test_return_error () =
   (* Server echos args back *)
   CS.flush c s;
   Alcotest.(check response_promise) "Client got response" (Some (Error (Error.exn "test-error"))) q#response;
-  q#finish;
+  dec_ref q;
   dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
@@ -103,7 +104,7 @@ let test_share_cap () =
   S.handle_msg s ~expect:"release";       (* Server drops [bs] export *)
   (* Server re-exports [bs] as result of echo *)
   C.handle_msg c ~expect:"return:got:msg";
-  q#finish;
+  dec_ref q;
   CS.flush c s;
   CS.check_finished c s
 
@@ -114,14 +115,14 @@ let test_local_embargo () =
   let local = Services.logger () in
   let q = call bs "Get service" [(local :> Core_types.cap)] in
   let service = q#cap 0 in
-  let _ = service#call "Message-1" empty in
+  let m1 = service#call "Message-1" empty in
   S.handle_msg s ~expect:"call:Get service";
   C.handle_msg c ~expect:"return:got:Get service";
-  q#finish;
+  dec_ref q;
   Logs.warn (fun f -> f "service = %t" service#pp);
   (* We've received the bootstrap reply, so we know that [service] is local,
      but the pipelined message we sent to it via [s] hasn't arrived yet. *)
-  let _ = service#call "Message-2" empty in
+  let m2 = service#call "Message-2" empty in
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
   S.handle_msg s ~expect:"disembargo-request";
@@ -129,6 +130,8 @@ let test_local_embargo () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   (* Clean up *)
+  dec_ref m1;
+  dec_ref m2;
   dec_ref local;
   dec_ref bs;
   dec_ref service;
@@ -143,8 +146,8 @@ let test_local_embargo_2 () =
   let local_reg = Services.manual () in    (* A registry that provides access to [local]. *)
   let q1 = call bs "q1" [local_reg] in (* Give the server our registry and get back [local]. *)
   let service = q1#cap 0 in                (* Service is a promise for local *)
-  q1#finish;
-  let _ = service#call "Message-1" empty in             (* First message to service *)
+  dec_ref q1;
+  let m1 = service#call "Message-1" empty in             (* First message to service *)
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = server_main#pop in
   let proxy_to_local_reg = RO_array.get q1_args 0 in
@@ -155,7 +158,7 @@ let test_local_embargo_2 () =
   let proxy_to_local = q2#cap 0 in
   a1#resolve (Ok ("a1", RO_array.of_list [proxy_to_local]));
   (* [proxy_to_local] is now owned by [a1]. *)
-  q2#finish;
+  dec_ref q2;
   C.handle_msg c ~expect:"call:q2";
   let (_, _q2_args, a2) = local_reg#pop in
   C.handle_msg c ~expect:"release";
@@ -165,7 +168,7 @@ let test_local_embargo_2 () =
      it to arrive back at the local promise. *)
   resolve_ok a2 "a2" [local];
   (* Message-2 must be embargoed so that it arrives after Message-1. *)
-  let _ = service#call "Message-2" empty in
+  let m2 = service#call "Message-2" empty in
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
   S.handle_msg s ~expect:"disembargo-request";
@@ -173,6 +176,8 @@ let test_local_embargo_2 () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   (* Clean up *)
+  dec_ref m1;
+  dec_ref m2;
   dec_ref bs;
   dec_ref service;
   dec_ref local_reg;
@@ -192,12 +197,12 @@ let test_local_embargo_3 () =
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   let service = q1#cap 0 in
-  let _ = service#call "Message-1" empty in
+  let m1 = service#call "Message-1" empty in
   promise#resolve proxy_to_logger;
   C.handle_msg c ~expect:"resolve";
   (* We've received the resolve message, so we know that [service] is local,
      but the pipelined message we sent to it via [s] hasn't arrived yet. *)
-  let _ = service#call "Message-2" empty in
+  let m2 = service#call "Message-2" empty in
   S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
@@ -206,8 +211,10 @@ let test_local_embargo_3 () =
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   (* Clean up *)
+  dec_ref m1;
+  dec_ref m2;
   dec_ref local;
-  q1#finish;
+  dec_ref q1;
   dec_ref bs;
   dec_ref service;
   CS.flush c s;
@@ -220,12 +227,12 @@ let test_local_embargo_4 () =
   let local = Services.echo_service () in
   let q1 = call bs "q1" [local] in
   let broken = q1#cap 0 in
-  let _ = call broken "pipeline" [] in
+  let qp = call broken "pipeline" [] in
   S.handle_msg s ~expect:"call:q1";
-  let (_, q1_args, a1) = service#pop in
-  let proxy_to_local = RO_array.get q1_args 0 in
+  let proxy_to_local, a1 = service#pop1 "q1" in
   let q2 = call proxy_to_local "q2" [] in
-  a1#resolve (Ok ("a1", RO_array.of_list [q2#cap 0]));
+  resolve_ok a1 "a1" [q2#cap 0];
+  dec_ref q2;
   C.handle_msg c ~expect:"call:q2";
   C.handle_msg c ~expect:"return:a1";
   (* At this point, the client knows that [broken] is its own answer to [q2], which is an error.
@@ -234,9 +241,10 @@ let test_local_embargo_4 () =
     "Failed: Invalid cap index 0 in []"
    (Fmt.strf "%t" broken#shortest#pp);
   (* Clean up *)
+  dec_ref qp;
   dec_ref local;
   dec_ref proxy_to_local;
-  q1#finish;
+  dec_ref q1;
   dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
@@ -251,7 +259,7 @@ let test_local_embargo_5 () =
   let local = Services.logger () in
   let q1 = call bs "q1" [local] in
   let test = q1#cap 0 in
-  let _ = call test "Message-1" [] in
+  let m1 = call test "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = service#pop in
   let proxy_to_local = RO_array.get q1_args 0 in
@@ -262,15 +270,17 @@ let test_local_embargo_5 () =
      The server now resolves it to a client service. *)
   server_promise#resolve proxy_to_local;
   C.handle_msg c ~expect:"resolve";
-  let _ = call test "Message-2" [] in
+  let m2 = call test "Message-2" [] in
   CS.flush c s;
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
   CS.flush c s;
   (* Clean up *)
+  dec_ref m1;
+  dec_ref m2;
   dec_ref local;
   dec_ref test;
-  q1#finish;
+  dec_ref q1;
   dec_ref bs;
   CS.flush c s;
   CS.check_finished c s
@@ -286,8 +296,8 @@ let test_local_embargo_6 () =
   (* Client calls the server, giving it [local]. *)
   let q1 = call bs "q1" [local] in
   let target = q1#cap 0 in
-  q1#finish;
-  let _ = call target "Message-1" [] in
+  dec_ref q1;
+  let m1 = call target "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_local, a1 = service#pop1 "q1" in
   (* Server makes a call on [local] and uses that promise to answer [q1]. *)
@@ -303,7 +313,7 @@ let test_local_embargo_6 () =
      back to the server. *)
   C.handle_msg c ~expect:"return:a1";
   Logs.info (fun f -> f "target = %t" target#pp);
-  let _ = call target "Message-2" [] in         (* Client tries to send message-2, but it gets embargoed *)
+  let m2 = call target "Message-2" [] in         (* Client tries to send message-2, but it gets embargoed *)
   dec_ref target;
   S.handle_msg s ~expect:"disembargo-request";
   S.handle_msg s ~expect:"finish";              (* Finish for q1 *)
@@ -313,11 +323,13 @@ let test_local_embargo_6 () =
   S.handle_msg s ~expect:"disembargo-reply";    (* (the server is doing its own embargo on q2) *)
   C.handle_msg c ~expect:"disembargo-reply";
   S.handle_msg s ~expect:"call:Message-2";
-  let m1 = service#pop0 "Message-1" in
-  let m2 = service#pop0 "Message-2" in
-  resolve_ok m1 "m1" [];
-  resolve_ok m2 "m2" [];
-  q2#finish;
+  let am1 = service#pop0 "Message-1" in
+  let am2 = service#pop0 "Message-2" in
+  resolve_ok am1 "m1" [];
+  resolve_ok am2 "m2" [];
+  dec_ref m1;
+  dec_ref m2;
+  dec_ref q2;
   dec_ref proxy_to_local;
   dec_ref local;
   CS.flush c s;
@@ -331,14 +343,14 @@ let test_local_embargo_7 () =
   (* Client calls the server, giving it [local]. *)
   let q1 = call bs "q1" [local] in
   let target = q1#cap 0 in
-  q1#finish;
-  let _ = call target "Message-1" [] in
+  dec_ref q1;
+  let m1 = call target "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_local, a1 = service#pop1 "q1" in
   (* Server makes a call on [local] and uses that promise to answer [q1]. *)
   let q2 = call proxy_to_local "q2" [] in
   resolve_ok a1 "a1" [q2#cap 0];
-  q2#finish;
+  dec_ref q2;
   C.handle_msg c ~expect:"call:q2";
   S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
   (* Client resolves a2 to a local promise. *)
@@ -348,7 +360,7 @@ let test_local_embargo_7 () =
   resolve_ok a2 "a2" [client_promise];
   (* Client gets answer to a1 and sends disembargo. *)
   C.handle_msg c ~expect:"return:a1";
-  let _ = call target "Message-2" [] in
+  let m2 = call target "Message-2" [] in
   S.handle_msg s ~expect:"return:a2";
   (* At this point, the server's answer to q1 is a switchable, because it expects the client
      to resolve the promise at some point in the future. *)
@@ -362,6 +374,8 @@ let test_local_embargo_7 () =
   CS.flush c s;
   Alcotest.(check string) "Pipelined arrived first" "Message-1" client_logger#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" client_logger#pop;
+  dec_ref m1;
+  dec_ref m2;
   dec_ref client_logger;
   dec_ref proxy_to_local;
   dec_ref local;
@@ -378,8 +392,8 @@ let test_local_embargo_8 () =
   (* Client calls the server, giving it [local]. *)
   let q1 = call bs "q1" [local] in
   let target = q1#cap 0 in
-  q1#finish;
-  let _ = call target "Message-1" [] in
+  dec_ref q1;
+  let m1 = call target "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_local, a1 = service#pop1 "q1" in
   (* Server makes a call on [local] and uses that promise to answer [q1]. *)
@@ -393,7 +407,7 @@ let test_local_embargo_8 () =
   S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
   S.handle_msg s ~expect:"return:a2";
   resolve_ok a1 "a1" [q2#cap 0];
-  q2#finish;
+  dec_ref q2;
   C.handle_msg c ~expect:"finish";
   (* The client resolves the local promise to a remote one *)
   let q3 = call bs "q3" [] in
@@ -404,10 +418,9 @@ let test_local_embargo_8 () =
   S.handle_msg s ~expect:"call:q3";
   S.handle_msg s ~expect:"resolve";
   S.handle_msg s ~expect:"call:Message-1";
-  CS.dump c s;
   C.handle_msg c ~expect:"return:a1";
   (* We should now know that [target] is local, but will have embargoed it. *)
-  let _ = call target "Message-2" [] in
+  let m2 = call target "Message-2" [] in
   S.handle_msg s ~expect:"disembargo-request";
   C.handle_msg c ~expect:"disembargo-request"; (* Server is also doing its own embargo *)
   S.handle_msg s ~expect:"finish";
@@ -422,7 +435,9 @@ let test_local_embargo_8 () =
   S.handle_msg s ~expect:"call:Message-2";
   Alcotest.(check string) "Pipelined arrived first" "Message-1" logger#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" logger#pop;
-  q3#finish;
+  dec_ref m1;
+  dec_ref m2;
+  dec_ref q3;
   dec_ref target;
   dec_ref proxy_to_local;
   dec_ref logger;
@@ -442,10 +457,11 @@ let test_fields () =
   S.handle_msg s ~expect:"finish";
   C.handle_msg c ~expect:"return:got:c1";
   Alcotest.(check response_promise) "Echo response" (Some (Ok ("got:c1", empty))) q1#response;
-  q1#finish;
+  dec_ref q1;
   let q2 = call f0 "c2" [] in
   CS.flush c s;
   Alcotest.(check response_promise) "Echo response 2" (Some (Ok ("got:c2", empty))) q2#response;
+  dec_ref q2;
   dec_ref f0;
   CS.flush c s;
   CS.check_finished c s
@@ -457,7 +473,7 @@ let test_cancel () =
   let f0 = C.bootstrap c in
   let q1 = call f0 "c1" [] in
   let prom = q1#cap 0 in
-  q1#finish;    (* Client doesn't cancel q1 because we're using prom *)
+  dec_ref q1;    (* Client doesn't cancel q1 because we're using prom *)
   let _q2 = call prom "p1" [] in
   S.handle_msg s ~expect:"bootstrap";
   C.handle_msg c ~expect:"return:(boot)";      (* [bs] resolves *)
@@ -477,7 +493,7 @@ let test_cancel_2 () =
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
   let q1 = call bs "c1" [] in
-  q1#finish;    (* Client cancels *)
+  dec_ref q1;    (* Client cancels *)
   S.handle_msg s ~expect:"call:c1";
   S.handle_msg s ~expect:"finish";      (* cancel *)
   let a1 = service#pop0 "c1" in
@@ -498,7 +514,7 @@ let test_duplicates () =
   dec_ref f0;
   let x1 = q1#cap 0 in
   let x2 = q1#cap 0 in
-  q1#finish;
+  dec_ref q1;
   assert (x1 = x2);
   dec_ref x1;
   dec_ref x2;
@@ -523,8 +539,8 @@ let test_single_export () =
   Alcotest.(check int) "One export" 1 (C.stats c).n_exports;
   S.handle_msg s ~expect:"call:q1";
   S.handle_msg s ~expect:"call:q2";
-  q1#finish;
-  q2#finish;
+  dec_ref q1;
+  dec_ref q2;
   let ignore msg =
     let got, caps, a = service#pop in
     Alcotest.(check string) ("Ignore " ^ msg) msg got;
@@ -556,8 +572,8 @@ let test_shorten_field () =
   dec_ref direct_to_logger;
   dec_ref bs;
   dec_ref proxy_to_logger;
-  q1#finish;
-  q2#finish;
+  dec_ref q1;
+  dec_ref q2;
   CS.flush c s;
   CS.check_finished c s
 
@@ -586,18 +602,23 @@ let test_cycle () =
   inc_ref c;
   resolve_ok p1 "msg" [c];
   ensure_is_cycle_error_cap c;
+  dec_ref c;
+  dec_ref p1;
   (* Connect struct to itself *)
   let p1 = Local_struct_promise.make () in
   p1#connect (p1 :> Core_types.struct_ref);
-  ensure_is_cycle_error p1
+  ensure_is_cycle_error p1;
+  dec_ref p1
 
 (* Resolve a promise with an answer that includes the result of a pipelined
    call on the promise itself. *)
 let test_cycle_2 () =
   let s1 = Local_struct_promise.make () in
   let s2 = call (s1#cap 0) "get-s2" [] in
-  s1#resolve (Ok ("a7", RO_array.of_list [s2#cap 0]));
-  ensure_is_cycle_error_cap (s1#cap 0)
+  resolve_ok s1 "a7" [s2#cap 0];
+  ensure_is_cycle_error_cap (s1#cap 0);
+  dec_ref s2;
+  dec_ref s1
 
 (* It's not a cycle if one field resolves to another. *)
 let test_cycle_3 () =
@@ -609,8 +630,9 @@ let test_cycle_3 () =
   Alcotest.(check response_promise) "Field 1 OK"
     (Some (Ok ("got:q2", RO_array.empty)))
     q2#response;
+  dec_ref q2;
   dec_ref target;
-  a1#finish
+  dec_ref a1
 
 (* Check ref-counting when resolving loops. *)
 let test_cycle_4 () =
@@ -619,7 +641,7 @@ let test_cycle_4 () =
   let f0 = a1#cap 0 in
   resolve_ok a1 "a1" [a1#cap 1; (echo :> Core_types.cap)];
   dec_ref f0;
-  a1#finish;
+  dec_ref a1;
   Logs.info (fun f -> f "echo = %t" echo#pp);
   Alcotest.(check bool) "Echo released" true echo#released
 
@@ -647,8 +669,8 @@ let test_resolve () =
   let q2 = call x "test-message" [] in
   Alcotest.(check string) "Got message directly" "test-message" client_logger#pop;
   dec_ref x;
-  q1#finish;
-  q2#finish;
+  dec_ref q1;
+  dec_ref q2;
   dec_ref client_logger;
   CS.flush c s;
   CS.check_finished c s
@@ -669,7 +691,7 @@ let test_resolve_2 () =
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   (* The client doesn't care about the result and releases it *)
-  q1#finish;
+  dec_ref q1;
   (* The server now resolves the promise. The client must release the new target. *)
   promise#resolve proxy_to_logger;
   CS.flush c s;
@@ -688,7 +710,7 @@ let test_resolve_3 () =
   inc_ref a1_promise;
   resolve_ok a1 "a1" [a1_promise];
   C.handle_msg c ~expect:"return:a1";
-  q1#finish;
+  dec_ref q1;
   S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"release";
   (* Make another call, get a settled export this time. *)
@@ -705,7 +727,7 @@ let test_resolve_3 () =
   dec_ref a1_promise;
   dec_ref proxy_to_service;
   CS.flush c s;
-  q2#finish;
+  dec_ref q2;
   CS.flush c s;
   CS.check_finished c s
 
@@ -739,7 +761,7 @@ let test_broken_call () =
   resolve_ok a1 "a1" [];
   dec_ref broken_proxy;
   dec_ref bs;
-  q1#finish;
+  dec_ref q1;
   CS.flush c s;
   CS.check_finished c s
 
@@ -770,7 +792,7 @@ let test_broken_connection () =
   Alcotest.check response_promise "Echo reply"
     (Some (Ok ("got:Message-1", RO_array.empty)))
     q1#response;
-  q1#finish;
+  dec_ref q1;
   let err = Exception.v "Connection lost" in
   C.disconnect c err;
   S.disconnect s err;
@@ -797,7 +819,7 @@ let test_ref_counts () =
   let fields = [f0; promise#cap 1] in
   resolve_ok promise "ok" [make (); make ()];
   let fields2 = [promise#cap 0; promise#cap 2] in
-  promise#finish;
+  dec_ref promise;
   List.iter dec_ref fields;
   List.iter dec_ref fields2;
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
@@ -808,8 +830,8 @@ let test_ref_counts () =
   f0#when_more_resolved dec_ref;
   resolve_ok promise "ok" [make ()];
   dec_ref f0;
-  promise#finish;
-  q1#finish;
+  dec_ref promise;
+  dec_ref q1;
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
   (* Test local promise *)
   let promise = Cap_proxy.local_promise () in
@@ -911,7 +933,7 @@ let test_auto_release () =
   (* Now test the other direction. Service invokes bootstap on client. *)
   let proxy_to_client = S.bootstrap s in
   let logger = Services.logger () in
-  let _q1 = call proxy_to_client "q1" [logger] in
+  let q1 = call proxy_to_client "q1" [logger] in
   dec_ref logger;
   let bs_qid = Level0.expect_bs c in
   let client_bs_id = S.EP.In.ExportId.zero in
@@ -925,6 +947,7 @@ let test_auto_release () =
   (* Clean up.
      A real level-0 client would just disconnect, but release cleanly so we can
      check nothing else was leaked. *)
+  dec_ref q1;
   send @@ `Release (S.EP.Out.ExportId.zero, 1);
   S.handle_msg s ~expect:"release";
   try S.check_finished s ~name:"Server"
@@ -983,7 +1006,7 @@ let test_unimplemented () =
   Alcotest.(check response_promise) "Server got error"
     (Some (Error (Error.exn ~ty:`Unimplemented "Call message not implemented by peer!")))
     q2#response;
-  q2#finish;
+  dec_ref q2;
   (* Clean up.
      A real level-0 client would just disconnect, but release cleanly so we can
      check nothing else was leaked. *)

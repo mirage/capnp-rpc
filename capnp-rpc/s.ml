@@ -65,6 +65,11 @@ module type CORE_TYPES = sig
   class type base_ref = object
     method pp : Format.formatter -> unit
 
+    method update_rc : int -> unit
+    (** [c#update_rc d] adds [d] to [c]'s (local) reference count.
+        When it reaches zero, [c] must not be used again. A message may be
+        sent releasing any remote resources. *)
+
     method blocker : base_ref option
     (** [c#blocker] is the unresolved [cap] or [struct_ref] promise that must resolve for [c] to resolve.
         This is used to help detect cycles. *)
@@ -72,9 +77,18 @@ module type CORE_TYPES = sig
     method check_invariants : unit
     (** This is for debugging. Checks its own invariants and those of other base_refs it holds.
         Raises [Invariant_broken] if there is a problem. *)
+
+    method sealed_dispatch : 'a. 'a brand -> 'a option
+    (** [c#sealed_dispatch brand] extracts some private data of the given type. *)
   end
 
   val pp : #base_ref Fmt.t
+
+  val inc_ref : #base_ref -> unit
+  (** [inc_ref x] increases [x]'s ref-count by one. *)
+
+  val dec_ref : #base_ref -> unit
+  (** [dec_ref x] decreases [x]'s ref-count by one. *)
 
   class type struct_ref = object
     inherit base_ref
@@ -86,12 +100,6 @@ module type CORE_TYPES = sig
     method response : (Wire.Response.t * cap RO_array.t) or_error option
     (** [r#response] is [Some payload] if the response has arrived,
         or [None] if we're still waiting. *)
-
-    method finish : unit
-    (** [r#finish] indicates that this object will never be used again.
-        If the results have not yet arrived, we send a cancellation request (which
-        may or may not succeed). As soon as the results are available, they are
-        released. It is an error to use [r] after calling this. *)
 
     method cap : Wire.Path.t -> cap
     (** [r#cap path] is the capability found at [path] in the response.
@@ -111,11 +119,6 @@ module type CORE_TYPES = sig
       method call : Wire.Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
       (** [c#call msg args] invokes a method on [c]'s target and returns a promise for the result. *)
 
-      method update_rc : int -> unit
-      (** [c#update_rc d] adds [d] to [c]'s (local) reference count.
-          When it reaches zero, [c] must not be used again. A message may be
-          sent releasing any remote resources. *)
-
       method shortest : cap
       (** [c#shortest] is the shortest known path to [cap]. i.e. if [c] is forwarding to another cap, we
           return that, recursively. *)
@@ -128,9 +131,6 @@ module type CORE_TYPES = sig
           If [c] is a far-ref, [fn x] will be called when it breaks.
           If [c] is forwarding to another cap, it will forward this call. *)
 
-      method sealed_dispatch : 'a. 'a brand -> 'a option
-      (** [c#sealed_dispatch brand] extracts some private data of the given type. *)
-
       method problem : Exception.t option
       (** [c#problem] is the exception for a broken reference, or [None] if it is not known to be broken. *)
           
@@ -138,12 +138,6 @@ module type CORE_TYPES = sig
   (** A capability reference to an object that can handle calls.
       We might not yet know its final location, but we may be able
       to pipeline messages to it anyway. *)
-
-  val inc_ref : #cap -> unit
-  (** [inc_ref x] increases [x]'s ref-count by one. *)
-
-  val dec_ref : #cap -> unit
-  (** [dec_ref x] decreases [x]'s ref-count by one. *)
 
   module Request_payload : sig
     type t = Wire.Request.t * cap RO_array.t
@@ -197,10 +191,6 @@ module type CORE_TYPES = sig
     method check_invariants : unit
 
     method virtual blocker : base_ref option
-    method virtual call : Wire.Request.t -> cap RO_array.t -> struct_ref
-    method virtual shortest : cap
-    method virtual when_more_resolved : (cap -> unit) -> unit
-    method virtual problem : Exception.t option
     method sealed_dispatch : 'a. 'a brand -> 'a option
   end
   (** A mix-in to help with writing reference-counted objects.
