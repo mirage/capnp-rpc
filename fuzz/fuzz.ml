@@ -1,24 +1,35 @@
 module RO_array = Capnp_rpc.RO_array
 module Test_utils = Testbed.Test_utils
 
+let running_under_afl =
+  match Array.to_list Sys.argv with
+  | [] -> assert false
+  | [_] -> false
+  | [_; "--fuzz"] -> true
+  | prog :: _ -> Capnp_rpc.Debug.failf "Usage: %s < input-data" prog
+
 let three_vats = true
 
 let stop_after =
   match Sys.getenv "FUZZ_STOP" with
   | s ->
-    print_endline "vi: foldmethod=marker syntax=capnp-rpc";
+    Fmt.epr "vi: foldmethod=marker syntax=capnp-rpc@.";
     int_of_string s
   | exception Not_found -> -1
 (* If the ref-counting seems off after a while, try setting this to a low-ish number.
    This will cause it to try to clean up early and hopefully discover the problem sooner. *)
 
-let dump_state_at_each_step = (stop_after >= 0)
+let dump_state_at_each_step = not running_under_afl
 
-let sanity_checks = dump_state_at_each_step
+let sanity_checks = not running_under_afl
 (* Check that the state is valid after every step (slow). *)
 
 let () =
-  if sanity_checks then Printexc.record_backtrace true
+  if running_under_afl then (
+    Logs.set_level ~all:true (Some Logs.Error);
+  ) else (
+    Printexc.record_backtrace true
+  )
 
 let failf msg = Fmt.kstrf failwith msg
 
@@ -525,7 +536,6 @@ let run_test () =
 
 let () =
   (* Logs.set_level (Some Logs.Error); *)
-  assert (Array.length (Sys.argv) = 1);
   AflPersistent.run @@ fun () ->
   run_test ();
   Gc.full_major ()

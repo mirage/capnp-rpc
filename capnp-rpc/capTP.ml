@@ -1094,13 +1094,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Log.info (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
                    EP.In.pp_desc target
                    embargo#pp);
-      Log.info (fun f ->
-          (* This is mainly to test that the target still exists, to catch bugs while fuzzing. *)
-          f "Disembargo target is %t" @@
-          match target with
-          | `ReceiverHosted export_id -> (Exports.find_exn t.exports export_id).export_service#pp
-          | `ReceiverAnswer (aid, _path) -> (Answers.find_exn t.answers aid).answer_promise#pp
-        );
+      (* This is mainly to test that the target still exists, to catch bugs while fuzzing. *)
+      let target =
+        match target with
+        | `ReceiverHosted export_id -> (Exports.find_exn t.exports export_id).export_service#pp
+        | `ReceiverAnswer (aid, _path) -> (Answers.find_exn t.answers aid).answer_promise#pp
+      in
+      Log.info (fun f -> f "Disembargo target is %t" target);
       Embargoes.release t.embargoes embargo_id;
       embargo#disembargo;
       dec_ref embargo

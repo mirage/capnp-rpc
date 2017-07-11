@@ -12,7 +12,7 @@ build-fuzz:
 
 fuzz: build-fuzz
 	# TODO: remove -d
-	afl-fuzz -d -i _build/in -o _build/out ./_build/default/fuzz/fuzz.exe
+	afl-fuzz -d -i _build/in -o _build/out -- ./_build/default/fuzz/fuzz.exe --fuzz
 
 clean:
 	rm -rf _build
