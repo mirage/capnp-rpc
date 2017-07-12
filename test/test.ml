@@ -446,6 +446,63 @@ let test_local_embargo_8 () =
   CS.flush c s;
   CS.check_finished c s
 
+(* 39:0 and 39:1 are sent in order on the same reference, [cr39].
+   They must arrive in order too. *)
+let _test_local_embargo_9 () =
+  let service_4 = Services.manual () in
+  let service_8 = Services.manual () in
+  let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags
+      ~client_bs:service_4 service_8 in
+  let cr_3 = S.bootstrap s in
+  let sr_4 = call cr_3 "3:0" [cr_3] in
+  let cr_7 = sr_4#cap 1 in
+  let cr_10 = C.bootstrap c in
+  let sr_11 = call cr_10 "10:0" [] in
+  let cr_17 = sr_11#cap 1 in
+  let cr_22 = sr_11#cap 0 in
+(*   dec_ref cr_28; *)
+  C.handle_msg c ~expect:"bootstrap";
+  C.handle_msg c ~expect:"call:3:0";
+  let _msg, args, resolver_35 = service_4#pop in
+  let cr_36 = RO_array.get args 0 in
+  let cr_39 = sr_4#cap 0 in
+  resolve_ok resolver_35 "reply" [cr_22; cr_17];
+  S.handle_msg s ~expect:"bootstrap";
+  S.handle_msg s ~expect:"call:10:0";
+  let _msg, _args, resolver_44 = service_8#pop in
+  let sr_46 = call cr_7 "7:0" [] in
+  let sr_48 = call cr_39 "39:0" [] in
+  resolve_ok resolver_44 "reply" [cr_7; cr_3];
+  let sr_51 = call cr_39 "39:1" [] in
+  C.handle_msg c ~expect:"return:(boot)";
+  S.handle_msg s ~expect:"return:(boot)";
+  C.handle_msg c ~expect:"call:7:0";
+  S.handle_msg s ~expect:"return:reply";
+  C.handle_msg c ~expect:"call:39:0";
+  S.handle_msg s ~expect:"finish";
+  C.handle_msg c ~expect:"return:reply";
+  S.handle_msg s ~expect:"call:7:0";
+  C.handle_msg c ~expect:"call:39:1";
+  S.handle_msg s ~expect:"call:39:0";
+  C.handle_msg c ~expect:"disembargo-request";
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"disembargo-request";
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"call:7:0";
+  let msg, _args, _resolver_93 = service_4#pop in
+  Alcotest.(check string) "First message" "7:0" msg;
+  S.handle_msg s ~expect:"disembargo-reply";
+  C.handle_msg c ~expect:"disembargo-reply";
+  S.handle_msg s ~expect:"disembargo-reply";
+  C.handle_msg c ~expect:"disembargo-reply";
+  let _ = service_4#pop0 "39:0" in
+  let _ = service_4#pop0 "39:1" in
+  dec_ref cr_36;
+  ignore sr_46;
+  ignore sr_48;
+  ignore sr_51;
+  CS.check_finished c s
+
 (* The field must still be useable after the struct is released. *)
 let test_fields () =
   let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
@@ -1029,6 +1086,7 @@ let tests = [
   "Local embargo 6", `Quick, test_local_embargo_6;
   "Local embargo 7", `Quick, test_local_embargo_7;
   "Local embargo 8", `Quick, test_local_embargo_8;
+(*   "Local embargo 9", `Quick, test_local_embargo_9; *)         (* XXX: failing *)
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;

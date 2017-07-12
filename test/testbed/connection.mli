@@ -53,7 +53,7 @@ module Pair ( ) : sig
   module C : ENDPOINT
   module S : ENDPOINT
 
-  val create : client_tags:Logs.Tag.set -> server_tags:Logs.Tag.set -> #cap -> C.t * S.t
+  val create : client_tags:Logs.Tag.set -> server_tags:Logs.Tag.set -> ?client_bs:#cap -> #cap -> C.t * S.t
 
   val flush : C.t -> S.t -> unit
 
