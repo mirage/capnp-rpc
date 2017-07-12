@@ -43,10 +43,12 @@ let manual () = object
 
   (* Expect a message with no caps *)
   method pop0 msg =
-    let actual, args, answer = Queue.pop queue in
-    Alcotest.(check string) ("Expecting " ^ msg) msg actual;
-    Alcotest.(check int) "Has no args" 0 @@ RO_array.length args;
-    answer
+    match Queue.pop queue with
+    | exception Queue.Empty -> Capnp_rpc.Debug.failf "Empty queue (expecting %S)" msg
+    | actual, args, answer ->
+      Alcotest.(check string) ("Expecting " ^ msg) msg actual;
+      Alcotest.(check int) "Has no args" 0 @@ RO_array.length args;
+      answer
 
   (* Expect a message with one cap *)
   method pop1 msg =

@@ -1,12 +1,12 @@
 type actor = Fmt.style * string
 
-let pp_actor f (style, name) = Fmt.(styled style (const string name)) f ()
+let pp_actor f (style, name) = Fmt.(styled style string) f name
 
 let pp_peer f = function
-  | None -> ()
+  | None -> Fmt.string f "       "
   | Some peer -> Fmt.pf f "(%a)" pp_actor peer
 
-let unknown = `Black, "------------"
+let unknown = `Black, "-----"
 
 let actor_tag = Logs.Tag.def "actor" pp_actor
 let peer_tag = Logs.Tag.def "peer" pp_actor
@@ -45,5 +45,5 @@ let () =
   Logs.set_reporter reporter;
   Logs.set_level (Some Logs.Info)
 
-let server_tags = Logs.Tag.(empty |> add actor_tag (`Red, "server"))
-let client_tags = Logs.Tag.(empty |> add actor_tag (`Green, "client"))
+let server_tags = Logs.Tag.(empty |> add actor_tag (`Red, "vat-S"))
+let client_tags = Logs.Tag.(empty |> add actor_tag (`Green, "vat-C"))

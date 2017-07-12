@@ -125,12 +125,16 @@ module Pair ( ) = struct
   module C = Endpoint(ProtoC)
   module S = Endpoint(ProtoS)
 
-  let create ~client_tags ~server_tags bootstrap =
+  let create ~client_tags ~server_tags ?client_bs bootstrap =
     let q1 = Queue.create () in
     let q2 = Queue.create () in
-    let c = C.create ~tags:client_tags q1 q2 in
+    let c = C.create ~tags:client_tags q1 q2 ?bootstrap:client_bs in
     let s = S.create ~tags:server_tags q2 q1 ~bootstrap in
     Capnp_direct.Core_types.dec_ref bootstrap; (* [s] took a reference *)
+    begin match client_bs with
+      | None -> ()
+      | Some x -> Capnp_direct.Core_types.dec_ref x;
+    end;
     c, s
 
   let rec flush c s =
