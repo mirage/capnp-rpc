@@ -9,8 +9,6 @@ let running_under_afl =
   | [_; "--fuzz"] -> true
   | prog :: _ -> Capnp_rpc.Debug.failf "Usage: %s < input-data" prog
 
-let three_vats = true
-
 let test_script_path = "test_script.ml"
 
 let stop_after =
@@ -226,19 +224,6 @@ let () =
   Format.pp_set_margin Fmt.stderr 120;
   Fmt_tty.setup_std_outputs ()
 
-let dummy_answer = object (self : Core_types.struct_resolver)
-  method cap _ = failwith "dummy_answer"
-  method connect x = Core_types.dec_ref x
-  method update_rc = failwith "dummy_answer"
-  method sealed_dispatch _ = None
-  method pp f = Fmt.string f "dummy_answer"
-  method resolve x = self#connect (Core_types.resolved x)
-  method response = failwith "dummy_answer"
-  method when_resolved _ = failwith "when_resolved"
-  method blocker = None
-  method check_invariants = ()
-end
-
 type cap_ref = {
   cr_id : OID.t;
   cr_cap : Core_types.cap;
@@ -263,15 +248,20 @@ let make_cap_ref ~target cap =
     cr_counters = { next_to_send = 0; next_expected = 0 };
   }
 
+class type virtual test_service = object
+  inherit Core_types.service
+  method pp_var : Format.formatter -> unit
+end
+
 module Vat = struct
   type t = {
     id : int;
-    mutable bootstrap : (Core_types.cap * Direct.cap) option;
-    caps : cap_ref DynArray.t;
-    structs : (Core_types.struct_ref * Direct.struct_ref * OID.t) DynArray.t;
+    mutable bootstrap : (test_service * Direct.cap) option;
+    caps : cap_ref WrapArray.t;
+    structs : (Core_types.struct_ref * Direct.struct_ref * OID.t) WrapArray.t;
     actions : (unit -> unit) DynArray.t;
     mutable connections : (int * Endpoint.t) list;
-    answers_needed : (Core_types.struct_resolver * Direct.struct_ref * OID.t) DynArray.t;
+    answers_needed : (Core_types.struct_resolver * Direct.struct_ref * OID.t) WrapArray.t;
   }
 
   let tags t = tags_for_id t.id
@@ -325,16 +315,16 @@ module Vat = struct
               @[<v2>Answers waiting:@,%a@]@,\
               @]"
         (Fmt.Dump.list pp_connection) t.connections
-        (DynArray.dump ~compare:compare_cr dump_cap) t.caps
-        (DynArray.dump ~compare:compare_sr dump_sr) t.structs
-        (DynArray.dump ~compare:compare_an dump_an) t.answers_needed
+        (WrapArray.dump ~compare:compare_cr dump_cap) t.caps
+        (WrapArray.dump ~compare:compare_sr dump_sr) t.structs
+        (WrapArray.dump ~compare:compare_an dump_an) t.answers_needed
 
   let check t =
     try
       t.connections |> List.iter (fun (_, conn) -> Endpoint.check conn);
-      t.caps |> DynArray.iter (fun c -> c.cr_cap#check_invariants);
-      t.structs |> DynArray.iter (fun (s, _, _) -> s#check_invariants);
-      t.answers_needed |> DynArray.iter (fun (s, _, _) -> s#check_invariants)
+      t.caps |> WrapArray.iter (fun c -> c.cr_cap#check_invariants);
+      t.structs |> WrapArray.iter (fun (s, _, _) -> s#check_invariants);
+      t.answers_needed |> WrapArray.iter (fun (s, _, _) -> s#check_invariants)
     with ex ->
       Logs.err (fun f -> f ~tags:(tags t) "Invariants check failed: %a" Capnp_rpc.Debug.pp_exn ex);
       raise ex
@@ -348,7 +338,7 @@ module Vat = struct
     let rec caps = function
       | 0 -> []
       | i ->
-        match DynArray.pick state.caps with
+        match WrapArray.pick state.caps with
         | Some c -> c :: caps (i - 1)
         | None -> []
     in
@@ -358,7 +348,7 @@ module Vat = struct
 
   (* Call a random cap, passing random arguments. *)
   let do_call state () =
-    match DynArray.pick state.caps with
+    match WrapArray.pick state.caps with
     | None -> ()
     | Some cap_ref ->
       let cap = cap_ref.cr_cap in
@@ -385,14 +375,14 @@ module Vat = struct
                (Fmt.Dump.list pp_var) arg_refs
            );
       counters.next_to_send <- succ counters.next_to_send;
-      DynArray.add state.structs (cap#call msg args, answer, answer_var)
+      WrapArray.add state.structs (cap#call msg args, answer, answer_var)
 
   (* Reply to a random question. *)
   let do_answer state () =
     (* Choose args before popping question, in case we run out of random data in the middle. *)
     let n_args = Choose.int 3 in
     let args, arg_refs = n_caps state (n_args) in
-    match DynArray.pop state.answers_needed with
+    match WrapArray.pop state.answers_needed with
     | None -> ()
     | Some (answer, answer_id, answer_var) ->
       let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
@@ -401,17 +391,18 @@ module Vat = struct
                     "Return %a (%a)" (RO_array.pp Core_types.pp) args Direct.pp_struct answer_id);
       Direct.return answer_id (RO_array.of_list arg_ids);
       code (fun f ->
+          let pp_inc_var f x = Fmt.pf f "with_inc_ref %a" pp_var x in
           Fmt.pf f "resolve_ok %a %S %a;"
             pp_resolver answer_var
             "reply"
-            (Fmt.Dump.list pp_var) arg_refs
+            (Fmt.Dump.list pp_inc_var) arg_refs
         );
       answer#resolve (Ok ("reply", args));
       Core_types.dec_ref answer
       (* TODO: reply with another promise or with an error *)
 
   let test_service ~target:self_id vat =
-    object (self : #Core_types.cap)
+    object (self : test_service)
       inherit Core_types.service as super
 
       val id = Capnp_rpc.Debug.OID.next ()
@@ -435,27 +426,39 @@ module Vat = struct
           failf "Expecting message call_id=%a:%d, but got %d (target %a)"
             OID.pp sender counters.next_expected
             seq Direct.pp target;
+        let expected_msg = Fmt.strf "%a:%d" OID.pp sender counters.next_expected in
         counters.next_expected <- succ counters.next_expected;
         let answer_var = OID.next () in
-        code (fun f -> Fmt.pf f "let _msg, %s,args, %a = %t#pop in"
-                 (if RO_array.length caps = 0 then "_" else "")
-                 pp_resolver
-                 answer_var self#pp_var);
-        caps |> RO_array.iteri (fun i c ->
-            let target = RO_array.get arg_ids i in
-            let cr = make_cap_ref ~target c in
-            code (fun f -> Fmt.pf f "let %a = RO_array.get args %d in" pp_var cr i);
-            DynArray.add vat.caps cr
-          );
+        begin
+          match RO_array.length caps with
+          | 0 -> 
+            code (fun f -> Fmt.pf f "let %a = %t#pop0 %S in"
+                     pp_resolver
+                     answer_var self#pp_var
+                     expected_msg
+                 );
+          | _ ->
+            code (fun f -> Fmt.pf f "let args, %a = %t#pop_n %S in"
+                     pp_resolver
+                     answer_var self#pp_var
+                     expected_msg
+                 );
+            caps |> RO_array.iteri (fun i c ->
+                let target = RO_array.get arg_ids i in
+                let cr = make_cap_ref ~target c in
+                code (fun f -> Fmt.pf f "let %a = RO_array.get args %d in" pp_var cr i);
+                WrapArray.add vat.caps cr
+              )
+        end;
         let answer_promise = Local_struct_promise.make () in
         Core_types.inc_ref answer_promise;
-        DynArray.add vat.answers_needed (answer_promise, answer, answer_var);
+        WrapArray.add vat.answers_needed (answer_promise, answer, answer_var);
         (answer_promise :> Core_types.struct_ref)
     end
 
   (* Pick a random cap from an answer. *)
   let do_struct state () =
-    match DynArray.pick state.structs with
+    match WrapArray.pick state.structs with
     | None -> ()
     | Some (s, s_id, s_var) ->
       let i = Choose.int 3 in
@@ -464,11 +467,11 @@ module Vat = struct
       let target = Direct.cap s_id i in
       let cr = make_cap_ref ~target cap in
       code (fun f -> Fmt.pf f "let %a = %a#cap %d in" pp_var cr pp_struct s_var i);
-      DynArray.add state.caps cr
+      WrapArray.add state.caps cr
 
   (* Finish an answer *)
   let do_finish state () =
-    match DynArray.pop state.structs with
+    match WrapArray.pop state.structs with
     | None -> ()
     | Some (s, _id, s_var) ->
       Logs.info (fun f -> f ~tags:(tags state) "Finish %t" s#pp);
@@ -476,7 +479,7 @@ module Vat = struct
       Core_types.dec_ref s
 
   let do_release state () =
-    match DynArray.pop state.caps with
+    match WrapArray.pop state.caps with
     | None -> ()
     | Some cr ->
       let c = cr.cr_cap in
@@ -492,7 +495,7 @@ module Vat = struct
     let cr = make_cap_ref ~target ts in
     code (fun f -> Fmt.pf f "let %t = Services.manual () in" ts#pp_var);
     code (fun f -> Fmt.pf f "let %a = %t in" pp_var cr ts#pp_var);
-    DynArray.add state.caps cr
+    WrapArray.add state.caps cr
 
   let add_actions v conn ~target =
     DynArray.add v.actions (fun () ->
@@ -502,40 +505,16 @@ module Vat = struct
                  pp_var cr
                  Endpoint.pp_conn_mod conn
                  Endpoint.pp_conn_var conn);
-        DynArray.add v.caps cr
+        WrapArray.add v.caps cr
       );
     DynArray.add v.actions (fun () ->
         Endpoint.maybe_handle_msg conn
       )
 
   let free_all t =
-    let rec free_caps () =
-      match DynArray.pop_first t.caps with
-      | Some c ->
-        Logs.info (fun f -> f "dec_ref: %t;" c.cr_cap#pp);
-        code (fun f -> Fmt.pf f "dec_ref %a" pp_var c);
-        Core_types.dec_ref c.cr_cap; free_caps ()
-      | None -> ()
-    in
-    let rec free_srs () =
-      match DynArray.pop_first t.structs with
-      | Some (q, _, s_id) ->
-        code (fun f -> Fmt.pf f "dec_ref %a;" pp_struct s_id);
-        Core_types.dec_ref q; free_srs ()
-      | None -> ()
-    in
-    let rec free_ans () =
-      match DynArray.pop_first t.answers_needed with
-      | None -> ()
-      | Some (a, _, answer_var) ->
-        code (fun f ->
-            Fmt.pf f "%a#resolve (Error (Capnp_rpc.Error.exn \"Free all\");@," pp_resolver answer_var;
-            Fmt.pf f "dec_ref %a" pp_resolver answer_var;
-          );
-        a#resolve (Error (Capnp_rpc.Error.exn "Free all"));
-        Core_types.dec_ref a;
-        free_ans ()
-    in
+    let free_caps () = WrapArray.free t.caps in
+    let free_srs () = WrapArray.free t.structs in
+    let free_ans () = WrapArray.free t.answers_needed in
     free_caps ();
     free_srs ();
     free_ans ()
@@ -545,20 +524,34 @@ module Vat = struct
   let create () =
     let id = !next_id in
     next_id := succ !next_id;
-    let null = make_cap_ref ~target:Direct.null Core_types.null in
+    let free_cap cr =
+      code (fun f -> Fmt.pf f "dec_ref %a;" pp_var cr);
+      Core_types.dec_ref cr.cr_cap
+    in
+    let free_struct (q, _, s_id) =
+      code (fun f -> Fmt.pf f "dec_ref %a;" pp_struct s_id);
+      Core_types.dec_ref q
+    in
+    let free_answer (ans, _, answer_var) =
+      code (fun f ->
+          Fmt.pf f "%a#resolve (Error (Capnp_rpc.Error.exn \"Free all\"));@," pp_resolver answer_var;
+          Fmt.pf f "dec_ref %a;" pp_resolver answer_var;
+        );
+      ans#resolve (Error (Capnp_rpc.Error.exn "Operation rejected"))
+    in
     let t = {
       id;
       bootstrap = None;
-      caps = DynArray.create null;
-      structs = DynArray.create (Core_types.broken_struct `Cancelled, Direct.cancelled, OID.next ());
+      caps = WrapArray.create ~free:free_cap 10;
+      structs = WrapArray.create ~free:free_struct 10;
       actions = DynArray.create ignore;
       connections = [];
-      answers_needed = DynArray.create (dummy_answer, Direct.cancelled, OID.next ());
+      answers_needed = WrapArray.create ~free:free_answer 10;
     } in
     let bs_id = Direct.make_cap () in
     let ts = test_service ~target:bs_id t in
-    code (fun f -> Fmt.pf f "let %t = Services.manual () in" ts#pp_var);
-    t.bootstrap <- Some ((ts :> Core_types.cap), bs_id);
+    code (fun f -> Fmt.pf f "let %t = Services.manual () in (* Bootstrap for vat %d *)" ts#pp_var id);
+    t.bootstrap <- Some (ts, bs_id);
     DynArray.add t.actions (do_call t);
     DynArray.add t.actions (do_struct t);
     DynArray.add t.actions (do_finish t);
@@ -586,8 +579,8 @@ let make_connection v1 v2 =
   let q2 = Queue.create () in
   let bootstrap x =
     match x.Vat.bootstrap with
-    | None -> None
-    | Some (c, _) -> Some c
+    | None -> assert false
+    | Some (c, _) -> c
   in
   let target = function
     | None -> Direct.null
@@ -595,8 +588,19 @@ let make_connection v1 v2 =
   in
   let v1_tags = Vat.tags v1 |> Logs.Tag.add Test_utils.peer_tag (actor_for_id v2.Vat.id) in
   let v2_tags = Vat.tags v2 |> Logs.Tag.add Test_utils.peer_tag (actor_for_id v1.Vat.id) in
-  let c = Endpoint.create ~local_id:v1.id ~remote_id:v2.id ~tags:v1_tags q1 q2 ?bootstrap:(bootstrap v1) in
-  let s = Endpoint.create ~local_id:v2.id ~remote_id:v1.id ~tags:v2_tags q2 q1 ?bootstrap:(bootstrap v2) in
+  let c = Endpoint.create ~local_id:v1.id ~remote_id:v2.id ~tags:v1_tags q1 q2 ~bootstrap:(bootstrap v1) in
+  let s = Endpoint.create ~local_id:v2.id ~remote_id:v1.id ~tags:v2_tags q2 q1 ~bootstrap:(bootstrap v2) in
+  code (fun f ->
+      Fmt.pf f
+        "@[<v2>let %a, %a = CS.create@,\
+           ~client_tags:Test_utils.client_tags ~client_bs:%t@,\
+           ~server_tags:Test_utils.server_tags %t@]@,\
+         in"
+        Endpoint.pp_conn_var c
+        Endpoint.pp_conn_var s
+        (bootstrap v1)#pp_var
+        (bootstrap v2)#pp_var
+    );
   let open Vat in
   add_actions v1 c ~target:(target v2.bootstrap);
   add_actions v2 s ~target:(target v1.bootstrap);
@@ -604,17 +608,23 @@ let make_connection v1 v2 =
   v2.connections <- (v1.id, s) :: v2.connections
 
 let run_test () =
+  OID.reset ();
+  step := 0;
+
   let v1 = Vat.create () in
   let v2 = Vat.create () in
 
   make_connection v1 v2;
 
   let vats =
+    let three_vats = Choose.bool () in
     if three_vats then (
+      Logs.info (fun f -> f "Testing with three vats");
       let v3 = Vat.create () in
       make_connection v1 v3;
       [| v1; v2; v3 |]
     ) else (
+      Logs.info (fun f -> f "Testing with two vats");
       [| v1; v2 |]
     )
   in
@@ -640,8 +650,6 @@ let run_test () =
     if stop_after >= 0 then failwith "Everything freed!"
   in
 
-  OID.reset ();
-  step := 0;
   try
     let rec loop () =
       let v = Choose.array vats in

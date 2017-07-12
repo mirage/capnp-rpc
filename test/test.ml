@@ -17,6 +17,7 @@ let empty = RO_array.empty
 
 let inc_ref = Core_types.inc_ref
 let dec_ref = Core_types.dec_ref
+let with_inc_ref x = inc_ref x; x
 
 let error = Alcotest.of_pp Capnp_rpc.Error.pp
 let pp_cap f p = p#pp f
@@ -356,8 +357,7 @@ let test_local_embargo_7 () =
   (* Client resolves a2 to a local promise. *)
   let client_promise = Cap_proxy.local_promise () in
   let a2 = local#pop0 "q2" in
-  inc_ref client_promise;
-  resolve_ok a2 "a2" [client_promise];
+  resolve_ok a2 "a2" [with_inc_ref client_promise];
   (* Client gets answer to a1 and sends disembargo. *)
   C.handle_msg c ~expect:"return:a1";
   let m2 = call target "Message-2" [] in
