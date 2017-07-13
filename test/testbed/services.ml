@@ -57,6 +57,11 @@ let manual () = object
     Alcotest.(check int) "Has one arg" 1 @@ RO_array.length args;
     RO_array.get args 0, answer
 
+  method pop_n msg =
+    let actual, args, answer = Queue.pop queue in
+    Alcotest.(check string) ("Expecting " ^ msg) msg actual;
+    args, answer
+
 end
 
 (* Callers can swap their arguments for the slot's contents. *)

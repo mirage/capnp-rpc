@@ -139,7 +139,7 @@ module Make(C : S.CORE_TYPES) = struct
 
         method! pp f =
           match state with
-          | Unresolved _ -> Fmt.pf f "embargoed(%a, %t) -> %t" Debug.OID.pp id super#pp_refcount underlying#pp
+          | Unresolved _ -> Fmt.pf f "embargoed(%a, %t)" Debug.OID.pp id super#pp_refcount
           | Resolved cap -> Fmt.pf f "disembargoed(%a, %t) -> %t" Debug.OID.pp id super#pp_refcount cap#pp
       end
     in
