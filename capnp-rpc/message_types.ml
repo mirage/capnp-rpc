@@ -80,7 +80,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | `Exception ex -> Fmt.pf f "Exception:%a" Exception.pp ex
     | `Cancelled -> Fmt.pf f "Cancelled"
     | `ResultsSentElsewhere -> Fmt.pf f "ResultsSentElsewhere"
-    | `TakeFromOtherQuestion qid -> Fmt.pf f "TakeFromOtherQuestion(%a)" QuestionId.pp qid
+    | `TakeFromOtherQuestion qid -> Fmt.pf f "TakeFromSenderQuestion(%a)" QuestionId.pp qid
     | `AcceptFromThirdParty -> Fmt.pf f "AcceptFromThirdParty"
 
   let pp_disembargo_request : disembargo_request Fmt.t = fun f -> function

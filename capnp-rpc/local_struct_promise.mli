@@ -1,3 +1,3 @@
 module Make (C : S.CORE_TYPES) : sig
-  val make : unit -> C.struct_resolver
+  val make : unit -> C.struct_ref * C.struct_resolver
 end

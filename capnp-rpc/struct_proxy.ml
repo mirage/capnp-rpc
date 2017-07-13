@@ -16,7 +16,7 @@ module Make (C : S.CORE_TYPES) = struct
   class type struct_ref_internal = object
     inherit struct_resolver
 
-    method pipeline : Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
+    method pipeline : Wire.Path.t -> C.struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit
     method field_update_rc : Wire.Path.t -> int -> unit
 
     method field_blocker : Wire.Path.t -> base_ref option
@@ -95,10 +95,10 @@ module Make (C : S.CORE_TYPES) = struct
 
       val id = Debug.OID.next ()
 
-      method call msg caps =
+      method call results msg caps =
         match state with
-        | PromiseField (p, path) -> p#pipeline path msg caps
-        | ForwardingField c -> c#call msg caps
+        | PromiseField (p, path) -> p#pipeline path results msg caps
+        | ForwardingField c -> c#call results msg caps
 
       method pp f =
         match state with
@@ -147,7 +147,7 @@ module Make (C : S.CORE_TYPES) = struct
         | PromiseField (p, i) -> p#field_sealed_dispatch i brand
     end
 
-  class virtual ['promise] t init = object (self : #struct_resolver)
+  class virtual ['promise] t init = object (self : #C.struct_ref)
     val mutable state =
       Unresolved {
         target = init;
@@ -164,7 +164,8 @@ module Make (C : S.CORE_TYPES) = struct
 
     method private virtual pp_unresolved : 'promise Fmt.t
 
-    method private virtual do_pipeline : 'promise -> Wire.Path.t -> Wire.Request.t -> cap RO_array.t -> struct_ref
+    method private virtual do_pipeline : 'promise ->
+      Wire.Path.t -> C.struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit
 
     method private virtual on_resolve : 'promise -> struct_ref -> unit
     (* We have just started forwarding. Send any queued data onwards. *)
@@ -177,10 +178,10 @@ module Make (C : S.CORE_TYPES) = struct
     method private field_resolved _f = ()
     (** [field_resolved f] is called when [f] has been resolved. *)
 
-    method pipeline path msg caps =
+    method pipeline path results msg caps =
       dispatch state
-        ~unresolved:(fun x -> self#do_pipeline x.target path msg caps)
-        ~forwarding:(fun x -> (x#cap path)#call msg caps)
+        ~unresolved:(fun x -> self#do_pipeline x.target path results msg caps)
+        ~forwarding:(fun x -> (x#cap path)#call results msg caps)
 
     method response =
       dispatch state
@@ -227,7 +228,7 @@ module Make (C : S.CORE_TYPES) = struct
           name
           Debug.OID.pp id
 
-    method connect x =
+    method resolve x =
       Log.info (fun f -> f "@[Updating: %t@\n\
                             @      to: -> %t" self#pp x#pp);
       match state with
@@ -289,8 +290,7 @@ module Make (C : S.CORE_TYPES) = struct
         let refs_dropped = Field_map.cardinal u.fields in
         x#update_rc (-(refs_dropped + 1)) (* Also, we take ownership of [x]. *)
 
-    method resolve result =
-      self#connect (resolved result)
+    method resolver = (self :> C.struct_resolver)
 
     method update_rc d =
       dispatch state

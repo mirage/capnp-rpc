@@ -3,20 +3,21 @@ module Make (C : S.CORE_TYPES) = struct
 
   type target = (C.struct_ref -> unit) Queue.t
 
-  let rec local_promise ?parent () = object (self : #C.struct_resolver)
+  let rec local_promise ?parent () = object (self : _ #Struct_proxy.t)
     inherit [target] Struct_proxy.t (Queue.create ()) as super
 
     val name = "local-promise"
 
-    method private do_pipeline q i msg caps =
-      let result = local_promise ~parent:self () in
+    method private do_pipeline q i results msg caps =
+      (* We add an extra resolver here so that we can report [self]
+         as the blocker. *)
+      let local_results = local_promise ~parent:self () in
       q |> Queue.add (fun p ->
           let cap = p#cap i in
-          let r = result#connect (cap#call msg caps) in
-          C.dec_ref cap;
-          r
+          cap#call (local_results :> C.struct_resolver) msg caps;
+          C.dec_ref cap
         );
-      (result :> C.struct_ref)
+      results#resolve (local_results :> C.struct_ref)
 
     method pp_unresolved f _ =
       match parent with
@@ -37,5 +38,7 @@ module Make (C : S.CORE_TYPES) = struct
     method field_sealed_dispatch _ _ = None
   end
 
-  let make () = (local_promise () :> C.struct_resolver)
+  let make () =
+    let p = local_promise () in
+    (p :> C.struct_ref), p#resolver
 end

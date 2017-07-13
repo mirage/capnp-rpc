@@ -29,11 +29,11 @@ let reporter =
     let peer = Logs.Tag.find peer_tag tags in
     let qid = Logs.Tag.find Capnp_rpc.Debug.qid_tag tags in
     let print _ =
-      Fmt.(pf stderr) "%a@." pp_qid qid;
+      Fmt.(pf stdout) "%a@." pp_qid qid;
       over ();
       k ()
     in
-    Fmt.kpf print Fmt.stderr ("%a %a %a%a: @[" ^^ fmt ^^ "@]")
+    Fmt.kpf print Fmt.stdout ("%a %a %a%a: @[" ^^ fmt ^^ "@]")
       Fmt.(styled `Magenta string) (Printf.sprintf "%11s" src)
       Logs_fmt.pp_header (level, header)
       pp_actor actor

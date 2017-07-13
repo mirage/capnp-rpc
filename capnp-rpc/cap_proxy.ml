@@ -17,7 +17,7 @@ module Make(C : S.CORE_TYPES) = struct
 
   (* Operations to perform when resolved. *)
   type pending =
-    | Call of struct_resolver * Wire.Request.t * cap RO_array.t
+    | Call of C.struct_resolver * Wire.Request.t * cap RO_array.t
     | Watcher of (cap -> unit)
 
   type cap_promise_state =
@@ -34,14 +34,12 @@ module Make(C : S.CORE_TYPES) = struct
 
       val id = Debug.OID.next ()
 
-      method call msg caps =
+      method call results msg caps =
         match state with
         | Unresolved (q, release_pending) ->
           assert (not release_pending);
-          let result = Local_struct_promise.make () in
-          Queue.add (Call (result, msg, caps)) q;
-          (result :> struct_ref)
-        | Resolved cap -> cap#call msg caps
+          Queue.add (Call (results, msg, caps)) q
+        | Resolved cap -> cap#call results msg caps
 
       method resolve (cap:cap) =
         self#check_refcount;
@@ -61,9 +59,7 @@ module Make(C : S.CORE_TYPES) = struct
           Log.info (fun f -> f "Resolved local cap promise: %t" self#pp);
           let forward = function
             | Watcher fn -> C.inc_ref cap; fn cap
-            | Call (result, msg, caps) ->
-              let r = cap#call msg caps in
-              result#connect r      (* Or should it be connect [r] to [result], for tail-recursion? *)
+            | Call (result, msg, caps) -> cap#call result msg caps
           in
           Queue.iter forward q;
           if release_pending then (

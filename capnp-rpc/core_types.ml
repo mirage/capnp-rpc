@@ -25,16 +25,14 @@ module Make(Wire : S.WIRE) = struct
   end
   and cap = object
     inherit base_ref
-    method call : Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
+    method call : struct_resolver -> Request.t -> cap RO_array.t -> unit   (* Takes ownership of [caps] *)
     method shortest : cap
     method when_more_resolved : (cap -> unit) -> unit
     method problem : Exception.t option
   end
-
-  class type struct_resolver = object
-    inherit struct_ref
-    method resolve : (Response.t * cap RO_array.t) or_error -> unit
-    method connect : struct_ref -> unit
+  and struct_resolver = object
+    method pp : Format.formatter -> unit
+    method resolve : struct_ref -> unit
   end
 
   let pp_cap_list f caps = RO_array.pp pp f caps
@@ -91,9 +89,9 @@ module Make(Wire : S.WIRE) = struct
     end
 
   let rec broken_cap ex = object (self : cap)
-    method call _ caps =
+    method call results _ caps =
       RO_array.iter dec_ref caps;
-      broken_struct (`Exception ex)
+      results#resolve (broken_struct (`Exception ex))
     method update_rc _ = ()
     method pp f = Exception.pp f ex
     method shortest = self
@@ -206,7 +204,7 @@ module Make(Wire : S.WIRE) = struct
   class virtual service = object (self : #cap)
     inherit ref_counted
 
-    method virtual call : Request.t -> cap RO_array.t -> struct_ref
+    method virtual call : struct_resolver -> Request.t -> cap RO_array.t -> unit
     method private release = ()
     method pp f = Fmt.string f "<service>"
     method shortest = (self :> cap)
@@ -222,4 +220,8 @@ module Make(Wire : S.WIRE) = struct
   let resolved = function
     | Ok x -> return x
     | Error msg -> broken_struct msg
+
+  let resolve_payload (r:#struct_resolver) (x:Response_payload.t or_error) = r#resolve (resolved x)
+  let resolve_ok r msg caps = resolve_payload r (Ok (msg, caps))
+  let resolve_exn r ex = resolve_payload r (Error (`Exception ex))
 end

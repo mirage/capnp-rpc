@@ -38,7 +38,9 @@ module Capability = struct
     let (interface_id, method_id) = m in
     Call.interface_id_set c interface_id;
     Call.method_id_set_exn c method_id;
-    target#call (Rpc.Builder c) (Request.caps req)
+    let results, resolver = Local_struct_promise.make () in
+    target#call resolver (Rpc.Builder c) (Request.caps req);
+    results
 
   let call_for_value cap m req =
     let p, r = Lwt.task () in

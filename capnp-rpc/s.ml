@@ -112,32 +112,41 @@ module type CORE_TYPES = sig
       It can be used to pipeline calls to capabilities that we hope will
       be returned in the results. *)
 
-  and cap =
-    object
-      inherit base_ref
+  and cap = object
+    inherit base_ref
 
-      method call : Wire.Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
-      (** [c#call msg args] invokes a method on [c]'s target and returns a promise for the result. *)
+    method call : struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit   (* Takes ownership of [caps] *)
+    (** [c#call results msg args] invokes a method on [c]'s target and eventually resolves [results]
+        with the answer. *)
 
-      method shortest : cap
-      (** [c#shortest] is the shortest known path to [cap]. i.e. if [c] is forwarding to another cap, we
-          return that, recursively. *)
+    method shortest : cap
+    (** [c#shortest] is the shortest known path to [cap]. i.e. if [c] is forwarding to another cap, we
+        return that, recursively. *)
 
-      method when_more_resolved : (cap -> unit) -> unit
-      (** [c#when_more_resolved fn] calls [fn x] when this cap becomes more resolved.
-          [fn x] gets a reference to [x] and needs to [dec_ref] it.
-          Note that the new capability can be another promise.
-          If [c] is already resolved to its final value, this does nothing.
-          If [c] is a far-ref, [fn x] will be called when it breaks.
-          If [c] is forwarding to another cap, it will forward this call. *)
+    method when_more_resolved : (cap -> unit) -> unit
+    (** [c#when_more_resolved fn] calls [fn x] when this cap becomes more resolved.
+        [fn x] gets a reference to [x] and needs to [dec_ref] it.
+        Note that the new capability can be another promise.
+        If [c] is already resolved to its final value, this does nothing.
+        If [c] is a far-ref, [fn x] will be called when it breaks.
+        If [c] is forwarding to another cap, it will forward this call. *)
 
-      method problem : Exception.t option
-      (** [c#problem] is the exception for a broken reference, or [None] if it is not known to be broken. *)
-          
-    end
+    method problem : Exception.t option
+    (** [c#problem] is the exception for a broken reference, or [None] if it is not known to be broken. *)
+
+  end
   (** A capability reference to an object that can handle calls.
       We might not yet know its final location, but we may be able
       to pipeline messages to it anyway. *)
+
+  and struct_resolver = object
+    method pp : Format.formatter -> unit
+
+    method resolve : struct_ref -> unit
+    (** [r#resolve x] causes [r]'s promise to behave as [x] in future.
+        The promise takes ownership of [x] (is responsible for calling [dec_rec] on it). *)
+  end
+  (** A [struct_ref] that allows its caller to resolve it. *)
 
   module Request_payload : sig
     type t = Wire.Request.t * cap RO_array.t
@@ -164,18 +173,6 @@ module type CORE_TYPES = sig
     val pp : t Fmt.t
   end
 
-  class type struct_resolver = object
-    inherit struct_ref
-
-    method connect : struct_ref -> unit
-    (** [r#connect x] causes [r] to behave as [x] in future.
-        [r] takes ownership of [x] (is responsible for calling [finish] on it). *)
-
-    method resolve : Response_payload.t or_error -> unit
-    (** [r#resolve x] is [r#resolve (return x)]. *)
-  end
-  (** A [struct_ref] that allows its caller to resolve it. *)
-
   class virtual ref_counted : object
     method private virtual release : unit
     method virtual pp : Format.formatter -> unit
@@ -199,7 +196,7 @@ module type CORE_TYPES = sig
   class virtual service : object
     inherit base_ref
     inherit ref_counted
-    method virtual call : Wire.Request.t -> cap RO_array.t -> struct_ref   (* Takes ownership of [caps] *)
+    method virtual call : struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit (* Takes ownership of [caps] *)
     method shortest : cap
     method private release : unit
     method when_more_resolved : (cap -> unit) -> unit
@@ -226,6 +223,16 @@ module type CORE_TYPES = sig
 
   val resolved : Response_payload.t or_error -> struct_ref
   (** [resolved x] is a resolved [struct_ref] with resolution [x]. *)
+
+  val resolve_payload : #struct_resolver -> Response_payload.t or_error -> unit
+  (** [resolve_payload r x] is [r#resolve (resolved x)]. [r] takes ownership of [x]. *)
+
+  val resolve_ok : #struct_resolver -> Wire.Response.t -> cap RO_array.t -> unit
+  (** [resolve_ok r msg caps] is [resolve_payload r (Ok (msg, caps))].
+      [r] takes ownership of [caps]. *)
+
+  val resolve_exn : #struct_resolver -> Exception.t -> unit
+  (** [resolve_exn r exn] is [resolve_payload r (Error (`Exception exn))]. *)
 end
 
 module type NETWORK_TYPES = sig

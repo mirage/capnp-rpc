@@ -22,9 +22,9 @@ end
 let echo_service () = object
   inherit test_service as super
   val name = "echo-service"
-  method call x caps =
+  method call results x caps =
     super#check_refcount;
-    return ("got:" ^ x, caps)
+    resolve_ok results ("got:" ^ x) caps
 end
 
 (* A service which just queues incoming messages and lets the test driver handle them. *)
@@ -33,11 +33,9 @@ let manual () = object
   val queue = Queue.create ()
   val name = "manual"
 
-  method call x caps =
+  method call results x caps =
     super#check_refcount;
-    let result = Capnp_direct.Local_struct_promise.make () in
-    Queue.add (x, caps, result) queue;
-    (result :> struct_ref)
+    Queue.add (x, caps, results) queue
 
   method pop = Queue.pop queue  (* Caller takes ownership of caps *)
 
@@ -69,11 +67,11 @@ let swap_service slot = object
   inherit test_service as super
   val name = "swap"
 
-  method call x caps =
+  method call results x caps =
     super#check_refcount;
     let old_msg, old_caps = !slot in
     slot := (x, caps);
-    return (old_msg, old_caps)
+    resolve_ok results old_msg old_caps
 end
 
 let logger () = object
@@ -82,11 +80,11 @@ let logger () = object
 
   val log = Queue.create ()
 
-  method call x caps =
+  method call results x caps =
     super#check_refcount;
     assert (RO_array.length caps = 0);
     Queue.add x log;
-    return ("logged", RO_array.empty)
+    resolve_ok results "logged" RO_array.empty
 
   method pop =
     try Queue.pop log

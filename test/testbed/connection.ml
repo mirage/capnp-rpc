@@ -90,7 +90,12 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
         msg
 
   let handle_msg ?expect t =
-    pop_msg ?expect t |> Conn.handle_msg t.conn
+    try
+      pop_msg ?expect t |> Conn.handle_msg t.conn;
+      Conn.check t.conn
+    with ex ->
+      Logs.err (fun f -> f ~tags:(Conn.tags t.conn) "@[<v2>%a:@,%a@]" Capnp_rpc.Debug.pp_exn ex Conn.dump t.conn);
+      raise ex
 
   let maybe_handle_msg t =
     if Queue.length t.recv_queue > 0 then handle_msg t
