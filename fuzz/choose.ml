@@ -15,4 +15,4 @@ let array options =
   options.(int (Array.length options))
 
 let bool () =
-  Char.code (input_char stdin) land 1 = 0
+  Char.code (input_char stdin) land 1 = 1

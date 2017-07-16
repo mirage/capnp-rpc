@@ -27,10 +27,17 @@ let response_promise = Alcotest.(option (result (pair string (ro_array cap)) err
 
 let exn = Alcotest.of_pp Capnp_rpc.Exception.pp
 
+let call target msg caps =
+  let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
+  List.iter Core_types.inc_ref caps;
+  let results, resolver = Local_struct_promise.make () in
+  target#call resolver msg (RO_array.of_list caps);
+  results
+
 (* Takes ownership of caps *)
 let resolve_ok (ans:#Core_types.struct_resolver) msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
-  ans#resolve (Ok (msg, RO_array.of_list caps))
+  Core_types.resolve_ok ans msg @@ RO_array.of_list caps
 
 let test_simple_connection () =
   let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
@@ -38,7 +45,7 @@ let test_simple_connection () =
   S.handle_msg s ~expect:"bootstrap";
   C.handle_msg c ~expect:"return:(boot)";
   S.handle_msg s ~expect:"finish";
-  let q = servce_promise#call "my-content" empty in
+  let q = call servce_promise "my-content" [] in
   S.handle_msg s ~expect:"call:my-content";
   C.handle_msg c ~expect:"return:got:my-content";
   Alcotest.(check response_promise) "Client got call response" (Some (Ok ("got:my-content", empty))) q#response;
@@ -54,11 +61,6 @@ let init_pair ~bootstrap_service =
   C.handle_msg c ~expect:"return:(boot)";
   S.handle_msg s ~expect:"finish";
   c, s, bs
-
-let call target msg caps =
-  let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
-  List.iter Core_types.inc_ref caps;
-  target#call msg (RO_array.of_list caps)
 
 (* The server gets an object and then sends it back. When the object arrives back
    at the client, it must be the original (local) object, not a proxy. *)
@@ -114,16 +116,15 @@ let test_share_cap () =
 let test_local_embargo () =
   let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   let local = Services.logger () in
-  let q = call bs "Get service" [(local :> Core_types.cap)] in
+  let q = call bs "Get service" [local] in
   let service = q#cap 0 in
-  let m1 = service#call "Message-1" empty in
+  let m1 = call service "Message-1" [] in
   S.handle_msg s ~expect:"call:Get service";
   C.handle_msg c ~expect:"return:got:Get service";
   dec_ref q;
-  Logs.warn (fun f -> f "service = %t" service#pp);
   (* We've received the bootstrap reply, so we know that [service] is local,
      but the pipelined message we sent to it via [s] hasn't arrived yet. *)
-  let m2 = service#call "Message-2" empty in
+  let m2 = call service "Message-2" [] in
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
   S.handle_msg s ~expect:"disembargo-request";
@@ -148,7 +149,7 @@ let test_local_embargo_2 () =
   let q1 = call bs "q1" [local_reg] in (* Give the server our registry and get back [local]. *)
   let service = q1#cap 0 in                (* Service is a promise for local *)
   dec_ref q1;
-  let m1 = service#call "Message-1" empty in             (* First message to service *)
+  let m1 = call service "Message-1" [] in             (* First message to service *)
   S.handle_msg s ~expect:"call:q1";
   let (_, q1_args, a1) = server_main#pop in
   let proxy_to_local_reg = RO_array.get q1_args 0 in
@@ -157,7 +158,7 @@ let test_local_embargo_2 () =
   let q2 = call proxy_to_local_reg "q2" [] in
   dec_ref proxy_to_local_reg;
   let proxy_to_local = q2#cap 0 in
-  a1#resolve (Ok ("a1", RO_array.of_list [proxy_to_local]));
+  resolve_ok a1 "a1" [proxy_to_local];
   (* [proxy_to_local] is now owned by [a1]. *)
   dec_ref q2;
   C.handle_msg c ~expect:"call:q2";
@@ -169,7 +170,7 @@ let test_local_embargo_2 () =
      it to arrive back at the local promise. *)
   resolve_ok a2 "a2" [local];
   (* Message-2 must be embargoed so that it arrives after Message-1. *)
-  let m2 = service#call "Message-2" empty in
+  let m2 = call service "Message-2" [] in
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
   S.handle_msg s ~expect:"disembargo-request";
@@ -198,12 +199,12 @@ let test_local_embargo_3 () =
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
   let service = q1#cap 0 in
-  let m1 = service#call "Message-1" empty in
+  let m1 = call service "Message-1" [] in
   promise#resolve proxy_to_logger;
   C.handle_msg c ~expect:"resolve";
   (* We've received the resolve message, so we know that [service] is local,
      but the pipelined message we sent to it via [s] hasn't arrived yet. *)
-  let m2 = service#call "Message-2" empty in
+  let m2 = call service "Message-2" [] in
   S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
@@ -221,7 +222,7 @@ let test_local_embargo_3 () =
   CS.flush c s;
   CS.check_finished c s
 
-(* Embargo an local answer that doesn't have the specified cap. *)
+(* Embargo a local answer that doesn't have the specified cap. *)
 let test_local_embargo_4 () =
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
@@ -581,7 +582,7 @@ let test_duplicates () =
   S.handle_msg s ~expect:"finish";              (* bootstrap question *)
   S.handle_msg s ~expect:"release";             (* bootstrap cap *)
   let (_, _, a1) = service#pop in
-  a1#resolve (Ok ("a1", empty));
+  resolve_ok a1 "a1" [];
   C.handle_msg c ~expect:"return:a1";
   S.handle_msg s ~expect:"finish";              (* c1 *)
   CS.check_finished c s
@@ -654,25 +655,25 @@ let test_cycle () =
   p2#resolve (p1 :> Core_types.cap);
   ensure_is_cycle_error (call p2 "test" []);
   (* Connect struct to its own field *)
-  let p1 = Local_struct_promise.make () in
+  let p1, p1r = Local_struct_promise.make () in
   let c = p1#cap 0 in
   inc_ref c;
-  resolve_ok p1 "msg" [c];
+  resolve_ok p1r "msg" [c];
   ensure_is_cycle_error_cap c;
   dec_ref c;
   dec_ref p1;
   (* Connect struct to itself *)
-  let p1 = Local_struct_promise.make () in
-  p1#connect (p1 :> Core_types.struct_ref);
+  let p1, p1r = Local_struct_promise.make () in
+  p1r#resolve p1;
   ensure_is_cycle_error p1;
   dec_ref p1
 
 (* Resolve a promise with an answer that includes the result of a pipelined
    call on the promise itself. *)
 let test_cycle_2 () =
-  let s1 = Local_struct_promise.make () in
+  let s1, s1r = Local_struct_promise.make () in
   let s2 = call (s1#cap 0) "get-s2" [] in
-  resolve_ok s1 "a7" [s2#cap 0];
+  resolve_ok s1r "a7" [s2#cap 0];
   ensure_is_cycle_error_cap (s1#cap 0);
   dec_ref s2;
   dec_ref s1
@@ -680,8 +681,8 @@ let test_cycle_2 () =
 (* It's not a cycle if one field resolves to another. *)
 let test_cycle_3 () =
   let echo = Services.echo_service () in
-  let a1 = Local_struct_promise.make () in
-  resolve_ok a1 "a1" [a1#cap 1; (echo :> Core_types.cap)];
+  let a1, a1r = Local_struct_promise.make () in
+  resolve_ok a1r "a1" [a1#cap 1; (echo :> Core_types.cap)];
   let target = a1#cap 1 in
   let q2 = call target "q2" [] in
   Alcotest.(check response_promise) "Field 1 OK"
@@ -694,9 +695,9 @@ let test_cycle_3 () =
 (* Check ref-counting when resolving loops. *)
 let test_cycle_4 () =
   let echo = Services.echo_service () in
-  let a1 = Local_struct_promise.make () in
+  let a1, a1r = Local_struct_promise.make () in
   let f0 = a1#cap 0 in
-  resolve_ok a1 "a1" [a1#cap 1; (echo :> Core_types.cap)];
+  resolve_ok a1r "a1" [a1#cap 1; (echo :> Core_types.cap)];
   dec_ref f0;
   dec_ref a1;
   Logs.info (fun f -> f "echo = %t" echo#pp);
@@ -862,7 +863,7 @@ let test_ref_counts () =
     let o = object (self)
       inherit Core_types.service
       val id = Capnp_rpc.Debug.OID.next ()
-      method call _ _  = Core_types.return ("answer", RO_array.empty)
+      method call results _ _  = Core_types.resolve_ok results "answer" RO_array.empty
       method! private release = Hashtbl.remove objects self
       method! pp f = Fmt.pf f "Service(%a, %t)" Capnp_rpc.Debug.OID.pp id self#pp_refcount
     end in
@@ -870,22 +871,22 @@ let test_ref_counts () =
     o
   in
   (* Test structs and fields *)
-  let promise = Local_struct_promise.make () in
+  let promise, resolver = Local_struct_promise.make () in
   let f0 = promise#cap 0 in
   f0#when_more_resolved dec_ref;
   let fields = [f0; promise#cap 1] in
-  resolve_ok promise "ok" [make (); make ()];
+  resolve_ok resolver "ok" [make (); make ()];
   let fields2 = [promise#cap 0; promise#cap 2] in
   dec_ref promise;
   List.iter dec_ref fields;
   List.iter dec_ref fields2;
   Alcotest.(check int) "Fields released" 0 (Hashtbl.length objects);
   (* With pipelining *)
-  let promise = Local_struct_promise.make () in
+  let promise, resolver = Local_struct_promise.make () in
   let f0 = promise#cap 0 in
   let q1 = call f0 "q1" [] in
   f0#when_more_resolved dec_ref;
-  resolve_ok promise "ok" [make ()];
+  resolve_ok resolver "ok" [make ()];
   dec_ref f0;
   dec_ref promise;
   dec_ref q1;

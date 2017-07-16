@@ -28,7 +28,7 @@ let () =
   if running_under_afl then (
     Logs.set_level ~all:true (Some Logs.Error);
   ) else (
-    Fmt.epr "vi: foldmethod=marker syntax=capnp-rpc@.";
+    Fmt.pr "vi: foldmethod=marker syntax=capnp-rpc@.";
     Printexc.record_backtrace true
   )
 
@@ -221,7 +221,7 @@ module Endpoint = struct
 end
 
 let () =
-  Format.pp_set_margin Fmt.stderr 120;
+  Format.pp_set_margin Fmt.stdout 120;
   Fmt_tty.setup_std_outputs ()
 
 type cap_ref = {
@@ -288,10 +288,9 @@ module Vat = struct
       pp_error sr
 
   let dump_an f (sr, target, _) =
-    Fmt.pf f "%a : @[%t;%a@]"
+    Fmt.pf f "%a : @[%t@]"
       Direct.pp_struct target
       sr#pp
-      pp_error sr
 
   let compare_cr a b =
     Direct.compare_cap a.cr_target b.cr_target
@@ -324,7 +323,6 @@ module Vat = struct
       t.connections |> List.iter (fun (_, conn) -> Endpoint.check conn);
       t.caps |> WrapArray.iter (fun c -> c.cr_cap#check_invariants);
       t.structs |> WrapArray.iter (fun (s, _, _) -> s#check_invariants);
-      t.answers_needed |> WrapArray.iter (fun (s, _, _) -> s#check_invariants)
     with ex ->
       Logs.err (fun f -> f ~tags:(tags t) "Invariants check failed: %a" Capnp_rpc.Debug.pp_exn ex);
       raise ex
@@ -375,7 +373,9 @@ module Vat = struct
                (Fmt.Dump.list pp_var) arg_refs
            );
       counters.next_to_send <- succ counters.next_to_send;
-      WrapArray.add state.structs (cap#call msg args, answer, answer_var)
+      let results, resolver = Local_struct_promise.make () in
+      WrapArray.add state.structs (results, answer, answer_var);
+      cap#call resolver msg args
 
   (* Reply to a random question. *)
   let do_answer state () =
@@ -397,8 +397,7 @@ module Vat = struct
             "reply"
             (Fmt.Dump.list pp_inc_var) arg_refs
         );
-      answer#resolve (Ok ("reply", args));
-      Core_types.dec_ref answer
+      Core_types.resolve_ok answer "reply" args
       (* TODO: reply with another promise or with an error *)
 
   let test_service ~target:self_id vat =
@@ -414,7 +413,7 @@ module Vat = struct
 
       method pp_var f = Fmt.pf f "service_%a" OID.pp id
 
-      method call msg caps =
+      method call results msg caps =
         super#check_refcount;
         let {Msg.Request.target; sender; sending_step = _; counters; seq; arg_ids; answer} = msg in
         if not (Direct.equal target self_id) then
@@ -450,10 +449,7 @@ module Vat = struct
                 WrapArray.add vat.caps cr
               )
         end;
-        let answer_promise = Local_struct_promise.make () in
-        Core_types.inc_ref answer_promise;
-        WrapArray.add vat.answers_needed (answer_promise, answer, answer_var);
-        (answer_promise :> Core_types.struct_ref)
+        WrapArray.add vat.answers_needed (results, answer, answer_var)
     end
 
   (* Pick a random cap from an answer. *)
@@ -512,12 +508,9 @@ module Vat = struct
       )
 
   let free_all t =
-    let free_caps () = WrapArray.free t.caps in
-    let free_srs () = WrapArray.free t.structs in
-    let free_ans () = WrapArray.free t.answers_needed in
-    free_caps ();
-    free_srs ();
-    free_ans ()
+    WrapArray.free t.caps;
+    WrapArray.free t.structs;
+    WrapArray.free t.answers_needed
 
   let next_id = ref 0
 
@@ -534,10 +527,9 @@ module Vat = struct
     in
     let free_answer (ans, _, answer_var) =
       code (fun f ->
-          Fmt.pf f "%a#resolve (Error (Capnp_rpc.Error.exn \"Free all\"));@," pp_resolver answer_var;
-          Fmt.pf f "dec_ref %a;" pp_resolver answer_var;
+          Fmt.pf f "%a#resolve (Error (Capnp_rpc.Error.exn \"Free all\"));" pp_resolver answer_var
         );
-      ans#resolve (Error (Capnp_rpc.Error.exn "Operation rejected"))
+      Core_types.resolve_exn ans @@ Capnp_rpc.Exception.v "Operation rejected"
     in
     let t = {
       id;

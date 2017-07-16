@@ -30,7 +30,7 @@ let local (s:#generic) =
 
     method! private release = s#release
 
-    method call call caps =
+    method call results call caps =
       let open Schema.Reader in
       let call = Rpc.readable_req call in
       let interface_id = Call.interface_id_get call in
@@ -38,10 +38,12 @@ let local (s:#generic) =
       Log.info (fun f -> f "Invoking local method %a" pp_method (interface_id, method_id));
       let p = Call.params_get call in
       let m = s#dispatch ~interface_id ~method_id in
-      try m (p, caps)
-      with ex ->
+      match m (p, caps) with
+      | r -> results#resolve r
+      | exception ex ->
         Log.warn (fun f -> f "Uncaught exception handling %a: %a" pp_method (interface_id, method_id) Fmt.exn ex);
-        Core_types.fail "Internal error from %a" pp_method (interface_id, method_id)
+        Core_types.resolve_payload results
+          (Error (Capnp_rpc.Error.exn "Internal error from %a" pp_method (interface_id, method_id)))
   end
 
 (* The simple case for returning a message (rather than another value). *)
@@ -56,21 +58,22 @@ let return_empty () =
    pipelining is not supported (further messages will be queued up at this
    host until it returns). *)
 let return_lwt fn =
-  let result = Local_struct_promise.make () in
+  let result, resolver = Local_struct_promise.make () in
   Lwt.async (fun () ->
       Lwt.catch (fun () ->
           fn () >|= function
           | Ok resp ->
             let msg, caps = Response.finish resp in
-            result#resolve (Ok (msg, caps));
-          | Error _ as e -> result#resolve e
+            Core_types.resolve_ok resolver msg caps
+          | Error _ as e ->
+            Core_types.resolve_payload resolver e
         )
         (fun ex ->
            Log.warn (fun f -> f "Uncaught exception: %a" Fmt.exn ex);
-           result#resolve (Error (Capnp_rpc.Error.exn "Internal error"));
+           Core_types.resolve_exn resolver (Capnp_rpc.Exception.v "Internal error");
            Lwt.return_unit
         );
     );
-  (result :> Core_types.struct_ref)
+  result
 
 let fail = Core_types.fail

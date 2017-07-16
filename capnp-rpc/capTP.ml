@@ -50,6 +50,16 @@ module Make (EP : Message_types.ENDPOINT) = struct
   module PathSet = Set.Make(Wire.Path)
   module Embargoes = Table.Allocating(EmbargoId)
 
+  (* Maps used cap indexes to their paths *)
+  let caps_used ~msg paths_used =
+    PathSet.elements paths_used
+    |> filter_map (fun path ->
+        match Wire.Response.cap_index msg path with
+        | None -> None
+        | Some i -> Some (i, path)
+      )
+    |> IntMap.of_list
+
   module Questions = Table.Allocating(QuestionId)
   module Answers = Table.Tracking(AnswerId)
   module Exports = Table.Allocating(ExportId)
@@ -116,7 +126,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     type t = {
       id : QuestionId.t;
-      mutable remote_promise : [`Promise of Core_types.struct_resolver | `Released];
+      mutable remote_promise : [`Resolver of Core_types.struct_resolver | `Released];
       mutable ref_count : RC.t;
       mutable state : state;
       params_for_release : ExportId.t list; (* For level 0 peers *)
@@ -131,7 +141,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let pp_promise f q =
       match q.remote_promise with
       | `Released -> Fmt.string f "(released)"
-      | `Promise p -> Fmt.pf f "%t" p#pp
+      | `Resolver p -> Fmt.pf f "%t" p#pp
 
     let pp_state f x =
       Fmt.string f @@ match x with
@@ -159,7 +169,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       if RC.is_zero t.ref_count then match t.state with
         | Waiting -> t.state <- Cancelled; [`Send_finish]
         | Lingering -> t.state <- Complete; [`Send_finish; `Release_table_entry]
-        | Complete -> []
+        | Complete -> []        (* (only happens with lost_connection) *)
         | Cancelled -> failwith "Can't hold refs while cancelled!"
       else
         []
@@ -179,20 +189,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let set_cap_used t path =
       t.pipelined_fields <- PathSet.add path t.pipelined_fields
 
-    (* Maps used cap indexes to their paths *)
-    let caps_used t ~msg =
-      PathSet.elements t.pipelined_fields
-      |> filter_map (fun path ->
-          match Wire.Response.cap_index msg path with
-          | None -> None
-          | Some i -> Some (i, path)
-        )
-      |> IntMap.of_list
+    let paths_used t =
+      t.pipelined_fields
 
     let check t =
-      match t.remote_promise with
-      | `Released -> ()
-      | `Promise p -> p#check_invariants
+      let pp f = pp f t in
+      match t.state with
+      | Waiting | Lingering -> RC.check ~pp t.ref_count (* rc > 0 *)
+      | Cancelled -> assert (RC.is_zero t.ref_count)
+      | Complete -> Debug.invariant_broken (fun f -> Fmt.pf f "Complete question %a still in table!" dump t)
 
     let lost_connection t ~ex =
       (* The resolve might get a "release" event, but we'll ignore it in the Complete state.
@@ -200,13 +205,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
       t.state <- Complete;
       match t.remote_promise with
       | `Released -> ()
-      | `Promise p -> p#resolve (Error (`Exception ex))
+      | `Resolver p -> Core_types.resolve_payload p (Error (`Exception ex))
 
     let message_target t path = `ReceiverAnswer (t.id, path)
 
     let resolve t payload =
       match t.remote_promise with
-      | `Promise p -> p#resolve payload
+      | `Resolver p -> Core_types.resolve_payload p payload
       | `Released ->
         match payload with
         | Ok (_, caps) -> RO_array.iter Core_types.dec_ref caps
@@ -215,7 +220,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let v ~params_for_release ~remote_promise id =
       {
         id;
-        remote_promise = `Promise remote_promise;
+        remote_promise = `Resolver remote_promise;
         ref_count = RC.one; (* Held by [remote_promise] *)
         state = Waiting;
         params_for_release;
@@ -345,7 +350,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
     answer_id : AnswerId.t;
     mutable exports_for_release : ExportId.t list;
     mutable answer_resolve_targets : resolve_target RO_array.t;
-    mutable answer_promise : [`Resolver of Core_types.struct_resolver | `Finished];
+    mutable answer_promise : [`Promise of Core_types.struct_ref | `Finished];
+    answer_resolver : Core_types.struct_resolver;
   }
 
   type export = {
@@ -394,7 +400,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   let dump_answer f x =
     match x.answer_promise with
-    | `Resolver x -> Fmt.pf f "%t" x#pp
+    | `Promise x -> Fmt.pf f "%t" x#pp
     | `Finished -> Fmt.pf f "(finished)"
 
   let dump_export f x =
@@ -453,6 +459,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     val call : t -> struct_resolver ->
       message_target_cap -> Wire.Request.t -> Core_types.cap RO_array.t ->
+      results_to:EP.Out.send_results_to ->
       Question.t
 
     val return : t -> answer -> unit
@@ -564,7 +571,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                );
       t.queue_send (`Resolve (ex.export_id, Error problem))
 
-    let call t remote_promise (target : message_target_cap) msg caps =
+    let call t remote_promise (target : message_target_cap) msg caps ~results_to =
       let broken_caps = Queue.create () in
       let descs = RO_array.map (export ~broken_caps t) caps in
       let question = Questions.alloc t.questions
@@ -583,7 +590,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
                    pp_cap target
                    Core_types.Request_payload.pp (msg, caps));
-      t.queue_send (`Call (qid, message_target, msg, descs, `Caller));
+      t.queue_send (`Call (qid, message_target, msg, descs, results_to));
       resolve_broken t broken_caps;
       question
 
@@ -609,7 +616,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Finished ->
         Log.info (fun f -> f ~tags:(with_aid aid t) "Returning cancelled");
         t.queue_send (`Return (aid, `Cancelled, false));
-      | `Resolver answer_promise ->
+      | `Promise answer_promise ->
         match answer_promise#response with
         | None -> assert false
         | Some (Ok payload) ->
@@ -621,7 +628,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let release t import count =
       Imports.release t.imports (Import.id import);
-      Log.info (fun f -> f ~tags:t.tags "Sending release %a" Import.dump import);
+      Log.info (fun f -> f ~tags:t.tags "Sending release of %a" Import.pp import);
       t.queue_send (`Release (Import.id import, count))
 
     let finish t question =
@@ -640,12 +647,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Release count -> Send.release t i count
 
   (* Note: takes ownership of [caps] *)
-  let rec send_call t target msg caps =
-    let result = make_remote_promise t in
-    let question = Send.call t (result :> Core_types.struct_resolver) target msg caps in
+  let rec send_call t target (results:Core_types.struct_resolver) msg caps =
+    (* todo: if [results] is at [target], we can tell it to send the results directly to itself instead. *)
+    let remote_promise = make_remote_promise t in
+    let question = Send.call t (remote_promise :> Core_types.struct_resolver) target msg caps ~results_to:`Caller in
     RO_array.iter dec_ref caps;
-    result#set_question question;
-    (result :> Core_types.struct_ref)
+    remote_promise#set_question question;
+    results#resolve (remote_promise :> Core_types.struct_ref)
 
   (* A cap that sends to a promised answer's cap at other *)
   and make_remote_promise t =
@@ -665,11 +673,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
           Question.release_proxy q |> apply_question_actions t q
         )
 
-      method do_pipeline question i msg caps =
+      method do_pipeline question i results msg caps =
         match question with
         | Some target_q ->
           let target = `QuestionCap (target_q, i) in
-          send_call t target msg caps
+          send_call t target results msg caps
         | None -> failwith "Not initialised!"
 
       method on_resolve q _ =
@@ -818,9 +826,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
           val id = Debug.OID.next ()
 
-          method call msg caps =
+          method call results msg caps =
             self#check_refcount;
-            send_call t message_target msg caps
+            send_call t message_target results msg caps
 
           method pp f =
             if settled then
@@ -920,7 +928,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         let answer = Answers.find_exn t.answers id in
         begin match answer.answer_promise with
         | `Finished -> failwith "Got ReceiverAnswer for a finished promise!"
-        | `Resolver answer_promise ->
+        | `Promise answer_promise ->
           match answer_promise#response with
           | None ->
             (* We don't know the answer, so we can't have replied yet.
@@ -946,12 +954,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
                    EP.In.pp_desc message_target
                    (RO_array.pp EP.In.pp_desc) descs
                );
-      let answer_promise = Local_struct_promise.make () in
+      let answer_promise, answer_resolver = Local_struct_promise.make () in
       let answer = {
         answer_id = aid;
         exports_for_release = [];
         answer_resolve_targets = RO_array.empty;
-        answer_promise = `Resolver answer_promise;
+        answer_promise = `Promise answer_promise;
+        answer_resolver;
       } in
       Answers.set t.answers aid answer;
       let target =
@@ -963,31 +972,31 @@ module Make (EP : Message_types.ENDPOINT) = struct
           let answer = Answers.find_exn t.answers id in
           match answer.answer_promise with
           | `Finished -> failwith "Call to finished answer (shouldn't be in table!)"
-          | `Resolver answer_promise -> answer_promise#cap path
+          | `Promise answer_promise -> answer_promise#cap path
       in
       let caps = RO_array.map (import t) descs in
       Log.info (fun f -> f ~tags:t.tags "Handling call: (%t).call %a"
                    target#pp Core_types.Request_payload.pp (msg, caps));
-      let resp = target#call msg caps in  (* Takes ownership of [caps]. *)
+      target#call answer_resolver msg caps;  (* Takes ownership of [caps]. *)
       dec_ref target;
-      answer_promise#connect resp;
-      resp#when_resolved (fun _ -> Send.return t answer)
+      answer_promise#when_resolved (fun _ -> Send.return t answer)
 
     let bootstrap t id =
-      let answer_promise = Local_struct_promise.make () in
+      let answer_promise, answer_resolver = Local_struct_promise.make () in
       let answer = {
         answer_id = id;
         exports_for_release = [];
         answer_resolve_targets = RO_array.empty;
-        answer_promise = `Resolver answer_promise;
+        answer_promise = `Promise answer_promise;
+        answer_resolver;
       } in
       Answers.set t.answers id answer;
       begin match t.bootstrap with
         | Some service ->
           Core_types.inc_ref service;
-          answer_promise#resolve (Ok (Wire.Response.bootstrap, RO_array.of_list [service]));
+          Core_types.resolve_ok answer_resolver Wire.Response.bootstrap (RO_array.of_list [service]);
         | None ->
-          answer_promise#resolve (Error (Error.exn "No bootstrap service available"));
+          Core_types.resolve_exn answer_resolver (Exception.v "No bootstrap service available");
       end;
       Send.return t answer
 
@@ -1011,7 +1020,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       )
 
     let return_results t question msg descrs =
-      let caps_used = Question.caps_used ~msg question in
+      let caps_used = Question.paths_used question |> caps_used ~msg in
       let import_with_embargoes cap_index d =
         let embargo_path =
           match IntMap.find cap_index caps_used with
@@ -1022,26 +1031,35 @@ module Make (EP : Message_types.ENDPOINT) = struct
       in
       RO_array.mapi import_with_embargoes descrs
 
+    (* Turn wire descriptors into local objects, creating embargoes and sending
+       disembargo messages where necessary. *)
+    let import_return_caps t question ret =
+      match ret with
+      | `Results (msg, descs) ->
+        let caps = return_results t question msg descs in
+        `Results (msg, caps)
+      | #Error.t as err -> err
+      | `ResultsSentElsewhere -> `ResultsSentElsewhere
+      | `AcceptFromThirdParty -> failwith "TODO: AcceptFromThirdParty"
+      | `TakeFromOtherQuestion _ -> failwith "TODO: TakeFromOtherQuestion"
+
     let return t qid ret ~release_param_caps =
       let question = Questions.find_exn t.questions qid in
-      let actions = Question.return question in
       if release_param_caps then List.iter (release t ~ref_count:1) question.params_for_release;
+      let ret = import_return_caps t question ret in
+      (* Any disembargo requests have now been sent, so we may finish the question. *)
+      Question.return question |> apply_question_actions t question;
       begin match ret with
-        | `Results (msg, descs) ->
-          Log.info (fun f -> f ~tags:(with_qid qid t) "Received return results: %a"
-                       (RO_array.pp In.pp_desc) descs
-                   );
-          let caps = return_results t question msg descs in
+        | `Results (msg, caps) ->
           Log.info (fun f -> f ~tags:(with_qid qid t) "Got results: %a"
                        Core_types.Response_payload.pp (msg, caps)
                    );
-          apply_question_actions t question actions;
           Question.resolve question (Ok (msg, caps))
-        | #Error.t as err ->
-          Log.info (fun f -> f ~tags:(with_qid qid t) "Got error: %a" Error.pp err);
-          apply_question_actions t question actions;
-          Question.resolve question (Error err)
-        | _ -> failwith "TODO: other return"
+        | `TakeFromCancelledQuestion -> () (* Ignore response to cancelled Question *)
+        | `ResultsSentElsewhere ->
+          (* Keep unresolved; we must continue forwarding *)
+          ()
+        | #Error.t as err -> Question.resolve question (Error err)
       end
 
     let finish t aid ~release_result_caps =
@@ -1049,7 +1067,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Log.info (fun f -> f ~tags:(with_aid aid t) "Received finish for %a" dump_answer answer);
       match answer.answer_promise with
       | `Finished -> assert false
-      | `Resolver answer_promise ->
+      | `Promise answer_promise ->
         answer.answer_promise <- `Finished;
         Answers.release t.answers aid;
         if release_result_caps then List.iter (release t ~ref_count:1) answer.exports_for_release;
@@ -1078,7 +1096,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           let answer = Answers.find_exn t.answers aid in
           match answer.answer_promise with
           | `Finished -> failwith "Got disembargo request for a finished promise!"
-          | `Resolver answer_promise ->
+          | `Promise answer_promise ->
             match answer_promise#response with
             | None -> failwith "Got disembargo for unresolved promise!"
             | Some (Error _) -> failwith "Got disembargo for exception!"
@@ -1200,7 +1218,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   let check_answer x =
     match x.answer_promise with
-    | `Resolver x -> x#check_invariants
+    | `Promise x -> x#check_invariants
     | `Finished -> failwith "Finished answer still in table!"
 
   let check_embargo x = (snd x)#check_invariants
@@ -1257,7 +1275,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Questions.drop_all t.questions (fun _ -> Question.lost_connection ~ex);
     Answers.drop_all t.answers (fun _ a ->
         match a.answer_promise with
-        | `Resolver x -> dec_ref x
+        | `Promise x -> dec_ref x
         | `Finished -> assert false
       );
     let broken_cap = Core_types.broken_cap ex in
