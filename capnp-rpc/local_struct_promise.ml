@@ -21,8 +21,8 @@ module Make (C : S.CORE_TYPES) = struct
 
     method pp_unresolved f _ =
       match parent with
-      | None -> Fmt.string f "(unresolved)"
-      | Some p -> Fmt.pf f "blocked on %t" p#pp
+      | Some p when p#blocker <> None -> Fmt.pf f "blocked on %t" p#pp
+      | _ -> Fmt.string f "(unresolved)"
 
     method private on_resolve q x =
       Queue.iter (fun fn -> fn x) q
@@ -32,8 +32,11 @@ module Make (C : S.CORE_TYPES) = struct
     method! blocker =
       match super#blocker, parent with
       | None, _ -> None            (* Not blocked *)
-      | Some _self, Some b -> b#blocker
       | Some _ as x, None -> x
+      | Some _ as self, Some parent ->
+        match parent#blocker with
+        | Some _ as x -> x         (* Waiting on parent *)
+        | None -> self             (* Waiting on call *)
 
     method field_sealed_dispatch _ _ = None
   end
