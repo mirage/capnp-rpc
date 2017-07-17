@@ -567,6 +567,7 @@ let test_local_embargo_10 () =
   dec_ref target;
   dec_ref bs;
   dec_ref proxy_to_echo;
+  dec_ref service_1;
   CS.flush c s;
   CS.check_finished c s
 
