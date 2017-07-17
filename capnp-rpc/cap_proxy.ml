@@ -23,7 +23,6 @@ module Make(C : S.CORE_TYPES) = struct
   type unresolved = {
     queue : pending Queue.t;
     mutable rc : RC.t;
-    mutable release_pending : bool;
   }
 
   type cap_promise_state =
@@ -34,7 +33,7 @@ module Make(C : S.CORE_TYPES) = struct
 
   class local_promise =
     object (self : #cap)
-      val mutable state = Unresolved {rc = RC.one; queue = Queue.create (); release_pending = false}
+      val mutable state = Unresolved {rc = RC.one; queue = Queue.create ()}
 
       val id = Debug.OID.next ()
 
@@ -42,21 +41,25 @@ module Make(C : S.CORE_TYPES) = struct
 
       method call results msg caps =
         match state with
-        | Unresolved {queue; release_pending; rc = _} ->
-          assert (not release_pending);
-          Queue.add (Call (results, msg, caps)) queue
+        | Unresolved {queue; rc = _} -> Queue.add (Call (results, msg, caps)) queue
         | Resolved cap -> cap#call results msg caps
 
       method update_rc d =
         match state with
         | Unresolved u ->
           u.rc <- RC.sum u.rc d ~pp:(fun f -> self#pp f);
-          if RC.is_zero u.rc then self#release_while_unresolved
+          if RC.is_zero u.rc then (
+            state <- Resolved released;
+            self#release_while_unresolved
+          )
         | Resolved x -> x#update_rc d
 
       method resolve (cap:cap) =
         match state with
-        | Unresolved {queue; release_pending; rc} ->
+        | Unresolved u when RC.is_zero u.rc ->
+          Log.info (fun f -> f "Ignoring resolution of unused promise %t to %t" self#pp cap#pp);
+          C.dec_ref cap
+        | Unresolved {queue; rc} ->
           let pp f = self#pp f in
           RC.check ~pp rc;
           let cap =
@@ -80,25 +83,10 @@ module Make(C : S.CORE_TYPES) = struct
             | Call (result, msg, caps) -> cap#call result msg caps
           in
           Queue.iter forward queue;
-          if release_pending then (
-            Log.info (fun f -> f "Completing delayed release of %t" self#pp);
-            C.dec_ref cap;
-            state <- Resolved released
-          )
         | Resolved _ -> failwith "Already resolved!"
 
       method break ex =
         self#resolve (broken_cap ex)
-
-      method private release =
-        match state with
-        | Unresolved u ->
-          Log.info (fun f -> f "Delaying release of %t until resolved" self#pp);
-          assert (not u.release_pending);
-          u.release_pending <- true
-        | Resolved cap ->
-          C.dec_ref cap;
-          state <- Resolved released
 
       method shortest =
         match state with
