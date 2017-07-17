@@ -156,6 +156,7 @@ module Endpoint = struct
     remote_id : int;
     conn : Conn.t;
     recv_queue : EP.In.t Queue.t;
+    dump : Format.formatter -> unit;    (* Dump the whole vat *)
   }
 
   let pp_conn_mod f t =
@@ -176,7 +177,7 @@ module Endpoint = struct
   let check t =
     Conn.check t.conn
 
-  let create ?bootstrap ~tags ~local_id ~remote_id xmit_queue recv_queue =
+  let create ?bootstrap ~tags ~dump ~local_id ~remote_id xmit_queue recv_queue =
     let queue_send x = Queue.add x xmit_queue in
     let conn = Conn.create ?bootstrap ~tags ~queue_send in
     {
@@ -184,6 +185,7 @@ module Endpoint = struct
       remote_id;
       conn;
       recv_queue;
+      dump;
     }
 
   let handle_msg t =
@@ -210,7 +212,7 @@ module Endpoint = struct
     if Queue.length t.recv_queue > 0 then (
       incr step;
       if dump_state_at_each_step then
-        Logs.info (fun f -> f ~tags:(Conn.tags t.conn) "@[<v>Flush step %d {{{@,%a}}}@]" !step dump t);
+        Logs.info (fun f -> f ~tags:(Conn.tags t.conn) "@[<v>Flush step %d {{{@,%t}}}@]" !step t.dump);
       handle_msg t;
       if sanity_checks then Conn.check t.conn;
       true
@@ -578,10 +580,18 @@ let make_connection v1 v2 =
     | None -> Direct.null
     | Some (_, id) -> id
   in
-  let v1_tags = Vat.tags v1 |> Logs.Tag.add Test_utils.peer_tag (actor_for_id v2.Vat.id) in
-  let v2_tags = Vat.tags v2 |> Logs.Tag.add Test_utils.peer_tag (actor_for_id v1.Vat.id) in
-  let c = Endpoint.create ~local_id:v1.id ~remote_id:v2.id ~tags:v1_tags q1 q2 ~bootstrap:(bootstrap v1) in
-  let s = Endpoint.create ~local_id:v2.id ~remote_id:v1.id ~tags:v2_tags q2 q1 ~bootstrap:(bootstrap v2) in
+  let create_endpoint ~local ~remote xmit_queue recv_queue =
+    let v1_tags = Vat.tags local |> Logs.Tag.add Test_utils.peer_tag (actor_for_id remote.Vat.id) in
+    Endpoint.create
+      ~dump:(fun f -> Vat.pp f local)
+      ~local_id:local.id
+      ~remote_id:remote.id
+      ~tags:v1_tags
+      xmit_queue recv_queue
+      ~bootstrap:(bootstrap local)
+  in
+  let c = create_endpoint ~local:v1 ~remote:v2 q1 q2 in
+  let s = create_endpoint ~local:v2 ~remote:v1 q2 q1 in
   code (fun f ->
       Fmt.pf f
         "@[<v2>let %a, %a = CS.create@,\

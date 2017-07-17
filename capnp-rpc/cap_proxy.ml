@@ -128,6 +128,7 @@ module Make(C : S.CORE_TYPES) = struct
     let cap =
       object
         inherit local_promise as super
+        val mutable in_pp = false
 
         method! private release_while_unresolved =
           C.dec_ref underlying
@@ -137,7 +138,14 @@ module Make(C : S.CORE_TYPES) = struct
 
         method! pp f =
           match state with
-          | Unresolved u -> Fmt.pf f "embargoed(%a, %a)" Debug.OID.pp id RC.pp u.rc
+          | Unresolved u ->
+            Fmt.pf f "embargoed(%a, %a) -> " Debug.OID.pp id RC.pp u.rc;
+            if in_pp then Fmt.string f "(cycle)"
+            else (
+              in_pp <- true;
+              underlying#pp f;
+              in_pp <- false
+            )
           | Resolved cap -> Fmt.pf f "disembargoed(%a) -> %t" Debug.OID.pp id cap#pp
       end
     in
