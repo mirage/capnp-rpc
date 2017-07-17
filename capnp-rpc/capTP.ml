@@ -1266,6 +1266,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                 | Ok (msg, caps) ->
                   let embargoes_needed = caps_used ~msg paths_used in
                   let maybe_embargo cap_index cap =
+                    inc_ref cap;
                     match IntMap.find cap_index embargoes_needed with
                     | None -> cap
                     | Some path ->
