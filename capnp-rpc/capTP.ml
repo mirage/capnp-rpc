@@ -910,7 +910,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   (* Forwards messages to [init] until resolved.
      Forces [release] when resolved or released. *)
-  class switchable ~release init =
+  class switchable ~(release:unit Lazy.t) init =
     let released = Core_types.broken_cap (Exception.v "(released)") in
     let pp_state f = function
       | `Unsettled (x, _) -> Fmt.pf f "(unsettled) -> %t" x#pp
