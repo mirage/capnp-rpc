@@ -20,31 +20,45 @@ module Make(C : S.CORE_TYPES) = struct
     | Call of C.struct_resolver * Wire.Request.t * cap RO_array.t
     | Watcher of (cap -> unit)
 
+  type unresolved = {
+    queue : pending Queue.t;
+    mutable rc : RC.t;
+    mutable release_pending : bool;
+  }
+
   type cap_promise_state =
-    | Unresolved of pending Queue.t * bool      (* bool = release-pending *)
+    | Unresolved of unresolved
     | Resolved of cap
 
   let released = C.broken_cap (Exception.v "(released)")
 
   class local_promise =
     object (self : #cap)
-      inherit ref_counted as super
-
-      val mutable state = Unresolved (Queue.create (), false)
+      val mutable state = Unresolved {rc = RC.one; queue = Queue.create (); release_pending = false}
 
       val id = Debug.OID.next ()
 
+      method private release_while_unresolved = ()
+
       method call results msg caps =
         match state with
-        | Unresolved (q, release_pending) ->
+        | Unresolved {queue; release_pending; rc = _} ->
           assert (not release_pending);
-          Queue.add (Call (results, msg, caps)) q
+          Queue.add (Call (results, msg, caps)) queue
         | Resolved cap -> cap#call results msg caps
 
-      method resolve (cap:cap) =
-        self#check_refcount;
+      method update_rc d =
         match state with
-        | Unresolved (q, release_pending) ->
+        | Unresolved u ->
+          u.rc <- RC.sum u.rc d ~pp:(fun f -> self#pp f);
+          if RC.is_zero u.rc then self#release_while_unresolved
+        | Resolved x -> x#update_rc d
+
+      method resolve (cap:cap) =
+        match state with
+        | Unresolved {queue; release_pending; rc} ->
+          let pp f = self#pp f in
+          RC.check ~pp rc;
           let cap =
             match cap#blocker with
             | Some blocker when blocker = (self :> base_ref) ->
@@ -55,13 +69,17 @@ module Make(C : S.CORE_TYPES) = struct
               C.broken_cap (Exception.v msg)
             | _ -> cap
           in
+          begin match RC.to_int rc with
+            | Some rc -> cap#update_rc (rc - 1);     (* Transfer our ref-count *)
+            | None -> ()
+          end;
           state <- Resolved cap;
           Log.info (fun f -> f "Resolved local cap promise: %t" self#pp);
           let forward = function
             | Watcher fn -> C.inc_ref cap; fn cap
             | Call (result, msg, caps) -> cap#call result msg caps
           in
-          Queue.iter forward q;
+          Queue.iter forward queue;
           if release_pending then (
             Log.info (fun f -> f "Completing delayed release of %t" self#pp);
             C.dec_ref cap;
@@ -74,10 +92,10 @@ module Make(C : S.CORE_TYPES) = struct
 
       method private release =
         match state with
-        | Unresolved (q, release_pending) ->
+        | Unresolved u ->
           Log.info (fun f -> f "Delaying release of %t until resolved" self#pp);
-          assert (not release_pending);
-          state <- Unresolved (q, true)
+          assert (not u.release_pending);
+          u.release_pending <- true
         | Resolved cap ->
           C.dec_ref cap;
           state <- Resolved released
@@ -99,19 +117,23 @@ module Make(C : S.CORE_TYPES) = struct
 
       method when_more_resolved fn =
         match state with
-        | Unresolved (q, _) -> Queue.add (Watcher fn) q
+        | Unresolved {queue; _} -> Queue.add (Watcher fn) queue
         | Resolved x -> x#when_more_resolved fn
 
       method pp f =
         match state with
-        | Unresolved _ -> Fmt.pf f "local-cap-promise(%a, %t) -> (unresolved)" Debug.OID.pp id self#pp_refcount
-        | Resolved cap -> Fmt.pf f "local-cap-promise(%a, %t) -> %t" Debug.OID.pp id self#pp_refcount cap#pp
+        | Unresolved u -> Fmt.pf f "local-cap-promise(%a, %a) -> (unresolved)"
+                            Debug.OID.pp id
+                            RC.pp u.rc
+        | Resolved cap -> Fmt.pf f "local-cap-promise(%a) -> %t" Debug.OID.pp id cap#pp
 
-      method! check_invariants =
-        super#check_invariants;
+      method check_invariants =
+        let pp f = self#pp f in
         match state with
-        | Unresolved _ -> ()
+        | Unresolved u -> RC.check ~pp u.rc
         | Resolved cap -> cap#check_invariants
+
+      method sealed_dispatch _ = None
     end
 
   let embargo underlying : embargo_cap =
@@ -119,24 +141,16 @@ module Make(C : S.CORE_TYPES) = struct
       object
         inherit local_promise as super
 
-        method! private release =
-          match state with
-          | Unresolved (_, release_pending) ->
-            assert (not release_pending);
-            C.dec_ref underlying;
-            state <- Resolved released
-          | Resolved cap ->
-            C.dec_ref cap;      (* Note: might be different to underlying if we hit a cycle *)
-            state <- Resolved released
+        method! private release_while_unresolved =
+          C.dec_ref underlying
 
         method disembargo =
-          super#check_refcount;
           super#resolve underlying
 
         method! pp f =
           match state with
-          | Unresolved _ -> Fmt.pf f "embargoed(%a, %t)" Debug.OID.pp id super#pp_refcount
-          | Resolved cap -> Fmt.pf f "disembargoed(%a, %t) -> %t" Debug.OID.pp id super#pp_refcount cap#pp
+          | Unresolved u -> Fmt.pf f "embargoed(%a, %a)" Debug.OID.pp id RC.pp u.rc
+          | Resolved cap -> Fmt.pf f "disembargoed(%a) -> %t" Debug.OID.pp id cap#pp
       end
     in
     (cap :> embargo_cap)
