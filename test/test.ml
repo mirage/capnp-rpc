@@ -128,6 +128,7 @@ let test_local_embargo () =
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
   S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"return:take-from-other";    (* Get results of Message-1 directly *)
   C.handle_msg c ~expect:"disembargo-reply";
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
@@ -174,6 +175,7 @@ let test_local_embargo_2 () =
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
   S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"return:take-from-other";    (* Get results of Message-1 directly *)
   C.handle_msg c ~expect:"disembargo-reply";
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
@@ -209,6 +211,7 @@ let test_local_embargo_3 () =
   S.handle_msg s ~expect:"call:Message-1";
   C.handle_msg c ~expect:"call:Message-1";            (* Gets pipelined message back *)
   S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"return:take-from-other";    (* Get results of Message-1 directly *)
   C.handle_msg c ~expect:"disembargo-reply";
   Alcotest.(check string) "Pipelined arrived first" "Message-1" local#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" local#pop;
@@ -320,8 +323,10 @@ let test_local_embargo_6 () =
   S.handle_msg s ~expect:"disembargo-request";
   S.handle_msg s ~expect:"finish";              (* Finish for q1 *)
   C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
+  C.handle_msg c ~expect:"return:take-from-other";
   C.handle_msg c ~expect:"disembargo-request";  (* (the server is doing its own embargo on q2) *)
   S.handle_msg s ~expect:"call:Message-1";
+  S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"disembargo-reply";    (* (the server is doing its own embargo on q2) *)
   C.handle_msg c ~expect:"disembargo-reply";
   S.handle_msg s ~expect:"call:Message-2";
@@ -367,6 +372,7 @@ let test_local_embargo_7 () =
      to resolve the promise at some point in the future. *)
   S.handle_msg s ~expect:"disembargo-request";
   C.handle_msg c ~expect:"call:Message-1";      (* Pipelined message-1 arrives at client *)
+  C.handle_msg c ~expect:"return:take-from-other";
   C.handle_msg c ~expect:"disembargo-reply";
   let client_logger = Services.logger () in
   inc_ref client_logger;
@@ -422,9 +428,11 @@ let test_local_embargo_8 () =
   C.handle_msg c ~expect:"return:a1";
   (* We should now know that [target] is local, but will have embargoed it. *)
   let m2 = call target "Message-2" [] in
+  S.handle_msg s ~expect:"return:take-from-other";
   S.handle_msg s ~expect:"disembargo-request";
   C.handle_msg c ~expect:"disembargo-request"; (* Server is also doing its own embargo *)
   S.handle_msg s ~expect:"finish";
+  C.handle_msg c ~expect:"finish";
   C.handle_msg c ~expect:"disembargo-reply";
   S.handle_msg s ~expect:"disembargo-reply";
   let logger = Services.logger () in
@@ -432,7 +440,8 @@ let test_local_embargo_8 () =
   inc_ref logger;
   resolve_ok a3 "a3" [logger];
   C.handle_msg c ~expect:"release";
-  C.handle_msg c ~expect:"return:logged";
+  C.handle_msg c ~expect:"return:sent-elsewhere";
+  S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"call:Message-2";
   Alcotest.(check string) "Pipelined arrived first" "Message-1" logger#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" logger#pop;
@@ -461,7 +470,6 @@ let _test_local_embargo_9 () =
   let sr_11 = call cr_10 "10:0" [] in
   let cr_17 = sr_11#cap 1 in
   let cr_22 = sr_11#cap 0 in
-(*   dec_ref cr_28; *)
   C.handle_msg c ~expect:"bootstrap";
   C.handle_msg c ~expect:"call:3:0";
   let _msg, args, resolver_35 = service_4#pop in
@@ -484,8 +492,10 @@ let _test_local_embargo_9 () =
   C.handle_msg c ~expect:"return:reply";
   S.handle_msg s ~expect:"call:7:0";
   C.handle_msg c ~expect:"call:39:1";
+  S.handle_msg s ~expect:"return:take-from-other";
   S.handle_msg s ~expect:"call:39:0";
   C.handle_msg c ~expect:"disembargo-request";
+  S.handle_msg s ~expect:"return:take-from-other";
   S.handle_msg s ~expect:"disembargo-request";
   C.handle_msg c ~expect:"disembargo-request";
   S.handle_msg s ~expect:"disembargo-request";
@@ -493,6 +503,8 @@ let _test_local_embargo_9 () =
   let msg, _args, _resolver_93 = service_4#pop in
   Alcotest.(check string) "First message" "7:0" msg;
   S.handle_msg s ~expect:"disembargo-reply";
+  C.handle_msg c ~expect:"finish";
+  C.handle_msg c ~expect:"finish";
   C.handle_msg c ~expect:"disembargo-reply";
   S.handle_msg s ~expect:"disembargo-reply";
   C.handle_msg c ~expect:"disembargo-reply";
@@ -502,6 +514,60 @@ let _test_local_embargo_9 () =
   ignore sr_46;
   ignore sr_48;
   ignore sr_51;
+  CS.check_finished c s
+
+(* We still need embargoes with self-results-to=yourself. *)
+let test_local_embargo_10 () =
+  let service_1 = Services.manual () in         (* At the client *)
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags
+    ~server_tags:Test_utils.server_tags (Services.echo_service ())
+  in
+  let proxy_to_echo = C.bootstrap c in
+  CS.flush c s;
+  (* The client asks for a service, which will resolve to [service_1].
+     It pipelines it a message [q1], and then pipelines [m1] on the result of that.
+     The server will forward [q1] back to the client and tell it to take the answer
+     from that. Because the client already sent [m1] over the result, it must
+     embargo it and wait before sending [m2]. *)
+  let q0 = call proxy_to_echo "echo" [service_1] in
+  let bs = q0#cap 0 in
+  dec_ref q0;
+  (* bs is a promise for the client's own [service_1]. *)
+  let q1 = call bs "q1" [] in
+  let target = q1#cap 0 in
+  let m1 = call target "M-1" [] in
+  S.handle_msg s ~expect:"call:echo";
+  S.handle_msg s ~expect:"call:q1";
+  S.handle_msg s ~expect:"call:M-1";
+  C.handle_msg c ~expect:"return:got:echo";
+  S.handle_msg s ~expect:"disembargo-request";          (* Client disembargoing bootstrap *)
+  C.handle_msg c ~expect:"call:q1";
+  let aq1 = service_1#pop0 "q1" in
+  resolve_ok aq1 "aq1" [with_inc_ref service_1];
+  C.handle_msg c ~expect:"return:take-from-other";      (* Return for client's q1 - use aq1 *)
+  (* At this point, the client knows that [target] is [service_1], but must embargo it until
+     it knows that "M-1" has been delivered. *)
+  let m2 = call target "M-2" [] in
+  C.handle_msg c ~expect:"call:M-1";                    (* Pipelined call arrives back *)
+  C.handle_msg c ~expect:"return:take-from-other";      (* Return for M-1 *)
+  C.handle_msg c ~expect:"disembargo-reply";            (* Disembargo of [bs]. *)
+  S.handle_msg s ~expect:"finish";                      (* Bootstrap *)
+  S.handle_msg s ~expect:"return:sent-elsewhere";       (* For forwarded q1 *)
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"release";
+  C.handle_msg c ~expect:"disembargo-reply";
+  let am1 = service_1#pop0 "M-1" in
+  let am2 = service_1#pop0 "M-2" in
+  resolve_ok am1 "am1" [];
+  resolve_ok am2 "am2" [];
+  dec_ref q1;
+  dec_ref m1;
+  dec_ref m2;
+  dec_ref target;
+  dec_ref bs;
+  dec_ref proxy_to_echo;
+  CS.flush c s;
   CS.check_finished c s
 
 (* The field must still be useable after the struct is released. *)
@@ -1087,7 +1153,8 @@ let tests = [
   "Local embargo 6", `Quick, test_local_embargo_6;
   "Local embargo 7", `Quick, test_local_embargo_7;
   "Local embargo 8", `Quick, test_local_embargo_8;
-(*   "Local embargo 9", `Quick, test_local_embargo_9; *)         (* XXX: failing *)
+(*   "Local embargo 9", `Quick, test_local_embargo_9;         (* XXX: failing *) *)
+  "Local embargo 10", `Quick, test_local_embargo_10;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;

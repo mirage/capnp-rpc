@@ -145,8 +145,11 @@ module type CORE_TYPES = sig
     method resolve : struct_ref -> unit
     (** [r#resolve x] causes [r]'s promise to behave as [x] in future.
         The promise takes ownership of [x] (is responsible for calling [dec_rec] on it). *)
+
+    method sealed_dispatch : 'a. 'a brand -> 'a option
+    (** [r#sealed_dispatch brand] extracts some private data of the given type. *)
   end
-  (** A [struct_ref] that allows its caller to resolve it. *)
+  (** A [struct_resolver] can be used to resolve some promise. *)
 
   module Request_payload : sig
     type t = Wire.Request.t * cap RO_array.t

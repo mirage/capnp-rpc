@@ -17,8 +17,10 @@ let sum ~pp:pp_obj t d =
       else Debug.failf "Ref-count %a - %d would go negative!" pp t (-d) pp_obj
     );
     t'
-  ) else (
+  ) else if d >= 0 then (
     Debug.failf "Attempt to change ref-count (to %a+%d) on freed resource %t" pp t d pp_obj
+  ) else (
+    Debug.failf "Attempt to change ref-count (to %a%d) on freed resource %t" pp t d pp_obj
   )
 
 let succ ~pp t = sum ~pp t 1
