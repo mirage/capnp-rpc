@@ -3,40 +3,29 @@ module Make (C : S.CORE_TYPES) = struct
 
   type target = (C.struct_ref -> unit) Queue.t
 
-  let rec local_promise ?parent () = object (self : _ #Struct_proxy.t)
-    inherit [target] Struct_proxy.t (Queue.create ()) as super
+  let local_promise () = object (self : _ #Struct_proxy.t)
+    inherit [target] Struct_proxy.t (Queue.create ())
 
     val name = "local-promise"
 
     method private do_pipeline q i results msg caps =
       (* We add an extra resolver here so that we can report [self]
          as the blocker. *)
-      let local_results = local_promise ~parent:self () in
+      results#set_blocker (Some (self :> C.base_ref));
       q |> Queue.add (fun p ->
+          results#set_blocker None;
           let cap = p#cap i in
-          cap#call (local_results :> C.struct_resolver) msg caps;
+          cap#call results msg caps;
           C.dec_ref cap
-        );
-      results#resolve (local_results :> C.struct_ref)
+        )
 
     method pp_unresolved f _ =
-      match parent with
-      | Some p when p#blocker <> None -> Fmt.pf f "blocked on %t" p#pp
-      | _ -> Fmt.string f "(unresolved)"
+      Fmt.string f "(unresolved)"
 
     method private on_resolve q x =
       Queue.iter (fun fn -> fn x) q
 
     method private send_cancel _ = ()
-
-    method! blocker =
-      match super#blocker, parent with
-      | None, _ -> None            (* Not blocked *)
-      | Some _ as x, None -> x
-      | Some _ as self, Some parent ->
-        match parent#blocker with
-        | Some _ as x -> x         (* Waiting on parent *)
-        | None -> self             (* Waiting on call *)
 
     method field_sealed_dispatch _ _ = None
   end

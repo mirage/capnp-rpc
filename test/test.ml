@@ -391,7 +391,6 @@ let test_local_embargo_7 () =
   CS.flush c s;
   CS.check_finished c s
 
-(* The client tries to disembargo a resolved local switchable. *)
 let test_local_embargo_8 () =
   let service = Services.manual () in
   let c, s, bs = init_pair ~bootstrap_service:service in
@@ -400,7 +399,6 @@ let test_local_embargo_8 () =
   let q1 = call bs "q1" [local] in
   let target = q1#cap 0 in
   dec_ref q1;
-  let m1 = call target "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_local, a1 = service#pop1 "q1" in
   (* Server makes a call on [local] and uses that promise to answer [q1]. *)
@@ -411,7 +409,6 @@ let test_local_embargo_8 () =
   let local_promise = Cap_proxy.local_promise () in
   resolve_ok a2 "a2" [local_promise];
   (* The server then answers q1 with that [local_promise]. *)
-  S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
   S.handle_msg s ~expect:"return:a2";
   resolve_ok a1 "a1" [q2#cap 0];
   dec_ref q2;
@@ -419,30 +416,32 @@ let test_local_embargo_8 () =
   (* The client resolves the local promise to a remote one *)
   let q3 = call bs "q3" [] in
   let remote_promise = q3#cap 0 in
+  let m1 = call target "Message-1" [] in
   local_promise#resolve remote_promise;
-  (* Client gets answer to a1 and sends disembargo. *)
-  C.handle_msg c ~expect:"call:Message-1";      (* Forwards pipelined call back to the server again *)
   S.handle_msg s ~expect:"call:q3";
+  S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
   S.handle_msg s ~expect:"resolve";
-  S.handle_msg s ~expect:"call:Message-1";
+  (* Client gets answer to a1 and sends disembargo. *)
   C.handle_msg c ~expect:"return:a1";
-  (* We should now know that [target] is local, but will have embargoed it. *)
+  (* We now know that [target] is [remote_promise], but we need to embargo it until Message-1
+     arrives back at the client. *)
   let m2 = call target "Message-2" [] in
-  S.handle_msg s ~expect:"return:take-from-other";
+  C.handle_msg c ~expect:"call:Message-1";      (* Forwards pipelined call back to the server again *)
   S.handle_msg s ~expect:"disembargo-request";
-  C.handle_msg c ~expect:"disembargo-request"; (* Server is also doing its own embargo *)
   S.handle_msg s ~expect:"finish";
-  C.handle_msg c ~expect:"finish";
-  C.handle_msg c ~expect:"disembargo-reply";
+  S.handle_msg s ~expect:"call:Message-1";
+  C.handle_msg c ~expect:"return:take-from-other"; (* Reply to client's first Message-1 *)
+  S.handle_msg s ~expect:"finish";
+  C.handle_msg c ~expect:"disembargo-request";  (* Server is also doing its own embargo *)
+  C.handle_msg c ~expect:"disembargo-reply";    (* Client now disembargoes Message-2 *)
   S.handle_msg s ~expect:"disembargo-reply";
+  C.handle_msg c ~expect:"release";
+  C.handle_msg c ~expect:"finish";
+  S.handle_msg s ~expect:"call:Message-2";
   let logger = Services.logger () in
   let a3 = service#pop0 "q3" in
   inc_ref logger;
   resolve_ok a3 "a3" [logger];
-  C.handle_msg c ~expect:"release";
-  C.handle_msg c ~expect:"return:sent-elsewhere";
-  S.handle_msg s ~expect:"finish";
-  S.handle_msg s ~expect:"call:Message-2";
   Alcotest.(check string) "Pipelined arrived first" "Message-1" logger#pop;
   Alcotest.(check string) "Embargoed arrived second" "Message-2" logger#pop;
   dec_ref m1;

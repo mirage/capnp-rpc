@@ -56,19 +56,19 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
     let open Reader in
     let qid = Return.answer_id_get return |> QuestionId.of_uint32 in
     let release_param_caps = Return.release_param_caps_get return in
-    match Return.get return with
-    | Return.Results results ->
-      let descs = parse_descs (Payload.cap_table_get_list results |> RO_array.of_list) in
-      `Return (qid, `Results (Rpc.Readonly return, descs), release_param_caps)
-    | Return.Exception ex ->
-      let ex = parse_exn ex in
-      `Return (qid, `Exception ex, release_param_caps)
-    | Return.Canceled ->
-      `Return (qid, `Cancelled, release_param_caps)
-    | Return.ResultsSentElsewhere -> failwith "TODO: ResultsSentElsewhere"
-    | Return.TakeFromOtherQuestion _ -> failwith "TODO: TakeFromOtherQuestion"
-    | Return.AcceptFromThirdParty _ -> failwith "TODO: AcceptFromThirdParty"
-    | Return.Undefined x -> failwith (Fmt.strf "Unexpected return type received: %d" x)
+    let ret =
+      match Return.get return with
+      | Return.Results results ->
+        let descs = parse_descs (Payload.cap_table_get_list results |> RO_array.of_list) in
+        `Results (Rpc.Readonly return, descs)
+      | Return.Exception ex -> `Exception (parse_exn ex)
+      | Return.Canceled -> `Cancelled
+      | Return.ResultsSentElsewhere -> `ResultsSentElsewhere
+      | Return.TakeFromOtherQuestion other -> `TakeFromOtherQuestion (AnswerId.of_uint32 other)
+      | Return.AcceptFromThirdParty _ -> failwith "TODO: AcceptFromThirdParty"
+      | Return.Undefined x -> failwith (Fmt.strf "Unexpected return type received: %d" x)
+    in
+    `Return (qid, ret, release_param_caps)
 
   let parse_finish finish =
     let open Reader in
