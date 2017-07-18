@@ -1,5 +1,7 @@
 (** A simple instantiation of Capnp_rpc for testing, in which messages are just strings. *)
 
+let ref_leaks = ref 0
+
 let src = Logs.Src.create "test-core" ~doc:"Cap'n Proto RPC tests"
 module Log = (val Logs.src_log src: Logs.LOG)
 
@@ -26,7 +28,7 @@ module String_content = struct
 
   let ref_leak_detected fn =
     fn ();
-    failwith "ref_leak_detected"
+    incr ref_leaks
 end
 
 module Core_types = struct

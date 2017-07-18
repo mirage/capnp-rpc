@@ -34,6 +34,12 @@ let call target msg caps =
   target#call resolver msg (RO_array.of_list caps);
   results
 
+let call_for_cap target msg caps =
+  let q = call target msg caps in
+  let cap = q#cap 0 in
+  dec_ref q;
+  cap
+
 (* Takes ownership of caps *)
 let resolve_ok (ans:#Core_types.struct_resolver) msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
@@ -299,9 +305,7 @@ let test_local_embargo_6 () =
   let c, s, bs = init_pair ~bootstrap_service:service in
   let local = Services.manual () in
   (* Client calls the server, giving it [local]. *)
-  let q1 = call bs "q1" [local] in
-  let target = q1#cap 0 in
-  dec_ref q1;
+  let target = call_for_cap bs "q1" [local] in
   let m1 = call target "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
   let proxy_to_local, a1 = service#pop1 "q1" in
@@ -310,7 +314,7 @@ let test_local_embargo_6 () =
   resolve_ok a1 "a1" [q2#cap 0];
   C.handle_msg c ~expect:"call:q2";
   S.handle_msg s ~expect:"call:Message-1";      (* Forwards pipelined call back to the client *)
-  (* Client resolves a2 to [service]. *)
+  (* Client resolves a2 to [bs]. *)
   let a2 = local#pop0 "q2" in
   resolve_ok a2 "a2" [bs];
   S.handle_msg s ~expect:"return:a2";
@@ -455,64 +459,81 @@ let test_local_embargo_8 () =
   CS.flush c s;
   CS.check_finished c s
 
-(* 39:0 and 39:1 are sent in order on the same reference, [cr39].
+(* m1 and m2 are sent in order on the same reference, [pts2].
    They must arrive in order too. *)
 let _test_local_embargo_9 () =
-  let service_4 = Services.manual () in
-  let service_8 = Services.manual () in
-  let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags
-      ~client_bs:service_4 service_8 in
-  let cr_3 = S.bootstrap s in
-  let sr_4 = call cr_3 "3:0" [cr_3] in
-  let cr_7 = sr_4#cap 1 in
-  let cr_10 = C.bootstrap c in
-  let sr_11 = call cr_10 "10:0" [] in
-  let cr_17 = sr_11#cap 1 in
-  let cr_22 = sr_11#cap 0 in
-  C.handle_msg c ~expect:"bootstrap";
-  C.handle_msg c ~expect:"call:3:0";
-  let _msg, args, resolver_35 = service_4#pop in
-  let cr_36 = RO_array.get args 0 in
-  let cr_39 = sr_4#cap 0 in
-  resolve_ok resolver_35 "reply" [cr_22; cr_17];
+  let client_bs = Services.manual () in
+  let service_bs = Services.manual () in
+  let c, s = CS.create
+      ~client_tags:Test_utils.client_tags ~client_bs:(with_inc_ref client_bs)
+      ~server_tags:Test_utils.server_tags (with_inc_ref service_bs) in
+  (* The client gets the server's bootstrap. *)
+  let service = C.bootstrap c in
   S.handle_msg s ~expect:"bootstrap";
-  S.handle_msg s ~expect:"call:10:0";
-  let _msg, _args, resolver_44 = service_8#pop in
-  let sr_46 = call cr_7 "7:0" [] in
-  let sr_48 = call cr_39 "39:0" [] in
-  resolve_ok resolver_44 "reply" [cr_7; cr_3];
-  let sr_51 = call cr_39 "39:1" [] in
   C.handle_msg c ~expect:"return:(boot)";
-  S.handle_msg s ~expect:"return:(boot)";
-  C.handle_msg c ~expect:"call:7:0";
-  S.handle_msg s ~expect:"return:reply";
-  C.handle_msg c ~expect:"call:39:0";
   S.handle_msg s ~expect:"finish";
-  C.handle_msg c ~expect:"return:reply";
-  S.handle_msg s ~expect:"call:7:0";
-  C.handle_msg c ~expect:"call:39:1";
-  S.handle_msg s ~expect:"return:take-from-other";
-  S.handle_msg s ~expect:"call:39:0";
-  C.handle_msg c ~expect:"disembargo-request";
-  S.handle_msg s ~expect:"return:take-from-other";
-  S.handle_msg s ~expect:"disembargo-request";
-  C.handle_msg c ~expect:"disembargo-request";
-  S.handle_msg s ~expect:"disembargo-request";
-  C.handle_msg c ~expect:"call:7:0";
-  let msg, _args, _resolver_93 = service_4#pop in
-  Alcotest.(check string) "First message" "7:0" msg;
-  S.handle_msg s ~expect:"disembargo-reply";
+  (* The server gets the client's bootstrap. *)
+  let ptc0 = S.bootstrap s in                   (* The first proxy-to-client *)
+  C.handle_msg c ~expect:"bootstrap";
+  S.handle_msg s ~expect:"return:(boot)";
   C.handle_msg c ~expect:"finish";
-  C.handle_msg c ~expect:"finish";
-  C.handle_msg c ~expect:"disembargo-reply";
-  S.handle_msg s ~expect:"disembargo-reply";
-  C.handle_msg c ~expect:"disembargo-reply";
-  let _ = service_4#pop0 "39:0" in
-  let _ = service_4#pop0 "39:1" in
-  dec_ref cr_36;
-  ignore sr_46;
-  ignore sr_48;
-  ignore sr_51;
+  (* The client calls the server. *)
+  let pts1 = call_for_cap service "service.ptc0" [] in (* will become [ptc0] *)
+  let pts2 = call_for_cap service "service.ptc1" [] in (* will become [ptc1] *)
+  S.handle_msg s ~expect:"call:service.ptc0";
+  S.handle_msg s ~expect:"call:service.ptc1";
+  (* The server calls the client. *)
+  let ptc1 = call_for_cap ptc0 "client.self" [] in (* [ptc1] will become [ptc0] *)
+  C.handle_msg c ~expect:"call:client.self";
+  (* The client handles the server's request by returning [pts1], which will become [ptc0]. *)
+  let ptc0_resolver = client_bs#pop0 "client.self" in
+  resolve_ok ptc0_resolver "reply" [pts1];
+  (* The server handles the client's requests by returning [ptc0] (the client's bootstrap)
+     and [ptc1], which will resolve to the client's bootstrap later. *)
+  let pts0_resolver = service_bs#pop0 "service.ptc0" in
+  resolve_ok pts0_resolver "ptc0" [ptc0];
+  let pts1_resolver = service_bs#pop0 "service.ptc1" in
+  resolve_ok pts1_resolver "ptc1" [with_inc_ref ptc1];
+  (* The client pipelines a message to the server: *)
+  let m1 = call pts2 "m1" [] in
+  (* The client gets replies to its questions: *)
+  C.handle_msg c ~expect:"return:ptc0";         (* Resolves pts1 to client_bs (only used for pipelining) *)
+  C.handle_msg c ~expect:"return:ptc1";         (* Resolves pts2 to embargoed(pts1) (embargoed because of [m1]) *)
+  (* The client knows [ptc1] is local, but has embargoed it.
+     [m1] must arrive back at the client before the disembargo. *)
+  let m2 = call pts2 "m2" [] in
+  (* The server pipelines a message to the client: *)
+  let mark_dirty = call ptc1 "mark-ptc0-dirty" [] in
+  C.handle_msg c ~expect:"call:mark-ptc0-dirty";    (* Simple call, directly to [client_bs]. *)
+  let dirty = client_bs#pop0 "mark-ptc0-dirty" in
+  S.handle_msg s ~expect:"return:reply";
+  (* Server learns that the answer to its question (ptc1) is the cap (ptc0) in
+     its answer to the client. It embargoes this because [mark_dirty] used it, which
+     causes m1 to be (unnecessarily) delayed. However, the server still replies
+     immediately to the client's disembargo request. The client isn't expecting m1
+     to be delayed.
+     Is the problem here that we're shortening, instead of just continuing to forward?
+     When we answer a question, we should *always* forward to that answer, whether we
+     later discover further shortening is possible or not.
+     *)
+  S.handle_msg s ~expect:"call:m1";
+  S.handle_msg s ~expect:"disembargo-request";
+  (* At this point, the client thinks [m1] must have arrived by now and delivers m2. *)
+  CS.flush c s;
+  let am1 = client_bs#pop0 "m1" in
+  let am2 = client_bs#pop0 "m2" in
+  resolve_ok dirty "dirty" [];
+  resolve_ok am1 "am1" [];
+  resolve_ok am2 "am2" [];
+  dec_ref pts2;
+  dec_ref ptc1;
+  dec_ref client_bs;
+  dec_ref service_bs;
+  dec_ref service;
+  dec_ref mark_dirty;
+  dec_ref m1;
+  dec_ref m2;
+  CS.flush c s;
   CS.check_finished c s
 
 (* We still need embargoes with self-results-to=yourself. *)
@@ -1177,7 +1198,14 @@ let tests = [
   "Broken later", `Quick, test_broken_later;
   "Broken connection", `Quick, test_broken_connection;
 ] |> List.map (fun (name, speed, test) ->
-    name, speed, (fun () -> test (); Gc.full_major ())
+    name, speed, (fun () ->
+        Testbed.Capnp_direct.ref_leaks := 0;
+        test ();
+        Gc.full_major ();
+        if !Testbed.Capnp_direct.ref_leaks > 0 then (
+          Alcotest.fail "Reference leaks detected!";
+        )
+      )
   )
 
 let () =
