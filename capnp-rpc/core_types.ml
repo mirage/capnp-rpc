@@ -33,6 +33,7 @@ module Make(Wire : S.WIRE) = struct
   and struct_resolver = object
     method pp : Format.formatter -> unit
     method resolve : struct_ref -> unit
+    method set_blocker : base_ref option -> unit
     method sealed_dispatch : 'a. 'a S.brand -> 'a option
   end
 

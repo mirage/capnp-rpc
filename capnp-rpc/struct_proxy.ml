@@ -74,6 +74,10 @@ module Make (C : S.CORE_TYPES) = struct
 
   let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:%a" Wire.Path.pp k RC.pp v.ref_count)
 
+  let pp_opt_blocked_on f = function
+    | None -> ()
+    | Some b -> Fmt.pf f " (blocked on %t)" b#pp
+
   let pp_state ~pp_promise f = function
     | Unresolved {target; _} -> Fmt.pf f "%a" pp_promise target
     | Forwarding p -> p#pp f
@@ -160,6 +164,8 @@ module Make (C : S.CORE_TYPES) = struct
     val virtual name : string
     (* e.g. "local-promise" *)
 
+    val mutable blocker = None
+
     val id = Debug.OID.next ()
 
     method private virtual pp_unresolved : 'promise Fmt.t
@@ -190,8 +196,15 @@ module Make (C : S.CORE_TYPES) = struct
 
     method blocker =
       dispatch state
-        ~unresolved:(fun _ -> Some (self :> base_ref))
+        ~unresolved:(fun _ ->
+            match blocker with
+            | None -> Some (self :> base_ref)
+            | Some _ as x -> x
+          )
         ~forwarding:(fun x -> x#blocker)
+
+    method set_blocker b =
+      blocker <- b
 
     method cap path =
       dispatch state
@@ -214,10 +227,11 @@ module Make (C : S.CORE_TYPES) = struct
     method pp f =
       match state with
       | Unresolved u ->
-        Fmt.pf f "%s(%a, %a) -> %a"
+        Fmt.pf f "%s(%a, %a) -> %a%a"
           name
           Debug.OID.pp id RC.pp u.rc
           self#pp_unresolved u.target
+          pp_opt_blocked_on blocker
       | Forwarding x ->
         Fmt.pf f "%s(%a) -> %t"
           name

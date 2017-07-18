@@ -129,7 +129,18 @@ let message ~tags : Endpoint_types.Out.t -> _ =
         let ret = Message.return_init m in
         Return.canceled_set ret;
         ret
-      | _ -> failwith "TODO: other return type"
+      | `ResultsSentElsewhere ->
+        let m = Message.init_root () in
+        let ret = Message.return_init m in
+        Return.results_sent_elsewhere_set ret;
+        ret
+      | `TakeFromOtherQuestion qid ->
+        let m = Message.init_root () in
+        let ret = Message.return_init m in
+        Return.take_from_other_question_set ret (QuestionId.uint32 qid);
+        ret
+      | `AcceptFromThirdParty ->
+        failwith "TODO: AcceptFromThirdParty"
     in
     Return.answer_id_set ret (AnswerId.uint32 aid);
     Return.release_param_caps_set ret release;
