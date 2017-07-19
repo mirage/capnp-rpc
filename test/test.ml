@@ -17,7 +17,7 @@ let empty = RO_array.empty
 
 let inc_ref = Core_types.inc_ref
 let dec_ref = Core_types.dec_ref
-let with_inc_ref x = inc_ref x; x
+let with_inc_ref x = inc_ref x; (x :> Core_types.cap)
 
 let error = Alcotest.of_pp Capnp_rpc.Error.pp
 let pp_cap f p = p#pp f
@@ -317,6 +317,8 @@ let test_local_embargo_6 () =
   (* Client resolves a2 to [bs]. *)
   let a2 = local#pop0 "q2" in
   resolve_ok a2 "a2" [bs];
+  (* Server gets response to q2, that [q2#cap 0] is [bs].
+     Although we don't actually care about this, it still embargoes it: *)
   S.handle_msg s ~expect:"return:a2";
   (* Client gets results from q1 - need to embargo it until we've forwarded the pipelined message
      back to the server. *)
@@ -502,10 +504,6 @@ let _test_local_embargo_9 () =
   (* The client knows [ptc1] is local, but has embargoed it.
      [m1] must arrive back at the client before the disembargo. *)
   let m2 = call pts2 "m2" [] in
-  (* The server pipelines a message to the client: *)
-  let mark_dirty = call ptc1 "mark-ptc0-dirty" [] in
-  C.handle_msg c ~expect:"call:mark-ptc0-dirty";    (* Simple call, directly to [client_bs]. *)
-  let dirty = client_bs#pop0 "mark-ptc0-dirty" in
   S.handle_msg s ~expect:"return:reply";
   (* Server learns that the answer to its question (ptc1) is the cap (ptc0) in
      its answer to the client. It embargoes this because [mark_dirty] used it, which
@@ -522,7 +520,6 @@ let _test_local_embargo_9 () =
   CS.flush c s;
   let am1 = client_bs#pop0 "m1" in
   let am2 = client_bs#pop0 "m2" in
-  resolve_ok dirty "dirty" [];
   resolve_ok am1 "am1" [];
   resolve_ok am2 "am2" [];
   dec_ref pts2;
@@ -530,7 +527,6 @@ let _test_local_embargo_9 () =
   dec_ref client_bs;
   dec_ref service_bs;
   dec_ref service;
-  dec_ref mark_dirty;
   dec_ref m1;
   dec_ref m2;
   CS.flush c s;
@@ -588,6 +584,169 @@ let test_local_embargo_10 () =
   dec_ref bs;
   dec_ref proxy_to_echo;
   dec_ref service_1;
+  CS.flush c s;
+  CS.check_finished c s
+
+let test_local_embargo_11 () =
+  let client_bs = Services.manual () in
+  let server_bs = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags ~client_bs
+    ~server_tags:Test_utils.server_tags server_bs
+  in
+  let to_server_bs = C.bootstrap c in
+  let to_client_bs = S.bootstrap s in
+  CS.flush c s;
+  let q1 = call_for_cap to_server_bs "q1" [] in
+  let to_server_bs_2 = C.bootstrap c in
+  let q2 = call_for_cap to_client_bs "q2" [] in
+  S.handle_msg s ~expect:"call:q1";
+  resolve_ok (server_bs#pop0 "q1") "a1" [with_inc_ref q2];
+  let q3 = call q1 "q3" [] in
+  C.handle_msg c ~expect:"call:q2";
+  resolve_ok (client_bs#pop0 "q2") "a2" [with_inc_ref to_server_bs_2];
+  S.handle_msg s ~expect:"bootstrap";
+  (* Client gets a1, resolving q1 to the already-answered q2's cap 0.
+     As q3 was pipelined over q1 and q2's cap 0 is currently a remote-promise
+     (q2), it embargoes q1. *)
+  C.handle_msg c ~expect:"return:a1";
+  (* to_server_bs_2 resolves. No embargo is needed: *)
+  C.handle_msg c ~expect:"return:(boot)";
+  S.handle_msg s ~expect:"call:q3";             (* Pipelined q3 arrives, forwarded to q2 *)
+  C.handle_msg c ~expect:"call:q3";             (* q3 back at client, sent to bootstrap call *)
+  C.handle_msg c ~expect:"return:take-from-other"; (* use forwarded call for answer to q3 *)
+  S.handle_msg s ~expect:"return:a2";           (* q2 = server_bs, embargoed due to q3 forwarding *)
+  (* note: probably shouldn't mark paths as dirty when just forwarding, but should still work *)
+  C.handle_msg c ~expect:"disembargo-request";
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"disembargo-reply";    (* Second embargo not needed, as remote *)
+  dec_ref to_server_bs;
+  dec_ref to_server_bs_2;
+  dec_ref to_client_bs;
+  dec_ref q1;
+  dec_ref q2;
+  dec_ref q3;
+  CS.flush c s;
+  CS.check_finished c s
+
+let test_local_embargo_12 () =
+  let server_bs = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:server_bs in
+  (* Client calls [bs], passing a local promise as the argument. *)
+  let x, xr = Local_struct_promise.make () in   (* x will become broken *)
+  let x0 = x#cap 0 in
+  let q1 = call bs "q1" [x0] in
+  (* Client resolves local promise to the (about to fail) promise q1:2 *)
+  resolve_ok xr "x" [with_inc_ref (q1#cap 2)];
+  (* Client pipelines q2 over q1:0 *)
+  let q2 = call (q1#cap 0) "q2" [] in
+  (* Server handles q1. The result is a promise for the result of a call to q1:2,
+     which will fail. *)
+  S.handle_msg s ~expect:"call:q1";
+  let to_x0, a1 = server_bs#pop1 "q1" in
+  let y = call_for_cap to_x0 "q3" [] in
+  resolve_ok a1 "a1" [y];
+  C.handle_msg c ~expect:"call:q3";     (* q3 arrives at client and is forwarded to q1 (to=yourself) *)
+  S.handle_msg s ~expect:"resolve";     (* [to_x0 = q3#2]. *)
+  C.handle_msg c ~expect:"return:a1";   (* [q1 = q3#0] *)
+  (* Client has pipelined over q1, so embargoes it. *)
+  S.handle_msg s ~expect:"call:q2";     (* Server forwards q2 back along q3, replies with take-from-other(q4) *)
+  C.handle_msg c ~expect:"release";     (* Server will use q3 instead of i0 for to_x0 *)
+  C.handle_msg c ~expect:"call:q2";     (* Client forwards q2 to q1#2 *)
+  S.handle_msg s ~expect:"call:q3";     (* q3 arrives at a1#2, which doesn't exist *)
+  (* Server replies with results-sent-elsewhere. Is this correct? It's really an error. *)
+  C.handle_msg c ~expect:"return:take-from-other";   (* Take from q2=q4 *)
+  CS.dump c s;
+  S.handle_msg s ~expect:"return:take-from-other";   (* Take from broken answer *)
+  C.handle_msg c ~expect:"return:sent-elsewhere";
+  S.handle_msg s ~expect:"disembargo-request";       (* Client wants to clear q1 to disembargo x *)
+  C.handle_msg c ~expect:"disembargo-reply";
+  (* As [x] is now broken, no further disembargoes should be sent. *)
+  dec_ref q1;
+  dec_ref q2;
+  dec_ref bs;
+  dec_ref x;
+  dec_ref x0;
+  dec_ref to_x0;
+  CS.flush c s;
+  CS.check_finished c s
+
+let test_local_embargo_13 () =
+  let client_bs = Services.manual () in
+  let server_bs = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags ~client_bs
+    ~server_tags:Test_utils.server_tags server_bs
+  in
+  let to_client = S.bootstrap s in
+  let to_server = C.bootstrap c in
+  CS.flush c s;
+  let broken = Core_types.broken_cap (Capnp_rpc.Exception.v "broken") in   (* (at server) *)
+  (* Server calls client, passing a broken cap.
+     Due to a protocol limitation, we first send this as an export and then break it. *)
+  let q1 = call_for_cap to_client "q1" [broken] in
+  (* The client calls the server, and pipelines over the result *)
+  let q2 = call_for_cap to_server "q2" [] in
+  let q3 = call q2 "q3" [] in
+  (* Client gets exported (soon to be broken) cap and echoes it back. *)
+  C.handle_msg c ~expect:"call:q1";
+  let to_broken, a1 = client_bs#pop1 "q1" in
+  resolve_ok a1 "a1" [to_broken];
+  (* Server replies to q2 with q1. *)
+  S.handle_msg s ~expect:"call:q2";
+  let a2 = server_bs#pop0 "q2" in
+  resolve_ok a2 "a2" [q1];
+  C.handle_msg c ~expect:"resolve";     (* Client discovers to_broken is broken *)
+  S.handle_msg s ~expect:"call:q3";     (* Server gets q3, forwards to q1 *)
+  C.handle_msg c ~expect:"return:a2";   (* Client gets q2 = q1, embargoes due to q3 *)
+  C.handle_msg c ~expect:"call:q3";     (* Client forwards q3 to broken *)
+  (* Not sure if we need to forward q3 here, since we know the target is broken. *)
+  (* When q2 embargo is done, client must not do a second embargo, since q2 is now broken. *)
+  dec_ref q2;
+  dec_ref q3;
+  dec_ref to_server;
+  dec_ref to_client;
+  CS.flush c s;
+  CS.check_finished c s
+
+let test_local_embargo_14 () =
+  let client_bs = Services.manual () in (* Bootstrap for vat 0 *)
+  let server_bs = Services.manual () in (* Bootstrap for vat 1 *)
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags ~client_bs
+    ~server_tags:Test_utils.server_tags server_bs
+  in
+  let to_server = C.bootstrap c in
+  let to_client = S.bootstrap s in
+  CS.flush c s;
+  let client_via_q1 = call_for_cap to_server "q1" [] in
+  S.handle_msg s ~expect:"call:q1";
+  resolve_ok (server_bs#pop0 "q1") "a1" [to_client];
+  let q2 = call client_via_q1 "q2" [] in
+  let server_via_q2 = q2#cap 0 in
+  let broken = q2#cap 2 in
+  C.handle_msg c ~expect:"return:a1";
+  (* We sent q2 down q1, so the client will embargo client_via_q1 *)
+  S.handle_msg s ~expect:"call:q2";     (* Forwards q2 back to client as q2' *)
+  C.handle_msg c ~expect:"call:q2";     (* client_bs gets q2'. *)
+  let q3 = call broken "q3" [] in
+  C.handle_msg c ~expect:"return:take-from-other";      (* Client learns q2 = q2' *)
+  (* Client embargoes q2, due to q3 *)
+  let m1 = call server_via_q2 "m1" [] in
+  Logs.info (fun f -> f "server_via_q2 = %t" server_via_q2#pp);
+  resolve_ok (client_bs#pop0 "q2") "a2" [to_server];
+  Logs.info (fun f -> f "server_via_q2 = %t" server_via_q2#pp);
+  let m2 = call server_via_q2 "m2" [] in
+  CS.flush c s;
+  let _ = server_bs#pop0 "m1" in
+  let _ = server_bs#pop0 "m2" in
+  dec_ref client_via_q1;
+  dec_ref server_via_q2;
+  dec_ref broken;
+  dec_ref q2;
+  dec_ref q3;
+  dec_ref m1;
+  dec_ref m2;
   CS.flush c s;
   CS.check_finished c s
 
@@ -1005,17 +1164,6 @@ let test_ref_counts () =
   promise#resolve (make ());
   dec_ref promise;
   Alcotest.(check int) "Local promise released" 0 (Hashtbl.length objects);
-  (* Test embargo *)
-  let embargo = Cap_proxy.embargo (make ()) in
-  embargo#when_more_resolved dec_ref;
-  embargo#disembargo;
-  dec_ref embargo;
-  Alcotest.(check int) "Disembargo released" 0 (Hashtbl.length objects);
-  (* Test embargo without disembargo *)
-  let embargo = Cap_proxy.embargo (make ()) in
-  embargo#when_more_resolved dec_ref;
-  dec_ref embargo;
-  Alcotest.(check int) "Embargo released" 0 (Hashtbl.length objects);
   Gc.full_major ()
 
 module Level0 = struct
@@ -1195,8 +1343,12 @@ let tests = [
   "Local embargo 6", `Quick, test_local_embargo_6;
   "Local embargo 7", `Quick, test_local_embargo_7;
   "Local embargo 8", `Quick, test_local_embargo_8;
-(*   "Local embargo 9", `Quick, test_local_embargo_9;         (* XXX: failing *) *)
+  "Local embargo 9", `Quick, _test_local_embargo_9;
   "Local embargo 10", `Quick, test_local_embargo_10;
+  "Local embargo 11", `Quick, test_local_embargo_11;
+  "Local embargo 12", `Quick, test_local_embargo_12;
+  "Local embargo 13", `Quick, test_local_embargo_13;
+  "Local embargo 14", `Quick, test_local_embargo_14;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;

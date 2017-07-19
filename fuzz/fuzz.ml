@@ -565,7 +565,7 @@ module Vat = struct
     in
     let free_answer (ans, _, answer_var) =
       code (fun f ->
-          Fmt.pf f "%a#resolve (Error (Capnp_rpc.Error.exn \"Free all\"));" pp_resolver answer_var
+          Fmt.pf f "Core_types.resolve_exn %a (Capnp_rpc.Exception.v \"Operation rejected\");" pp_resolver answer_var
         );
       Core_types.resolve_exn ans @@ Capnp_rpc.Exception.v "Operation rejected"
     in
