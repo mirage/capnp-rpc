@@ -59,8 +59,14 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
     recv_queue : [EP.In.t | `Unimplemented of EP.Out.t] Queue.t;
   }
 
+  let pp_msg f = function
+    | #EP.In.t as msg -> EP.In.pp_recv Fmt.string f msg
+    | `Unimplemented out -> Fmt.pf f "Unimplemented(%a)" (EP.Out.pp_recv Fmt.string) out
+
   let dump f t =
-    Conn.dump f t.conn
+    Fmt.pf f "%a@,%a"
+      Conn.dump t.conn
+      (Fmt.Dump.queue pp_msg) t.recv_queue
 
   module EP = EP
 
