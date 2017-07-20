@@ -94,7 +94,7 @@ let connect ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
   let queue_send msg = queue_send ~xmit_queue endpoint (Serialise.message ~tags msg) in
   let conn = Conn.create ?bootstrap:offer ~tags ~queue_send in
   Lwt_switch.add_hook (Some switch) (fun () ->
-      Conn.disconnect conn (Capnp_rpc.Exception.v "CapTP switch turned off");
+      Conn.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "CapTP switch turned off");
       Lwt.return_unit
     );
   let t = {
