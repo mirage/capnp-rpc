@@ -76,6 +76,9 @@ and Capability : sig
       This is simpler than using [call], but doesn't support pipelining
       (you can't use any capabilities in the response in another message until the
       response arrives).
+      Call [Payload.release] when done with the results, to release any capabilities it might
+      contain that you didn't use (remembering that future versions of the protocol might add
+      new optional capabilities you don't know about yet).
       Doing [Lwt.cancel] on the result will send a cancel message to the target
       for remote calls. *)
 
@@ -192,3 +195,15 @@ module CapTP : sig
 end
 
 module Endpoint = Endpoint
+
+module Vat : sig
+  type t
+
+  val create : ?switch:Lwt_switch.t -> ?bootstrap:'a Capability.t -> unit -> t
+  (** [create ~switch ~bootstrap ()] is a new vat that offers [bootstrap] to its connections.
+      The vat takes ownership of [bootstrap], and will release it when the switch is turned off.
+      Turning off the switch will also disconnect any active connections. *)
+
+  val connect : t -> Endpoint.t -> CapTP.t
+  (** [connect t endpoint] runs the CapTP protocol over [endpoint]. *)
+end

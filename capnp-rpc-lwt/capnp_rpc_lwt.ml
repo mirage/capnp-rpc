@@ -128,3 +128,4 @@ end
 module Service = Service
 module CapTP = CapTP_capnp
 module Endpoint = Endpoint
+module Vat = Vat
