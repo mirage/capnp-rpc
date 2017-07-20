@@ -9,7 +9,7 @@ val of_socket : switch:Lwt_switch.t -> Unix.file_descr -> t
 val send : t -> 'a Capnp.BytesMessage.Message.t -> unit Lwt.t
 (** [send t msg] transmits [msg] atomically. *)
 
-val recv : t -> (Capnp.Message.ro Capnp.BytesMessage.Message.t, [`Closed]) result Lwt.t
+val recv : t -> (Capnp.Message.ro Capnp.BytesMessage.Message.t, [> `Closed]) result Lwt.t
 (** [recv t] reads the next message from the remote peer.
     It returns [Error `Closed] if the connection to the peer is lost
     (this will also happen if the switch is turned off). *)

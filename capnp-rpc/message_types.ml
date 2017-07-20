@@ -89,6 +89,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
                                     EmbargoId.pp id
 
   type t = [
+    | `Abort of Exception.t
     | `Bootstrap of QuestionId.t
     | `Call of QuestionId.t * message_target * Request.t * desc RO_array.t * send_results_to
     | `Finish of (QuestionId.t * bool)      (* bool is release-caps *)
@@ -109,6 +110,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
       Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) tags
     | `Return (aid, _, _) ->
       Logs.Tag.add Debug.qid_tag (AnswerId.uint32 aid) tags
+    | `Abort _
     | `Disembargo_reply _
     | `Disembargo_request _
     | `Release _
@@ -122,6 +124,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
 
   (* Describe message from the point of view of the receiver. *)
   let pp_recv pp_msg : t Fmt.t = fun f -> function
+    | `Abort ex -> Fmt.pf f "Abort(%a)" Exception.pp ex
     | `Bootstrap _ -> Fmt.pf f "Bootstrap"
     | `Call (_, target, msg, caps, results_to) -> Fmt.pf f "Call %a.%a with %a%a"
                                         pp_desc target

@@ -15,5 +15,7 @@ val connect : ?offer:cap -> ?tags:Logs.Tag.set -> switch:Lwt_switch.t -> Endpoin
 val bootstrap : t -> cap
 (** [bootstrap t] is the peer's public bootstrap object, if any. *)
 
+val disconnect : t -> Capnp_rpc.Exception.t -> unit Lwt.t
+
 val dump : t Fmt.t
 (** [dump] dumps the state of the connection, for debugging. *)

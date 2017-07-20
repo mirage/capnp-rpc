@@ -183,6 +183,10 @@ module CapTP : sig
   val bootstrap : t -> 'a Capability.t
   (** [bootstrap t] is the peer's public bootstrap object, if any. *)
 
+  val disconnect : t -> Capnp_rpc.Exception.t -> unit Lwt.t
+  (** [disconnect reason] closes the connection, sending [reason] to the peer to explain why.
+      Capabilities and questions at both ends will break, with [reason] as the problem. *)
+
   val dump : t Fmt.t
   (** [dump] dumps the state of the connection, for debugging. *)
 end

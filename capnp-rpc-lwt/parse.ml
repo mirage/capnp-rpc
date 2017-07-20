@@ -159,7 +159,7 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
     | Disembargo x     -> parse_disembargo x
     | Resolve x        -> parse_resolve x
     | Release x        -> parse_release x
-    | Abort _          -> failwith "Received Abort" (* TODO: handle this better *)
+    | Abort x          -> `Abort (parse_exn x)
     | Provide _
     | Accept _
     | Join _           -> `Not_implemented        (* TODO *)

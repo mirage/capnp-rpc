@@ -33,13 +33,12 @@ Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/inter
 This library is new and unfinished, but it is usable.
 It has been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
 
-Currently, level 1 support is mostly complete, though some optimisations are missing.
-In particular, the `Resolve` message is not yet implemented.
-Check the issues page for some of the known bugs.
+All level 1 features are implemented, but check the issues page for known bugs.
 
 The library does not currently provide support for establishing new network connections or for any kind of crypto.
 Instead, the user of the library is responsible for creating a secure channel to the target service and then giving it to the library.
 For example, a channel could be a local Unix-domain socket (created with `socketpair`) or a TCP connection with a TLS wrapper.
+See `test-bin/calc.ml` for an example program that can provide or consume a service over a Unix domain socket.
 
 Level 3 support is not implemented yet, so if host Alice has connections to hosts Bob and Carol and passes an object hosted at Bob to Carol, the resulting messages between Carol and Bob will be routed via Alice.
 
@@ -61,6 +60,14 @@ The `examples` directory contains some test services.
 Running `make test` will run through the tests in `test-lwt/test.ml`, which make use of the examples.
 
 If you have trouble building, you can build it with Docker from a known-good state using `docker build .`.
+
+To try the calculator service example:
+
+1. Start the server:
+   `./_build/default/test-bin/calc.bc serve unix:/tmp/calc.socket`
+
+2. In another terminal, run the client:
+   `./_build/default/test-bin/calc.bc connect unix:/tmp/calc.socket`
 
 ### Structure of the library
 

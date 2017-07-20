@@ -106,6 +106,7 @@ module Msg = struct
     failwith "ref_leak_detected"
 
   let summary = function
+    | `Abort _ -> "abort"
     | `Bootstrap _ -> "bootstrap"
     | `Call (_, _, msg, _, _) -> Fmt.strf "call:%a:%d" OID.pp msg.Request.sender msg.Request.seq
     | `Return (_, `Results (msg, _), _) -> "return:" ^ msg
