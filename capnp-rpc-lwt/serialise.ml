@@ -60,6 +60,10 @@ let write_exn b ex =
 let message ~tags : Endpoint_types.Out.t -> _ =
   let open Builder in
   function
+  | `Abort ex ->
+    let b = Message.init_root () in
+    write_exn (Message.abort_init b) ex;
+    Message.to_message b
   | `Bootstrap qid ->
     let b = Message.init_root () in
     let boot = Message.bootstrap_init b in

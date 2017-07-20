@@ -1404,9 +1404,27 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | _ ->
       failwith "Protocol error: peer unexpectedly responded with Unimplemented"
 
+  let disconnect t ex =
+    if t.disconnected = None then (
+      t.disconnected <- Some ex;
+      begin match t.bootstrap with
+        | None -> ()
+        | Some b -> t.bootstrap <- None; dec_ref b
+      end;
+      t.queue_send <- ignore;
+      Exports.drop_all t.exports (fun _ e -> dec_ref e.export_service);
+      Hashtbl.clear t.exported_caps;
+      Questions.drop_all t.questions (fun _ -> Question.lost_connection ~ex);
+      Answers.drop_all t.answers (fun _ a -> Answer.lost_connection a |> apply_answer_actions t a);
+      let broken_cap = Core_types.broken_cap ex in
+      Imports.drop_all t.imports (fun _ -> Import.lost_connection ~broken_cap);
+      Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; dec_ref e)
+    )
+
   let handle_msg t (msg : [<In.t | `Unimplemented of Out.t]) =
     check_connected t;
     match msg with
+    | `Abort ex                       -> disconnect t ex
     | `Call (aid, target,
              msg, descs, results_to)  -> Input.call t aid target msg descs ~results_to
     | `Bootstrap x                    -> Input.bootstrap t x
@@ -1463,22 +1481,4 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Exports.iter    (fun _ -> check_export)   t.exports;
     Embargoes.iter  (fun _ -> check_embargo)  t.embargoes;
     Hashtbl.iter    (check_exported_cap t) t.exported_caps
-
-  let disconnect t ex =
-    check_connected t;
-    t.disconnected <- Some ex;
-    begin match t.bootstrap with
-    | None -> ()
-    | Some b -> t.bootstrap <- None; dec_ref b
-    end;
-    t.queue_send <- ignore;
-    Exports.drop_all t.exports (fun _ e -> dec_ref e.export_service);
-    Hashtbl.clear t.exported_caps;
-    Questions.drop_all t.questions (fun _ -> Question.lost_connection ~ex);
-    Answers.drop_all t.answers (fun _ a -> Answer.lost_connection a |> apply_answer_actions t a);
-    let broken_cap = Core_types.broken_cap ex in
-    Imports.drop_all t.imports (fun _ -> Import.lost_connection ~broken_cap);
-    Embargoes.drop_all t.embargoes (fun _ (_, e) -> e#break ex; dec_ref e);
-    (* TODO: break existing caps *)
-    ()
 end

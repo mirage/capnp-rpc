@@ -20,7 +20,8 @@ module Make (EP : Message_types.ENDPOINT) : sig
       Messages MUST be fed to [handle_msg] in the order in which they arrive from the peer. *)
 
   val disconnect : t -> Exception.t -> unit
-  (** [disconnect t reason] breaks all references with [reason] and releases the bootstrap object. *)
+  (** [disconnect t reason] breaks all references with [reason] and releases the bootstrap object.
+      Does nothing if already disconnected. *)
 
   (** {2 Debugging and diagnostics} *)
 

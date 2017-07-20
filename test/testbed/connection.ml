@@ -7,6 +7,7 @@ module Stats = Capnp_rpc.Stats
 let stats_t = Alcotest.of_pp Stats.pp
 
 let summary_of_msg = function
+  | `Abort _ -> "abort"
   | `Bootstrap _ -> "bootstrap"
   | `Call (_, _, msg, _, _) -> "call:" ^ msg
   | `Return (_, `Results (msg, _), _) -> "return:" ^ msg

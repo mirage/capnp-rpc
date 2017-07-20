@@ -3,7 +3,7 @@
 default: test #build-fuzz
 
 all:
-	jbuilder build --dev @install test/test.bc test-lwt/test.bc
+	jbuilder build --dev @install test/test.bc test-lwt/test.bc test-bin/calc.exe
 	rm -rf _build/_tests
 	jbuilder runtest --dev --no-buffer -j 1
 
@@ -19,6 +19,6 @@ clean:
 
 test:
 	rm -rf _build/_tests
-	jbuilder build --dev test/test.bc test-lwt/test.bc
+	jbuilder build --dev test/test.bc test-lwt/test.bc test-bin/calc.bc
 	#./_build/default/test/test.bc test core -ev 11
 	jbuilder build @runtest --dev --no-buffer -j 1

@@ -2,6 +2,7 @@ open Capnp_direct.Core_types
 
 val summary_of_msg :
   [< `Bootstrap of _
+  | `Abort of _
   | `Call of _ * _ * string * _ * _
   | `Disembargo_reply of _
   | `Disembargo_request of _
