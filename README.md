@@ -37,7 +37,7 @@ It has been only lightly used in real systems, but has unit tests and AFL fuzz t
 
 All level 1 features are implemented, but check the issues page for known bugs.
 
-The library does not currently provide support for establishing new network connections or for any kind of crypto.
+The library does not currently provide support for establishing new encrypted network connections.
 Instead, the user of the library is responsible for creating a secure channel to the target service and then giving it to the library.
 For example, a channel could be a local Unix-domain socket (created with `socketpair`) or a TCP connection with a TLS wrapper.
 See `test-bin/calc.ml` for an example program that can provide or consume a service over a Unix domain socket.
@@ -526,7 +526,7 @@ At each step it selects one vat and performs a random (fuzzer-chosen) operation 
 6. Add a capability to a new local service.
 7. Answer a random question, passing random-selected capability as the response.
 
-The content of each call is a (mutable) record with counters for messages send and received on the capability reference used.
+The content of each call is a (mutable) record with counters for messages sent and received on the capability reference used.
 This is used to check that messages arrive in the expected order.
 
 The tests also set up a shadow reference graph, which is like the regular object capability reference graph except that references between vats are just regular OCaml pointers (this is only possible because all the tests run in a single process, of course).
