@@ -199,7 +199,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun _ ->
             match blocker with
             | None -> Some (self :> base_ref)
-            | Some _ as x -> x
+            | Some x -> x#blocker
           )
         ~forwarding:(fun x -> x#blocker)
 
