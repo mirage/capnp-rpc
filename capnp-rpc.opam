@@ -17,5 +17,6 @@ depends: [
   "asetmap"
   "jbuilder" {build & >= "1.0+beta10" }
   "alcotest" {test}
+  "afl-persistent" {test}
 ]
 available: [ocaml-version >= "4.02.0"]
