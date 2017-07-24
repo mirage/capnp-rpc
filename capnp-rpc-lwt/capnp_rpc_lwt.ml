@@ -117,10 +117,10 @@ module Untyped = struct
   let cap_index x = x
 
   let unknown_interface ~interface_id _req =
-    Core_types.fail "Unknown interface %a" Uint64.printer interface_id
+    Core_types.fail ~ty:`Unimplemented "Unknown interface %a" Uint64.printer interface_id
 
   let unknown_method ~interface_id ~method_id _req =
-    Core_types.fail "Unknown method %a.%d" Uint64.printer interface_id method_id
+    Core_types.fail ~ty:`Unimplemented "Unknown method %a.%d" Uint64.printer interface_id method_id
 
   class type generic_service = Service.generic
 end
