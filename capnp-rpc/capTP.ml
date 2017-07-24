@@ -1157,6 +1157,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             method resolve = resolver#resolve
 
             method set_blocker = resolver#set_blocker
+            method clear_blocker = resolver#clear_blocker
 
             method sealed_dispatch : type a. a S.brand -> a option = function
               | CapTP_results -> Some (t, answer)

@@ -149,11 +149,15 @@ module type CORE_TYPES = sig
     method sealed_dispatch : 'a. 'a brand -> 'a option
     (** [r#sealed_dispatch brand] extracts some private data of the given type. *)
 
-    method set_blocker : base_ref option -> unit
+    method set_blocker : base_ref -> (unit, [> `Cycle]) result
     (** [r#set_blocker b] means that [resolve] won't be called until [b] is resolved.
         [r]'s promise should report this as its blocker. This is needed to detect cycles.
         When the blocker is resolved, call this again with [None] to clear it (the promise
         will then report itself as the blocker again, until resolved). *)
+
+    method clear_blocker : unit
+    (** [r#clear_blocker] removes the blocker set by [set_blocker].
+        [r] is then blocked by itself, if unresolved. *)
   end
   (** A [struct_resolver] can be used to resolve some promise. *)
 

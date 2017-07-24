@@ -11,13 +11,17 @@ module Make (C : S.CORE_TYPES) = struct
     method private do_pipeline q i results msg caps =
       (* We add an extra resolver here so that we can report [self]
          as the blocker. *)
-      results#set_blocker (Some (self :> C.base_ref));
-      q |> Queue.add (fun p ->
-          results#set_blocker None;
-          let cap = p#cap i in
-          cap#call results msg caps;
-          C.dec_ref cap
-        )
+      match results#set_blocker (self :> C.base_ref) with
+      | Error `Cycle ->
+        RO_array.iter C.dec_ref caps;
+        C.resolve_exn results (Exception.v "Attempt to use pipelined call's result as pipeline target!")
+      | Ok () ->
+        q |> Queue.add (fun p ->
+            results#clear_blocker;
+            let cap = p#cap i in
+            cap#call results msg caps;
+            C.dec_ref cap
+          )
 
     method pp_unresolved f _ =
       Fmt.string f "(unresolved)"
