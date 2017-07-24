@@ -1,6 +1,8 @@
+open Asetmap
 module RO_array = Capnp_rpc.RO_array
 module Test_utils = Testbed.Test_utils
 module OID = Capnp_rpc.Debug.OID
+module IntSet = Set.Make(struct type t = int let compare = compare end)
 
 let running_under_afl =
   match Array.to_list Sys.argv with
@@ -64,9 +66,10 @@ let tags_for_id id =
 type cap_ref_counters = {
   mutable next_to_send : int;
   mutable next_expected : int;
+  mutable cancelled : IntSet.t;              (* It's OK if these get skipped *)
 }
 
-let pp_counters f {next_to_send; next_expected} = Fmt.pf f "{send=%d; expect=%d}" next_to_send next_expected
+let pp_counters f {next_to_send; next_expected; _} = Fmt.pf f "{send=%d; expect=%d}" next_to_send next_expected
 
 module Msg = struct
   module Path = struct
@@ -92,6 +95,10 @@ module Msg = struct
         sending_step
 
     let cap_index _ i = Some i
+
+    let mark_cancelled t =
+      if t.seq < t.counters.next_expected then ()       (* Already delivered *)
+      else t.counters.cancelled <- IntSet.add t.seq t.counters.cancelled
   end
 
   module Response = struct
@@ -248,7 +255,7 @@ let make_cap_ref ~target cap =
     cr_id = OID.next ();
     cr_cap = (cap :> Core_types.cap);
     cr_target = target;
-    cr_counters = { next_to_send = 0; next_expected = 0 };
+    cr_counters = { next_to_send = 0; next_expected = 0; cancelled = IntSet.empty };
   }
 
 class type virtual test_service = object
@@ -256,25 +263,46 @@ class type virtual test_service = object
   method pp_var : Format.formatter -> unit
 end
 
+let pp_error f base =
+  try base#check_invariants
+  with ex ->
+    Fmt.pf f "@,[%a] %a"
+      Fmt.(styled `Red string) "ERROR"
+      Capnp_rpc.Debug.pp_exn ex
+
+module Struct_info = struct
+  type t = {
+    sr : Core_types.struct_ref;
+    direct : Direct.struct_ref;
+    var : OID.t;
+    call : Msg.Request.t;
+  }
+
+  let dump f t =
+    Fmt.pf f "%a : @[%t;%a@]"
+      Direct.pp_struct t.direct
+      t.sr#pp
+      pp_error t.sr
+
+  let compare a b =
+    Direct.compare_sr a.direct b.direct
+
+  let check_invariants t =
+    t.sr#check_invariants
+end
+
 module Vat = struct
   type t = {
     id : int;
     mutable bootstrap : (test_service * Direct.cap) option;
     caps : cap_ref WrapArray.t;
-    structs : (Core_types.struct_ref * Direct.struct_ref * OID.t) WrapArray.t;
+    structs : Struct_info.t WrapArray.t;
     actions : (unit -> unit) DynArray.t;
     mutable connections : (int * Endpoint.t) list;
     answers_needed : (Core_types.struct_resolver * Direct.struct_ref * OID.t) WrapArray.t;
   }
 
   let tags t = tags_for_id t.id
-
-  let pp_error f cap =
-    try cap#check_invariants
-    with ex ->
-      Fmt.pf f "@,[%a] %a"
-        Fmt.(styled `Red string) "ERROR"
-        Capnp_rpc.Debug.pp_exn ex
 
   let dump_cap f {cr_id; cr_target; cr_cap; cr_counters} =
     Fmt.pf f "%a -> %a : @[%t %a;%a@]"
@@ -284,12 +312,6 @@ module Vat = struct
       pp_counters cr_counters
       pp_error cr_cap
 
-  let dump_sr f (sr, target, _) =
-    Fmt.pf f "%a : @[%t;%a@]"
-      Direct.pp_struct target
-      sr#pp
-      pp_error sr
-
   let dump_an f (sr, target, _) =
     Fmt.pf f "%a : @[%t@]"
       Direct.pp_struct target
@@ -297,9 +319,6 @@ module Vat = struct
 
   let compare_cr a b =
     Direct.compare_cap a.cr_target b.cr_target
-
-  let compare_sr (_, a, _) (_, b, _) =
-    Direct.compare_sr a b
 
   let compare_an (_, a, _) (_, b, _) =
     Direct.compare_sr a b
@@ -318,14 +337,14 @@ module Vat = struct
               @]"
         (Fmt.Dump.list pp_connection) t.connections
         (WrapArray.dump ~compare:compare_cr dump_cap) t.caps
-        (WrapArray.dump ~compare:compare_sr dump_sr) t.structs
+        (WrapArray.dump ~compare:Struct_info.compare Struct_info.dump) t.structs
         (WrapArray.dump ~compare:compare_an dump_an) t.answers_needed
 
   let check t =
     try
       t.connections |> List.iter (fun (_, conn) -> Endpoint.check conn);
       t.caps |> WrapArray.iter (fun c -> c.cr_cap#check_invariants);
-      t.structs |> WrapArray.iter (fun (s, _, _) -> s#check_invariants);
+      t.structs |> WrapArray.iter Struct_info.check_invariants
     with ex ->
       Logs.err (fun f -> f ~tags:(tags t) "Invariants check failed: %a" Capnp_rpc.Debug.pp_exn ex);
       raise ex
@@ -369,6 +388,8 @@ module Vat = struct
       let msg = { Msg.Request.target; sender; sending_step = !step;
                   counters; seq = counters.next_to_send; answer; arg_ids } in
       let answer_var = OID.next () in
+      let results, resolver = Local_struct_promise.make () in
+      WrapArray.add state.structs {Struct_info.sr = results; direct = answer; var = answer_var; call = msg};
       code (fun f -> Fmt.pf f "let %a = call %a \"%a:%d\" %a in"
                pp_struct answer_var
                pp_var cap_ref
@@ -376,8 +397,6 @@ module Vat = struct
                (Fmt.Dump.list pp_var) arg_refs
            );
       counters.next_to_send <- succ counters.next_to_send;
-      let results, resolver = Local_struct_promise.make () in
-      WrapArray.add state.structs (results, answer, answer_var);
       cap#call resolver msg args
 
   (* Reply to a random question. *)
@@ -424,10 +443,12 @@ module Vat = struct
             Direct.pp self_id
             Direct.pp target
             Direct.pp_struct answer;
-        if seq <> counters.next_expected then
-          failf "Expecting message call_id=%a:%d, but got %d (target %a)"
-            OID.pp sender counters.next_expected
-            seq Direct.pp target;
+        while counters.next_expected < seq && IntSet.mem counters.next_expected counters.cancelled do
+          Logs.info (fun f -> f "(ignoring skipped cancelled call %d)" counters.next_expected);
+          counters.cancelled <- IntSet.remove counters.next_expected counters.cancelled;
+          counters.next_expected <- counters.next_expected + 1
+        done;
+        let expected_seq = counters.next_expected in
         let expected_msg = Fmt.strf "%a:%d" OID.pp sender counters.next_expected in
         counters.next_expected <- succ counters.next_expected;
         let answer_var = OID.next () in
@@ -452,6 +473,11 @@ module Vat = struct
                 WrapArray.add vat.caps cr
               )
         end;
+        if seq <> expected_seq then (
+          failf "Expecting message call_id=%a:%d, but got %d (target %a)"
+            OID.pp sender expected_seq
+            seq Direct.pp target;
+        );
         WrapArray.add vat.answers_needed (results, answer, answer_var)
     end
 
@@ -459,23 +485,29 @@ module Vat = struct
   let do_struct state () =
     match WrapArray.pick state.structs with
     | None -> ()
-    | Some (s, s_id, s_var) ->
+    | Some {Struct_info.sr; direct; var; call = _} ->
       let i = Choose.int 3 in
-      Logs.info (fun f -> f ~tags:(tags state) "Get %t/%d" s#pp i);
-      let cap = s#cap i in
-      let target = Direct.cap s_id i in
+      Logs.info (fun f -> f ~tags:(tags state) "Get %t/%d" sr#pp i);
+      let cap = sr#cap i in
+      let target = Direct.cap direct i in
       let cr = make_cap_ref ~target cap in
-      code (fun f -> Fmt.pf f "let %a = %a#cap %d in" pp_var cr pp_struct s_var i);
+      code (fun f -> Fmt.pf f "let %a = %a#cap %d in" pp_var cr pp_struct var i);
       WrapArray.add state.caps cr
 
-  (* Finish an answer *)
+  (* Release/cancel a question *)
   let do_finish state () =
     match WrapArray.pop state.structs with
     | None -> ()
-    | Some (s, _id, s_var) ->
-      Logs.info (fun f -> f ~tags:(tags state) "Finish %t" s#pp);
-      code (fun f -> Fmt.pf f "dec_ref %a;" pp_struct s_var);
-      Core_types.dec_ref s
+    | Some {Struct_info.sr; var; call; direct = _} ->
+      begin match sr#response with
+        | None ->
+          Logs.info (fun f -> f ~tags:(tags state) "Cancel %t" sr#pp);
+          Msg.Request.mark_cancelled call
+        | Some _ ->
+          Logs.info (fun f -> f ~tags:(tags state) "Finish %t" sr#pp);
+      end;
+      code (fun f -> Fmt.pf f "dec_ref %a;" pp_struct var);
+      Core_types.dec_ref sr
 
   let do_release state () =
     match WrapArray.pop state.caps with
@@ -521,12 +553,15 @@ module Vat = struct
     let id = !next_id in
     next_id := succ !next_id;
     let free_cap cr =
+      Logs.info (fun f -> f "Freeing replaced cap %a" OID.pp cr.cr_id);
       code (fun f -> Fmt.pf f "dec_ref %a;" pp_var cr);
       Core_types.dec_ref cr.cr_cap
     in
-    let free_struct (q, _, s_id) =
-      code (fun f -> Fmt.pf f "dec_ref %a;" pp_struct s_id);
-      Core_types.dec_ref q
+    let free_struct { Struct_info.sr; direct = _; var; call } =
+      Logs.info (fun f -> f "Freeing replaced struct %a" OID.pp var);
+      Msg.Request.mark_cancelled call;
+      code (fun f -> Fmt.pf f "dec_ref %a;" pp_struct var);
+      Core_types.dec_ref sr
     in
     let free_answer (ans, _, answer_var) =
       code (fun f ->

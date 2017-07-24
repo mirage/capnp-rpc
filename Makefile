@@ -1,6 +1,6 @@
 .PHONY: all fuzz clean test
 
-default: test #build-fuzz
+default: test build-fuzz
 
 all:
 	jbuilder build --dev @install test/test.bc test-lwt/test.bc test-bin/calc.exe

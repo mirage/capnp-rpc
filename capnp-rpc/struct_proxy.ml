@@ -199,12 +199,19 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun _ ->
             match blocker with
             | None -> Some (self :> base_ref)
-            | Some _ as x -> x
+            | Some x -> x#blocker
           )
         ~forwarding:(fun x -> x#blocker)
 
-    method set_blocker b =
-      blocker <- b
+    method set_blocker (b : C.base_ref) =
+      if b#blocker = Some (self :> C.base_ref) then Error `Cycle
+      else (
+        blocker <- Some b;
+        Ok ()
+      )
+
+    method clear_blocker =
+      blocker <- None
 
     method cap path =
       dispatch state

@@ -790,6 +790,27 @@ let test_cycle_4 () =
   Logs.info (fun f -> f "echo = %t" echo#pp);
   Alcotest.(check bool) "Echo released" true echo#released
 
+(* A field depends on the struct. *)
+let test_cycle_5 () =
+  let a, ar = Local_struct_promise.make () in
+  let b, br = Local_struct_promise.make () in
+  let c, cr = Local_struct_promise.make () in
+  Alcotest.(check (result unit reject)) "Not a cycle" (Ok ()) @@ br#set_blocker (c :> Core_types.base_ref);
+  Alcotest.(check (result unit reject)) "Not a cycle" (Ok ()) @@ cr#set_blocker (a :> Core_types.base_ref);
+  let b0 = b#cap 0 in
+  let x = Core_types.return ("reply", RO_array.of_list [b0]) in
+  ar#resolve x;
+  Logs.info (fun f -> f "a = %t" a#pp);
+  ensure_is_cycle_error_cap (a#cap 0);
+  dec_ref a
+
+(* A blocker depends on itself. *)
+let test_cycle_6 () =
+  let a, ar = Local_struct_promise.make () in
+  let a0 = a#cap 0 in
+  a0#call ar "loop" RO_array.empty;
+  Logs.info (fun f -> f "a0 = %t" a#pp)
+
 (* The server returns an answer containing a promise. Later, it resolves the promise
    to a resource at the client. The client must be able to invoke the service locally. *)
 let test_resolve () =
@@ -1187,6 +1208,8 @@ let tests = [
   "Cycle 2", `Quick, test_cycle_2;
   "Cycle 3", `Quick, test_cycle_3;
   "Cycle 4", `Quick, test_cycle_4;
+  "Cycle 5", `Quick, test_cycle_5;
+  "Cycle 6", `Quick, test_cycle_6;
   "Resolve", `Quick, test_resolve;
   "Resolve 2", `Quick, test_resolve_2;
   "Resolve 3", `Quick, test_resolve_3;
