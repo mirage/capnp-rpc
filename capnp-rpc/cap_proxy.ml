@@ -7,11 +7,6 @@ module Make(C : S.CORE_TYPES) = struct
   class type resolver_cap = object
     inherit C.cap
     method resolve : C.cap -> unit
-  end
-
-  class type embargo_cap = object
-    inherit cap
-    method disembargo : unit
     method break : Exception.t -> unit
   end
 
@@ -123,33 +118,6 @@ module Make(C : S.CORE_TYPES) = struct
 
       method sealed_dispatch _ = None
     end
-
-  let embargo underlying : embargo_cap =
-    let cap =
-      object
-        inherit local_promise as super
-        val mutable in_pp = false
-
-        method! private release_while_unresolved =
-          C.dec_ref underlying
-
-        method disembargo =
-          super#resolve underlying
-
-        method! pp f =
-          match state with
-          | Unresolved u ->
-            Fmt.pf f "embargoed(%a, %a) -> " Debug.OID.pp id RC.pp u.rc;
-            if in_pp then Fmt.string f "(cycle)"
-            else (
-              in_pp <- true;
-              underlying#pp f;
-              in_pp <- false
-            )
-          | Resolved cap -> Fmt.pf f "disembargoed(%a) -> %t" Debug.OID.pp id cap#pp
-      end
-    in
-    (cap :> embargo_cap)
 
   let local_promise () = (new local_promise :> resolver_cap)
 end
