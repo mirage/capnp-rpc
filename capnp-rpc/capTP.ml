@@ -554,12 +554,57 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Active _ -> Debug.failf "Answer %a already initialised!" pp t
   end
 
-  type export = {
-    export_id : ExportId.t;
-    mutable export_count : int; (* Number of times sent to remote and not yet released *)
-    export_service : Core_types.cap;
-    mutable export_resolve_target : resolve_target;
-  }
+  module Export = struct
+    type t = {
+      id : ExportId.t;
+      mutable count : int; (* Number of times sent to remote and not yet released *)
+      mutable service : Core_types.cap;
+      mutable resolve_target : resolve_target;   (* [`None] if not yet resolved *)
+    }
+
+    let dump f t =
+      Fmt.pf f "%t" t.service#pp
+
+    let pp f t =
+      Fmt.pf f "e%a" ExportId.pp t.id
+
+    let inc_ref t =
+      t.count <- t.count + 1
+
+    let id t = t.id
+
+    let count t = t.count
+
+    let resolve_target t = t.resolve_target
+
+    let service t = t.service
+
+    let resolve t target =
+      t.resolve_target <- target
+
+    let released = Core_types.broken_cap (Exception.v "(released)")
+
+    let release t ref_count =
+      assert (t.count >= ref_count);
+      let count = t.count - ref_count in
+      t.count <- count;
+      if count > 0 then `Do_nothing
+      else (
+        let service = t.service in
+        t.service <- released;
+        `Send_release (service, t.resolve_target)
+      )
+
+    let lost_connection t =
+      dec_ref t.service;
+      t.service <- released;
+      t.count <- 0
+
+    let check t = t.service#check_invariants
+
+    let v ~service id =
+      { count = 1; service; id; resolve_target = `None }
+  end
 
   type descr = [
     message_target_cap
@@ -581,7 +626,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     questions : Question.t Questions.t;
     answers : Answer.t Answers.t;
-    exports : export Exports.t;
+    exports : Export.t Exports.t;
     imports : Import.t Imports.t;
     exported_caps : (Core_types.cap, ExportId.t) Hashtbl.t;
 
@@ -601,9 +646,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
     match target_of x with
     | Some (t', target) when t == t' -> Some target
     | _ -> None
-
-  let dump_export f x =
-    Fmt.pf f "%t" x.export_service#pp
 
   let stats t =
     { Stats.
@@ -704,48 +746,45 @@ module Make (EP : Message_types.ENDPOINT) = struct
           match Hashtbl.find t.exported_caps cap with
           | id ->
             let ex = Exports.find_exn t.exports id in
-            ex.export_count <- ex.export_count + 1;
+            Export.inc_ref ex;
             ex
           | exception Not_found ->
             Core_types.inc_ref cap;
-            let ex = Exports.alloc t.exports (fun export_id ->
-                { export_count = 1; export_service = cap; export_id; export_resolve_target = `None }
-              )
-            in
-            let id = ex.export_id in
+            let ex = Exports.alloc t.exports (Export.v ~service:cap) in
+            let id = Export.id ex in
             Hashtbl.add t.exported_caps cap id;
             begin match cap#problem, broken_caps with
             | Some problem, Some broken_caps -> Queue.add (ex, problem) broken_caps
             | Some _, _ -> failwith "Cap is broken, but [broken_caps] not provided!"
             | None, _ when settled -> ()
             | None, _ ->
-              Log.info (fun f -> f ~tags:t.tags "Monitoring promise export %a -> %a" ExportId.pp ex.export_id dump_export ex);
+              Log.info (fun f -> f ~tags:t.tags "Monitoring promise export %a -> %a" Export.pp ex Export.dump ex);
               cap#when_more_resolved (fun x ->
-                  if ex.export_count > 0 then (
+                  if Export.count ex > 0 then (
                     let x = x#shortest in
                     match x#problem with
                     | Some problem ->
                       Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending exception"
-                                   ExportId.pp ex.export_id
+                                   Export.pp ex
                                    x#pp
                                );
-                      t.queue_send (`Resolve (ex.export_id, Error problem));
+                      t.queue_send (`Resolve (Export.id ex, Error problem));
                     | None ->
                       let new_export = export t x in
                       Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending notification to use %a"
-                                   ExportId.pp ex.export_id
+                                   Export.pp ex
                                    x#pp
                                    Out.pp_desc new_export
                                );
-                      ex.export_resolve_target <- get_resolve_target t x;
-                      t.queue_send (`Resolve (ex.export_id, Ok new_export));
+                      Export.resolve ex (get_resolve_target t x);
+                      t.queue_send (`Resolve (Export.id ex, Ok new_export));
                   ); (* else: no longer an export *)
                   Core_types.dec_ref x
                 )
             end;
             ex
         in
-        let id = ex.export_id in
+        let id = Export.id ex in
         if settled then `SenderHosted id
         else `SenderPromise id
 
@@ -764,11 +803,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
        any of them are broken, we send a resolve for them immediately afterwards. *)
     let resolve_broken t =
       Queue.iter @@ fun (ex, problem) ->
-      Log.info (fun f -> f ~tags:t.tags "Sending resolve for already-broken export %a : %t"
-                   ExportId.pp ex.export_id
-                   ex.export_service#pp
+      Log.info (fun f -> f ~tags:t.tags "Sending resolve for already-broken export %a : %a"
+                   Export.pp ex
+                   Export.dump ex
                );
-      t.queue_send (`Resolve (ex.export_id, Error problem))
+      t.queue_send (`Resolve (Export.id ex, Error problem))
 
     let call t remote_promise (target : message_target_cap) msg caps ~results_to =
       let broken_caps = Queue.create () in
@@ -849,16 +888,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let release t export_id ~ref_count =
     assert (ref_count > 0);
     let export = Exports.find_exn t.exports export_id in
-    assert (export.export_count >= ref_count);
-    let count = export.export_count - ref_count in
-    export.export_count <- count;
-    if count = 0 then (
-      Log.info (fun f -> f ~tags:t.tags "Releasing export %a" ExportId.pp export_id);
-      Hashtbl.remove t.exported_caps export.export_service;
+    match Export.release export ref_count with
+    | `Do_nothing -> ()
+    | `Send_release (service, resolve_target) ->
+      Log.info (fun f -> f ~tags:t.tags "Releasing export %a" Export.pp export);
+      Hashtbl.remove t.exported_caps service;
       Exports.release t.exports export_id;
-      dec_ref export.export_service;
-      release_resolve_target t export.export_resolve_target
-    )
+      dec_ref service;
+      release_resolve_target t resolve_target
 
   let apply_answer_actions t answer =
     List.iter @@ function
@@ -1178,7 +1215,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         let export = Exports.find_exn t.exports id in
         (* We host the target (which may be another promise).
            We need to flush any pipelined calls still in flight before we can use it. *)
-        maybe_embargo t ~old_path:embargo_path (with_inc_ref export.export_service)
+        maybe_embargo t ~old_path:embargo_path (with_inc_ref (Export.service export))
       | `ReceiverAnswer (id, path) ->
         let answer = Answers.find_exn t.answers id in
         begin match Answer.answer_struct answer with
@@ -1245,8 +1282,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let target =
         match message_target with
         | `ReceiverHosted id ->
+          (* XXX: check resolve target *)
           let export = Exports.find_exn t.exports id in
-          `Local (with_inc_ref export.export_service)
+          begin match Export.resolve_target export with
+            | #message_target_cap as target -> target
+            | `Local
+            | `None -> `Local (with_inc_ref (Export.service export))
+          end
         | `ReceiverAnswer (id, path) ->
           let answer = Answers.find_exn t.answers id in
           match Answer.resolve_target answer path with
@@ -1402,7 +1444,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Loopback (old_path, embargo_id) ->
         match old_path with
         | `ReceiverHosted eid ->
-          send_disembargo t embargo_id (Exports.find_exn t.exports eid).export_resolve_target;
+          send_disembargo t embargo_id (Exports.find_exn t.exports eid |> Export.resolve_target);
         | `ReceiverAnswer (aid, path) ->
           let answer = Answers.find_exn t.answers aid in
           send_disembargo t embargo_id (Answer.disembargo_target answer path)
@@ -1412,10 +1454,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Log.info (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
                    EP.In.pp_desc target
                    embargo#pp);
-      (* We know that [target] was local at the time we sent the original request.
-         However, it may be a promise that has since resolved.
-         Act as if the embargoed cap now pointed at [target]'s initial resolution
-         and it had just resolved to the current target, sending another disembargo if necessary.
+      (* A remote export or answer resolved to [target] at some point in the
+         past and we sent a disembargo request to it to flush any pipelined
+         messages. This is now done - all pipelined messages that we care about
+         have been delivered to [target]. However, [target] may have forwarded
+         them on in turn, so another disembargo may be called for.
+
+         Release the old embargo, so that the cap now points at [target]'s
+         initial resolution. If [target] is already resolved, attempt to update
+         to its resolution, performing another embargo if necessary.
        *)
       let embargo_path =
         match target with
@@ -1526,7 +1573,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | Some b -> t.bootstrap <- None; dec_ref b
       end;
       t.queue_send <- ignore;
-      Exports.drop_all t.exports (fun _ e -> dec_ref e.export_service);
+      Exports.drop_all t.exports (fun _ -> Export.lost_connection);
       Hashtbl.clear t.exported_caps;
       Questions.drop_all t.questions (fun _ -> Question.lost_connection ~ex);
       Answers.drop_all t.answers (fun _ a -> Answer.lost_connection a |> apply_answer_actions t a);
@@ -1553,17 +1600,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let dump_embargo f (id, proxy) =
     Fmt.pf f "%a: @[%t@]" EmbargoId.pp id proxy#pp
 
-  let check_export x = x.export_service#check_invariants
-
   let check_embargo x = (snd x)#check_invariants
 
   let check_exported_cap t cap export_id =
     match Exports.find_exn t.exports export_id with
     | export ->
-      if export.export_service <> cap then (
+      if Export.service export <> cap then (
         Debug.invariant_broken @@ fun f ->
-        Fmt.pf f "export_caps maps %t to export %a back to different cap %t!"
-          cap#pp ExportId.pp export_id export.export_service#pp
+        Fmt.pf f "export_caps maps %t to export %a back to different cap %a!"
+          cap#pp Export.pp export Export.dump export
       )
     | exception ex ->
       Debug.invariant_broken @@ fun f ->
@@ -1583,7 +1628,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
               @[<v2>Exported caps:@,%a@]@,"
       (Questions.dump ~check:Question.check Question.dump) t.questions
       (Answers.dump   ~check:Answer.check   Answer.dump) t.answers
-      (Exports.dump   ~check:check_export   dump_export) t.exports
+      (Exports.dump   ~check:Export.check   Export.dump) t.exports
       (Imports.dump   ~check:Import.check   Import.dump) t.imports
       (Embargoes.dump ~check:check_embargo  dump_embargo) t.embargoes
       (hashtbl_dump ~key:exported_sort_key (pp_exported_cap t)) t.exported_caps
@@ -1592,7 +1637,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Questions.iter  (fun _ -> Question.check) t.questions;
     Answers.iter    (fun _ -> Answer.check)   t.answers;
     Imports.iter    (fun _ -> Import.check)   t.imports;
-    Exports.iter    (fun _ -> check_export)   t.exports;
+    Exports.iter    (fun _ -> Export.check)   t.exports;
     Embargoes.iter  (fun _ -> check_embargo)  t.embargoes;
     Hashtbl.iter    (check_exported_cap t) t.exported_caps
 end
