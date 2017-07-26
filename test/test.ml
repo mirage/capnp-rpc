@@ -505,19 +505,22 @@ let _test_local_embargo_9 () =
      [m1] must arrive back at the client before the disembargo. *)
   let m2 = call pts2 "m2" [] in
   S.handle_msg s ~expect:"return:reply";
-  (* Server learns that the answer to its question (ptc1) is the cap (ptc0) in
-     its answer to the client. It embargoes this because [mark_dirty] used it, which
-     causes m1 to be (unnecessarily) delayed. However, the server still replies
-     immediately to the client's disembargo request. The client isn't expecting m1
-     to be delayed.
-     Is the problem here that we're shortening, instead of just continuing to forward?
-     When we answer a question, we should *always* forward to that answer, whether we
-     later discover further shortening is possible or not.
-     *)
-  S.handle_msg s ~expect:"call:m1";
+  S.handle_msg s ~expect:"call:m1";             (* Server forwards m1 back to client *)
+  C.handle_msg c ~expect:"call:m1";             (* Client forwards m1 back to server *)
   S.handle_msg s ~expect:"disembargo-request";
-  (* At this point, the client thinks [m1] must have arrived by now and delivers m2. *)
-  CS.flush c s;
+  C.handle_msg c ~expect:"return:take-from-other";
+  C.handle_msg c ~expect:"disembargo-reply";
+  (* Client does a second disembargo *)
+  S.handle_msg s ~expect:"finish";
+  C.handle_msg c ~expect:"finish";
+  S.handle_msg s ~expect:"call:m1";             (* Server forwards m1 back to client again *)
+  C.handle_msg c ~expect:"call:m1";             (* m1 finally arrives *)
+  S.handle_msg s ~expect:"finish";
+  S.handle_msg s ~expect:"disembargo-request";
+  C.handle_msg c ~expect:"return:take-from-other";
+  C.handle_msg c ~expect:"finish";
+  C.handle_msg c ~expect:"disembargo-reply";
+  (* At this point, the client knows [m1] must have arrived by now and delivers m2. *)
   let am1 = client_bs#pop0 "m1" in
   let am2 = client_bs#pop0 "m2" in
   resolve_ok am1 "am1" [];
