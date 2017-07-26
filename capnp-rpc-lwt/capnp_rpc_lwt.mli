@@ -91,6 +91,20 @@ and Capability : sig
       In the common case where you want a single cap "foo" from the result, use
       [call_for_caps target meth req R.foo_get_pipelined]. *)
 
+  type 'a resolver
+  (** An ['a resolver] can be used to resolve a promise for an ['a]. It can only be used once. *)
+
+  val promise : unit -> 't capability_t * 'a resolver
+  (** [promise () returns a fresh local promise and a resolver for it.
+      Any calls made on the promise will be queued until it is resolved. *)
+
+  val resolve_ok : 'a resolver -> 'a capability_t -> unit
+  (** [resolve_ok r x] resolves [r]'s promise to [x]. [r] takes ownership of [x]
+      (the caller must use [inc_ref] first if they want to continue using it). *)
+
+  val resolve_exn : 'a resolver -> Capnp_rpc.Exception.t -> unit
+  (** [resolve_exn r x] breaks [r]'s promise with exception [x]. *)
+
   val inc_ref : _ t -> unit
 
   val dec_ref : _ t -> unit

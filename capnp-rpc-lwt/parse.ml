@@ -114,22 +114,11 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
     let target = parse_target (Disembargo.target_get x) in
     let ctx = Disembargo.context_get x in
     match Disembargo.Context.get ctx with
-    | Disembargo.Context.SenderLoopback embargo_id ->
-      let embargo_id = EmbargoId.of_uint32 embargo_id in
-      begin match target with
-      | `ReceiverAnswer (aid, path) ->
-        let req = `Loopback (`ReceiverAnswer (aid, path), embargo_id) in
-        `Disembargo_request req
-      | `ReceiverHosted _ -> failwith "TODO: handle_disembargo: ReceiverHosted"   (* Can this happen? *)
-      end
-    | Disembargo.Context.ReceiverLoopback embargo_id ->
-      let embargo_id = EmbargoId.of_uint32 embargo_id in
-      begin match target with
-      | `ReceiverHosted id ->
-        `Disembargo_reply ((`ReceiverHosted id), embargo_id)
-      | `ReceiverAnswer _ -> failwith "TODO: handle_disembargo: ReceiverAnswer"        (* Can this happen? *)
-      end
-    | _ -> failwith "TODO: handle_disembargo"
+    | Disembargo.Context.SenderLoopback embargo_id -> `Disembargo_request (`Loopback (target, EmbargoId.of_uint32 embargo_id))
+    | Disembargo.Context.ReceiverLoopback embargo_id -> `Disembargo_reply (target, EmbargoId.of_uint32 embargo_id)
+    | Disembargo.Context.Accept
+    | Disembargo.Context.Provide _ -> failwith "TODO: handle_disembargo: 3rd-party"
+    | Disembargo.Context.Undefined x -> Capnp_rpc.Debug.failf "Unknown Disembargo type %d" x
 
   let parse_resolve x =
     let open Reader in

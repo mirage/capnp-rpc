@@ -117,6 +117,25 @@ let test_embargo switch =
   Capability.dec_ref registry;
   Lwt.return ()
 
+let test_resolve switch =
+  let registry_impl = Registry.service () in
+  let local_echo = Echo.service () in
+  let cs = run_server ~switch ~service:registry_impl () in
+  let registry = get_bootstrap cs in
+  Registry.Client.set_echo_service registry local_echo >>= fun () ->
+  Capability.dec_ref local_echo;
+  let echo_service = Registry.Client.echo_service_promise registry in
+  let reply1 = Echo.Client.ping echo_service "ping" in
+  Registry.Client.unblock registry >>= fun () ->
+  reply1 >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  (* Flush, to ensure we resolve the echo_service's location. *)
+  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:1:ping" >>= fun () ->
+  (* Test local connection. *)
+  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:2:ping" >>= fun () ->
+  Capability.dec_ref echo_service;
+  Capability.dec_ref registry;
+  Lwt.return ()
+
 let test_cancel switch =
   let cs = run_server ~switch ~service:(Echo.service ()) () in
   let service = get_bootstrap cs in
@@ -166,6 +185,7 @@ let rpc_tests = [
   "Simple",     `Quick, run_lwt test_simple;
   "Parallel",   `Quick, run_lwt test_parallel;
   "Embargo",    `Quick, run_lwt test_embargo;
+  "Resolve",    `Quick, run_lwt test_resolve;
   "Registry",   `Quick, run_lwt test_registry;
   "Calculator", `Quick, run_lwt test_calculator;
   "Cancel",     `Quick, run_lwt test_cancel;

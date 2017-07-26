@@ -57,7 +57,7 @@ let write_exn b ex =
   type_set b ty;
   reason_set b ex.Capnp_rpc.Exception.reason
 
-let message ~tags : Endpoint_types.Out.t -> _ =
+let message : Endpoint_types.Out.t -> _ =
   let open Builder in
   function
   | `Abort ex ->
@@ -68,10 +68,6 @@ let message ~tags : Endpoint_types.Out.t -> _ =
     let b = Message.init_root () in
     let boot = Message.bootstrap_init b in
     Bootstrap.question_id_set boot (QuestionId.uint32 qid);
-    Log.info (fun f ->
-        let tags = Logs.Tag.add Capnp_rpc.Debug.qid_tag (QuestionId.uint32 qid) tags in
-        f ~tags "Requesting bootstrap service"
-      );
     Message.to_message b
   | `Call (qid, target, request, descs, results_to) ->
     let c = Rpc.writable_req request in

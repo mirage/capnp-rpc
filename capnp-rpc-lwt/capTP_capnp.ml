@@ -95,7 +95,7 @@ let listen t =
 
 let connect ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
   let xmit_queue = Queue.create () in
-  let queue_send msg = queue_send ~xmit_queue endpoint (Serialise.message ~tags msg) in
+  let queue_send msg = queue_send ~xmit_queue endpoint (Serialise.message msg) in
   let conn = Conn.create ?bootstrap:offer ~tags ~queue_send in
   Lwt_switch.add_hook (Some switch) (fun () ->
       Conn.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "CapTP switch turned off");
@@ -126,8 +126,7 @@ let connect ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
   t
 
 let disconnect t ex =
-  let tags = Conn.tags t.conn in
-  queue_send ~xmit_queue:t.xmit_queue t.endpoint (Serialise.message ~tags (`Abort ex));
+  queue_send ~xmit_queue:t.xmit_queue t.endpoint (Serialise.message (`Abort ex));
   Lwt_switch.turn_off t.switch
 
 let dump f t = Conn.dump f t.conn

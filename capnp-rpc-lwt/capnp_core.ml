@@ -58,3 +58,4 @@ end
 
 module Endpoint_types = Capnp_rpc.Message_types.Endpoint(Core_types)( )
 module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)
+module Cap_proxy = Capnp_rpc.Cap_proxy.Make(Core_types)

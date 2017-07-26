@@ -45,6 +45,20 @@ let service () =
         fst blocked >|= fun () -> Ok resp
       )
 
+    method echo_service_promise_impl _params =
+      let module R = Api.Builder.Registry.EchoServicePromise_results in
+      let resp, results = Service.Response.create R.init_pointer in
+      let promise, resolver = Capability.promise () in
+      let cap_index = Service.Response.export resp promise in
+      Capability.dec_ref promise;
+      R.service_set results (Some cap_index);
+      Lwt.async (fun () ->
+          fst blocked >|= fun () ->
+          Capability.inc_ref echo_service;
+          Capability.resolve_ok resolver echo_service
+        );
+      Service.return resp
+
     method unblock_impl _ =
       Lwt.wakeup (snd blocked) ();
       blocked <- Lwt.wait ();
@@ -77,10 +91,17 @@ module Client = struct
     P.service_set p (Some (Capability.Request.export req echo_service));
     Capability.call_for_value t Api.Reader.Registry.set_echo_service_method req >|= ignore
 
+  (* Waits until unblocked before returning *)
   let echo_service t =
     let req = Capability.Request.create_no_args () in
     let module R = Api.Reader.Registry.EchoService_results in
     Capability.call_for_caps t Api.Reader.Registry.echo_service_method req R.service_get_pipelined
+
+  (* Returns a promise immediately. Resolves promise when unblocked. *)
+  let echo_service_promise t =
+    let req = Capability.Request.create_no_args () in
+    let module R = Api.Reader.Registry.EchoServicePromise_results in
+    Capability.call_for_caps t Api.Reader.Registry.echo_service_promise_method req R.service_get_pipelined
 
   let unblock t =
     let req = Capability.Request.create_no_args () in
