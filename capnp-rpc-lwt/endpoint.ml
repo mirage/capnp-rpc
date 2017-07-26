@@ -3,44 +3,22 @@ open Lwt.Infix
 let src = Logs.Src.create "endpoint" ~doc:"Send and receive Cap'n'Proto messages"
 module Log = (val Logs.src_log src: Logs.LOG)
 
-(* Slight rude to set signal handlers in a library, but SIGPIPE makes no sense
-   in a modern application. *)
-let () = Sys.(set_signal sigpipe Signal_ignore)
-
 let compression = `None
 
 let record_sent_messages = false
 
+type flow = Flow : (module Mirage_flow_lwt.S with type flow = 'a) * 'a -> flow
+
 type t = {
-  to_remote : Lwt_io.output Lwt_io.channel;
-  from_remote : Lwt_io.input Lwt_io.channel;
+  flow : flow;
   decoder : Capnp.Codecs.FramedStream.t;
   switch : Lwt_switch.t;
 }
 
-let of_socket ~switch socket =
-  let from_remote = Lwt_io.(of_unix_fd ~mode:input ~close:Lwt.return) socket in
-  let to_remote = Lwt_io.(of_unix_fd ~mode:output ~close:Lwt.return) socket in
-  Lwt_switch.add_hook (Some switch) (fun () ->
-      Lwt_io.close from_remote >>= fun () ->
-      Lwt_io.close to_remote >>= fun () ->
-      Unix.close socket;
-      Lwt.return ()
-    );
-  let decoder = Capnp.Codecs.FramedStream.empty compression in
-  { from_remote; to_remote; decoder; switch }
-
 let of_flow (type flow) ~switch (module F : Mirage_flow_lwt.S with type flow = flow) (flow:flow) =
-  let module U = Mirage_flow_unix.Make(F) in
-  let to_remote = U.oc ~close:false flow in
-  let from_remote = U.ic ~close:false flow in
-  Lwt_switch.add_hook (Some switch) (fun () ->
-      Lwt_io.close from_remote >>= fun () ->
-      Lwt_io.close to_remote >>= fun () ->
-      F.close flow
-    );
+  let generic_flow = Flow ((module F), flow) in
   let decoder = Capnp.Codecs.FramedStream.empty compression in
-  { from_remote; to_remote; decoder; switch }
+  { flow = generic_flow; decoder; switch }
 
 let dump_msg =
   let next = ref 0 in
@@ -53,31 +31,34 @@ let dump_msg =
     close_out ch
 
 let send t msg =
-  t.to_remote |> Lwt_io.atomic @@ fun to_remote ->
+  let (Flow ((module F), flow)) = t.flow in
   let data = Capnp.Codecs.serialize ~compression msg in
   if record_sent_messages then dump_msg data;
-  Lwt_io.write to_remote data
+  F.write flow (Cstruct.of_string data) >|= function
+  | Ok ()
+  | Error `Closed as e -> e
+  | Error e -> Error (`Msg (Fmt.to_to_string F.pp_write_error e))
 
 let rec recv t =
+  let (Flow ((module F), flow)) = t.flow in
   match Capnp.Codecs.FramedStream.get_next_frame t.decoder with
   | _ when not (Lwt_switch.is_on t.switch) -> Lwt.return @@ Error `Closed
   | Ok msg -> Lwt.return (Ok (Capnp.BytesMessage.Message.readonly msg))
   | Error Capnp.Codecs.FramingError.Unsupported -> failwith "Unsupported Cap'n'Proto frame received"
   | Error Capnp.Codecs.FramingError.Incomplete ->
     Log.debug (fun f -> f "Incomplete; waiting for more data...");
-    Lwt.try_bind
-      (fun () -> Lwt_io.read ~count:4096 t.from_remote)
-      (function
-        | "" ->
-          Log.info (fun f -> f "Connection closed");
-          Lwt_switch.turn_off t.switch >|= fun () ->
-          Error `Closed
-        | data ->
-          Log.debug (fun f -> f "Got %S" data);
-          Capnp.Codecs.FramedStream.add_fragment t.decoder data;
-          recv t
-      )
-      (function
-        | Lwt_io.Channel_closed _ -> Lwt_switch.turn_off t.switch >|= fun () -> Error `Closed
-        | ex -> Lwt.fail ex
-      )
+    F.read flow >>= function
+    | Ok (`Data data) ->
+      Log.debug (fun f -> f "Read %d bytes" (Cstruct.len data));
+      Capnp.Codecs.FramedStream.add_fragment t.decoder (Cstruct.to_string data);
+      recv t
+    | Ok `Eof ->
+      Log.info (fun f -> f "Connection closed");
+      Lwt_switch.turn_off t.switch >|= fun () ->
+      Error `Closed
+    | Error ex when Lwt_switch.is_on t.switch -> Capnp_rpc.Debug.failf "recv: %a" F.pp_error ex
+    | Error _ -> Lwt.return (Error `Closed)
+
+let pp_error f = function
+  | `Closed -> Fmt.string f "Connection closed"
+  | `Msg m -> Fmt.string f m

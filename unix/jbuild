@@ -3,5 +3,5 @@
 (library (
   (name capnp_rpc_unix)
   (public_name capnp-rpc-unix)
-  (libraries (lwt.unix astring capnp-rpc-lwt capnp-rpc fmt logs mirage-flow-unix cmdliner))
+  (libraries (lwt.unix astring capnp-rpc-lwt capnp-rpc fmt logs mirage-flow-unix cmdliner cstruct-lwt))
 ))

@@ -39,29 +39,34 @@ let tags t = Conn.tags t.conn
    Invariant:
      Whenever Lwt blocks or switches threads, a flush thread is running iff the
      queue is non-empty. *)
-let rec flush ~xmit_queue endpoint =
+let rec flush ~switch ~xmit_queue endpoint =
   (* We keep the item on the queue until it is transmitted, as the queue state
      tells us whether there is a [flush] currently running. *)
   let next = Queue.peek xmit_queue in
-  Endpoint.send endpoint next >>= fun () ->
-  ignore (Queue.pop xmit_queue);
-  if not (Queue.is_empty xmit_queue) then
-    flush ~xmit_queue endpoint
-  else (* queue is empty and flush thread is done *)
-    Lwt.return_unit
+  Endpoint.send endpoint next >>= function
+  | Error e when Lwt_switch.is_on switch ->
+    Log.warn (fun f -> f "Error sending messages: %a (will shutdown connection)" Endpoint.pp_error e);
+    Lwt_switch.turn_off switch
+  | Error _ -> Lwt.return_unit  (* We're shutting down *)
+  | Ok () ->
+    ignore (Queue.pop xmit_queue);
+    if not (Queue.is_empty xmit_queue) then
+      flush ~switch ~xmit_queue endpoint
+    else (* queue is empty and flush thread is done *)
+      Lwt.return_unit
 
 (* Enqueue [message] in [xmit_queue] and ensure the flush thread is running. *)
-let queue_send ~xmit_queue endpoint message =
+let queue_send ~switch ~xmit_queue endpoint message =
   let was_idle = Queue.is_empty xmit_queue in
   Queue.add message xmit_queue;
-  if was_idle then async_tagged "Message sender thread" (fun () -> flush ~xmit_queue endpoint)
+  if was_idle then async_tagged "Message sender thread" (fun () -> flush ~switch ~xmit_queue endpoint)
 
 let return_not_implemented t x =
   Log.info (fun f -> f ~tags:(tags t) "Returning Unimplemented");
   let open Builder in
   let m = Message.init_root () in
   let _ : Builder.Message.t = Message.unimplemented_set_reader m x in
-  queue_send ~xmit_queue:t.xmit_queue t.endpoint (Message.to_message m)
+  queue_send ~switch:t.switch ~xmit_queue:t.xmit_queue t.endpoint (Message.to_message m)
 
 let listen t =
   let rec loop () =
@@ -95,7 +100,7 @@ let listen t =
 
 let connect ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
   let xmit_queue = Queue.create () in
-  let queue_send msg = queue_send ~xmit_queue endpoint (Serialise.message msg) in
+  let queue_send msg = queue_send ~switch ~xmit_queue endpoint (Serialise.message msg) in
   let conn = Conn.create ?bootstrap:offer ~tags ~queue_send in
   Lwt_switch.add_hook (Some switch) (fun () ->
       Conn.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "CapTP switch turned off");
@@ -126,7 +131,7 @@ let connect ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
   t
 
 let disconnect t ex =
-  queue_send ~xmit_queue:t.xmit_queue t.endpoint (Serialise.message (`Abort ex));
+  queue_send ~switch:t.switch ~xmit_queue:t.xmit_queue t.endpoint (Serialise.message (`Abort ex));
   Lwt_switch.turn_off t.switch
 
 let dump f t = Conn.dump f t.conn

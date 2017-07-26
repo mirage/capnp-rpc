@@ -17,7 +17,7 @@ depends: [
   "fmt"
   "logs"
   "asetmap"
-  "mirage-flow-unix"
+  "mirage-flow-lwt"
   "jbuilder" {build & >= "1.0+beta10" }
   "alcotest" {test}
 ]

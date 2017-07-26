@@ -26,12 +26,14 @@ end
    Return the client proxy to it.
    Everything gets shut down when the switch is turned off. *)
 let run_server ~switch ~service () =
-  let server_socket, client_socket = Unix.(socketpair PF_UNIX SOCK_STREAM 0) in
+  let server_socket, client_socket = Lwt_unix.(socketpair PF_UNIX SOCK_STREAM 0) in
   let server =
-    CapTP.connect ~tags:Test_utils.server_tags ~switch ~offer:service (Endpoint.of_socket ~switch server_socket)
+    Capnp_rpc_unix.endpoint_of_socket ~switch server_socket
+    |> CapTP.connect ~tags:Test_utils.server_tags ~switch ~offer:service
   in
   let client =
-    CapTP.connect ~tags:Test_utils.client_tags ~switch (Endpoint.of_socket ~switch client_socket)
+    Capnp_rpc_unix.endpoint_of_socket ~switch client_socket
+    |> CapTP.connect ~tags:Test_utils.client_tags ~switch
   in
   Capability.dec_ref service;
   { client; server }
