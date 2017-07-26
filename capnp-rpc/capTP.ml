@@ -1282,7 +1282,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let target =
         match message_target with
         | `ReceiverHosted id ->
-          (* XXX: check resolve target *)
           let export = Exports.find_exn t.exports id in
           begin match Export.resolve_target export with
             | #message_target_cap as target -> target
@@ -1449,6 +1448,46 @@ module Make (EP : Message_types.ENDPOINT) = struct
           let answer = Answers.find_exn t.answers aid in
           send_disembargo t embargo_id (Answer.disembargo_target answer path)
 
+    (* [double_disembargo_path resolve_target] is used to check whether we need a second embargo
+       after a previous disembargo arrived back at an answer or export which is now resolved to
+       [resolve_target]. If [resolve_target] is set and is remote and we have pipelined messages
+       to it then we return the path to use for the next disembargo step.
+       Returns [None] if no embargo is needed at the moment. *)
+    let double_disembargo_path = function
+      | `None ->
+        (* We haven't resolved yet. Any pipelined messages have been queued up locally and will
+           be forwarded when the answer or export does resolve. We can safely make calls directly
+           on the local promise. *)
+        None
+      | `Local ->
+        (* We resolved to a local service (possibly another promise).
+           Any pipelined messages have already been delivered to it and we can therefore send it
+           messages immediately. *)
+        None
+      | `QuestionCap (q, path) ->
+        (* We resolved to a question. If we have pipelined messages to the question and it has
+           resolved to a local service then we may need another embargo before using the new
+           local target.
+           XXX: If it resolved to a new remote target then we should switch to using that. *)
+        if Question.answer_cap_needs_disembargo q path then Some (Question.message_target q path)
+        else None
+      | `Import i ->
+        (* We resolved to an import. If we have pipelined messages to the remote export and it
+           has resolved to a local service then we will need another embargo before using the new
+           local target.
+           XXX: If it resolved to a new remote target then we should switch to using that. *)
+        if Import.used i then (
+          match Import.resolution i with
+          | `None -> None         (* Not resolved yet; no further embargoes needed *)
+          | `Error -> None        (* Don't need to embargo errors *)
+          | `SenderPromise _ | `SenderHosted _ -> None (* Remote; no embargo needed *)
+          | `ThirdPartyHosted _ -> failwith "todo: disembargo_reply: ThirdPartyHosted"
+          | `ReceiverAnswer _ | `ReceiverHosted _ ->
+            (* We answered this with an import, and have been forwarding things there.
+               The import has since been resolved to a local service, so we need another disembargo. *)
+            Some (Import.message_target i)
+        ) else None
+
     let disembargo_reply t target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
       Log.info (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
@@ -1466,31 +1505,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
        *)
       let embargo_path =
         match target with
-          | `ReceiverHosted _ -> None          (* TODO: need embargoes here too *)
+          | `ReceiverHosted id ->
+            let export = Exports.find_exn t.exports id in
+            double_disembargo_path (Export.resolve_target export)
           | `ReceiverAnswer (id, path) ->
             let answer = Answers.find_exn t.answers id in
             match Answer.resolve_target answer path with
             | None -> None                    (* No embargoes as still unresolved (target still remote) *)
             | Some (Error _) -> None          (* No embargoes for errors *)
-            | Some (Ok `None) -> None
-            | Some (Ok `Local) -> None
-            | Some (Ok (`QuestionCap (q, path2))) ->
-              if Question.answer_cap_needs_disembargo q path2 then
-                Some (Question.message_target q path2)
-              else
-                None
-            | Some (Ok (`Import i)) ->
-              if Import.used i then (
-                match Import.resolution i with
-                | `None -> None         (* Not resolved yet; no further embargoes needed *)
-                | `Error -> None        (* Don't need to embargo errors *)
-                | `SenderPromise _ | `SenderHosted _ -> None (* Remote; no embargo needed *)
-                | `ThirdPartyHosted _ -> failwith "todo: disembargo_reply: ThirdPartyHosted"
-                | `ReceiverAnswer _ | `ReceiverHosted _ ->
-                  (* We answered this with an import, and have been forwarding things there.
-                     The import has since been resolved to a local service, so we need another disembargo. *)
-                  Some (Import.message_target i)
-              ) else None
+            | Some (Ok resolve_target) -> double_disembargo_path resolve_target
       in
       let cap = import t ?embargo_path (target :> EP.In.desc) in
       Log.info (fun f -> f "Disembargo target is %t" cap#pp);
