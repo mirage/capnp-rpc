@@ -75,6 +75,16 @@ module Capability = struct
     match fn q with
     | r -> Core_types.dec_ref q; r
     | exception ex -> Core_types.dec_ref q; raise ex
+
+  type 'a resolver = Cap_proxy.resolver_cap
+
+  let promise () =
+    let cap = Cap_proxy.local_promise () in
+    (cap :> Core_types.cap), (cap :> 'a resolver)
+
+  let resolve_ok r x = r#resolve x
+
+  let resolve_exn r ex = r#resolve (Core_types.broken_cap ex)
 end
 
 module StructRef = struct

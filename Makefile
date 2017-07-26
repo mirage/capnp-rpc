@@ -21,4 +21,5 @@ test:
 	rm -rf _build/_tests
 	jbuilder build --dev test/test.bc test-lwt/test.bc test-bin/calc.bc
 	#./_build/default/test/test.bc test core -ev 16
+	#./_build/default/test-lwt/test.bc test lwt -ev 3
 	jbuilder build @runtest --dev --no-buffer -j 1

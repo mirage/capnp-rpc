@@ -8,6 +8,7 @@ interface Echo {
 interface Registry {
   setEchoService @2 (service :Echo) -> ();
   echoService @0 () -> (service :Echo);
+  echoServicePromise @4 () -> (service :Echo);
   unblock @1 ();
   complex @3 () -> (foo :Foo, bar :Bar);
 }
