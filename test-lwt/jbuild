@@ -2,7 +2,7 @@
 
 (executable (
   (name test)
-  (libraries (capnp-rpc-lwt alcotest examples logs.fmt testbed))
+  (libraries (capnp-rpc-lwt capnp-rpc-unix alcotest examples logs.fmt testbed))
 ))
 
 (alias

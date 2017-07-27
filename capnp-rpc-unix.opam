@@ -11,6 +11,8 @@ build-test: ["jbuilder" "runtest" "-p" name]
 
 depends: [
   "capnp-rpc-lwt"
+  "mirage-flow-unix"
+  "cstruct-lwt"
   "astring"
   "fmt"
   "logs"
