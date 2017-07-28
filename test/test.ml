@@ -1,6 +1,8 @@
 open Astring
 
 module Core_types = Testbed.Capnp_direct.Core_types
+module Request = Testbed.Capnp_direct.String_content.Request
+module Response = Testbed.Capnp_direct.String_content.Response
 module Test_utils = Testbed.Test_utils
 module Services = Testbed.Services
 module CS = Testbed.Connection.Pair ( )    (* A client-server pair *)
@@ -13,17 +15,19 @@ module Cap_proxy = Testbed.Capnp_direct.Cap_proxy
 module C = CS.C
 module S = CS.S
 
-let empty = RO_array.empty
-
 let inc_ref = Core_types.inc_ref
 let dec_ref = Core_types.dec_ref
 let with_inc_ref x = inc_ref x; (x :> Core_types.cap)
 
+let response_equal a b =
+  let a_caps = Core_types.Response_payload.snapshot_caps a in
+  let b_caps = Core_types.Response_payload.snapshot_caps b in
+  Response.data a = Response.data b &&
+  RO_array.equal (=) a_caps b_caps
+
 let error = Alcotest.of_pp Capnp_rpc.Error.pp
-let pp_cap f p = p#pp f
-let cap : Core_types.cap Alcotest.testable = Alcotest.of_pp pp_cap
-let ro_array x = Alcotest.testable (RO_array.pp (Alcotest.pp x)) (RO_array.equal (Alcotest.equal x))
-let response_promise = Alcotest.(option (result (pair string (ro_array cap)) error))
+let response = Alcotest.testable Core_types.Response_payload.pp response_equal
+let response_promise = Alcotest.(option (result response error))
 
 let exn = Alcotest.of_pp Capnp_rpc.Exception.pp
 
@@ -31,7 +35,11 @@ let call target msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
   List.iter Core_types.inc_ref caps;
   let results, resolver = Local_struct_promise.make () in
-  target#call resolver msg (RO_array.of_list caps);
+  let msg =
+    Testbed.Capnp_direct.String_content.Request.v msg
+    |> Core_types.Request_payload.with_caps (RO_array.of_list caps)
+  in
+  target#call resolver msg;
   results
 
 let call_for_cap target msg caps =
@@ -43,7 +51,11 @@ let call_for_cap target msg caps =
 (* Takes ownership of caps *)
 let resolve_ok (ans:#Core_types.struct_resolver) msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
-  Core_types.resolve_ok ans msg @@ RO_array.of_list caps
+  let msg =
+    Testbed.Capnp_direct.String_content.Request.v msg
+    |> Core_types.Response_payload.with_caps (RO_array.of_list caps)
+  in
+  Core_types.resolve_ok ans msg
 
 let test_simple_connection () =
   let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
@@ -54,7 +66,8 @@ let test_simple_connection () =
   let q = call servce_promise "my-content" [] in
   S.handle_msg s ~expect:"call:my-content";
   C.handle_msg c ~expect:"return:got:my-content";
-  Alcotest.(check response_promise) "Client got call response" (Some (Ok ("got:my-content", empty))) q#response;
+  let expected = Request.v "got:my-content" in
+  Alcotest.(check response_promise) "Client got call response" (Some (Ok expected)) q#response;
   dec_ref q;
   dec_ref servce_promise;
   CS.flush c s;
@@ -73,16 +86,17 @@ let init_pair ~bootstrap_service =
 let test_return () =
   let c, s, bs = init_pair ~bootstrap_service:(Services.echo_service ()) in
   (* Pass callback *)
-  let slot = ref ("empty", empty) in
+  let slot = ref (Request.v "empty") in
   let local = Services.swap_service slot in
   let q = call bs "c1" [local] in
   dec_ref local;
   (* Server echos args back *)
   S.handle_msg s ~expect:"call:c1";
   C.handle_msg c ~expect:"return:got:c1";
-  Alcotest.(check response_promise) "Client got response"
-    (Some (Ok ("got:c1", RO_array.of_list [(local :> Core_types.cap)])))
-    q#response;
+  let expected = Response.v "got:c1"
+                 |> Core_types.Response_payload.with_caps (RO_array.of_list [(local :> Core_types.cap)])
+  in
+  Alcotest.(check response_promise) "Client got response" (Some (Ok expected)) q#response;
   dec_ref bs;
   S.handle_msg s ~expect:"finish";
   S.handle_msg s ~expect:"release";
@@ -93,7 +107,7 @@ let test_return () =
 let test_return_error () =
   let c, s, bs = init_pair ~bootstrap_service:(Core_types.broken_cap (Exception.v "test-error")) in
   (* Pass callback *)
-  let slot = ref ("empty", empty) in
+  let slot = ref (Request.v "empty") in
   let local = Services.swap_service slot in
   let q = call bs "call" [local] in
   dec_ref local;
@@ -158,8 +172,7 @@ let test_local_embargo_2 () =
   dec_ref q1;
   let m1 = call service "Message-1" [] in             (* First message to service *)
   S.handle_msg s ~expect:"call:q1";
-  let (_, q1_args, a1) = server_main#pop in
-  let proxy_to_local_reg = RO_array.get q1_args 0 in
+  let proxy_to_local_reg, a1 = server_main#pop1 "q1" in
   (* The server will now make a call on the client registry, and then tell the client
      to use the (unknown) result of that for [service]. *)
   let q2 = call proxy_to_local_reg "q2" [] in
@@ -169,7 +182,7 @@ let test_local_embargo_2 () =
   (* [proxy_to_local] is now owned by [a1]. *)
   dec_ref q2;
   C.handle_msg c ~expect:"call:q2";
-  let (_, _q2_args, a2) = local_reg#pop in
+  let a2 = local_reg#pop0 "q2" in
   C.handle_msg c ~expect:"release";
   C.handle_msg c ~expect:"return:a1";
   (* The client now knows that [a1/0] is a local promise, but it can't use it directly yet because
@@ -201,8 +214,7 @@ let test_local_embargo_3 () =
   let local = Services.logger () in
   let q1 = call bs "q1" [local] in
   S.handle_msg s ~expect:"call:q1";
-  let (_, q1_args, a1) = service#pop in
-  let proxy_to_logger = RO_array.get q1_args 0 in
+  let proxy_to_logger, a1 = service#pop1 "q1" in
   let promise = Cap_proxy.local_promise () in
   resolve_ok a1 "a1" [promise];
   C.handle_msg c ~expect:"return:a1";
@@ -249,7 +261,7 @@ let test_local_embargo_4 () =
   (* At this point, the client knows that [broken] is its own answer to [q2], which is an error.
      It therefore does not try to disembargo it. *)
   Alcotest.(check string) "Error not embargoed"
-    "Failed: Invalid cap index 0 in []"
+    "Failed: Invalid capability index!"
    (Fmt.strf "%t" broken#shortest#pp);
   (* Clean up *)
   dec_ref qp;
@@ -272,8 +284,7 @@ let test_local_embargo_5 () =
   let test = q1#cap 0 in
   let m1 = call test "Message-1" [] in
   S.handle_msg s ~expect:"call:q1";
-  let (_, q1_args, a1) = service#pop in
-  let proxy_to_local = RO_array.get q1_args 0 in
+  let proxy_to_local, a1 = service#pop1 "q1" in
   let server_promise = Cap_proxy.local_promise () in
   resolve_ok a1 "a1" [server_promise];
   C.handle_msg c ~expect:"return:a1";
@@ -763,11 +774,11 @@ let test_fields () =
   S.handle_msg s ~expect:"call:c1";
   S.handle_msg s ~expect:"finish";
   C.handle_msg c ~expect:"return:got:c1";
-  Alcotest.(check response_promise) "Echo response" (Some (Ok ("got:c1", empty))) q1#response;
+  Alcotest.(check response_promise) "Echo response" (Some (Ok (Response.v "got:c1"))) q1#response;
   dec_ref q1;
   let q2 = call f0 "c2" [] in
   CS.flush c s;
-  Alcotest.(check response_promise) "Echo response 2" (Some (Ok ("got:c2", empty))) q2#response;
+  Alcotest.(check response_promise) "Echo response 2" (Some (Ok (Response.v "got:c2"))) q2#response;
   dec_ref q2;
   dec_ref f0;
   CS.flush c s;
@@ -787,9 +798,9 @@ let test_cancel () =
   S.handle_msg s ~expect:"call:c1";
   S.handle_msg s ~expect:"call:p1";
   S.handle_msg s ~expect:"finish";      (* bootstrap *)
-  let (_, _, a1) = service#pop in
+  let a1 = service#pop0 "c1" in
   resolve_ok a1 "a1" [];
-  C.handle_msg c ~expect:"return:Invalid cap index 0 in []";
+  C.handle_msg c ~expect:"return:Invalid capability index!";
   C.handle_msg c ~expect:"return:a1";
   dec_ref f0;
   CS.flush c s;
@@ -830,7 +841,7 @@ let test_duplicates () =
   S.handle_msg s ~expect:"call:c1";
   S.handle_msg s ~expect:"finish";              (* bootstrap question *)
   S.handle_msg s ~expect:"release";             (* bootstrap cap *)
-  let (_, _, a1) = service#pop in
+  let a1 = service#pop0 "c1" in
   resolve_ok a1 "a1" [];
   C.handle_msg c ~expect:"return:a1";
   S.handle_msg s ~expect:"finish";              (* c1 *)
@@ -849,9 +860,8 @@ let test_single_export () =
   dec_ref q1;
   dec_ref q2;
   let ignore msg =
-    let got, caps, a = service#pop in
-    Alcotest.(check string) ("Ignore " ^ msg) msg got;
-    RO_array.iter dec_ref caps;
+    let got, a = service#pop_n msg in
+    RO_array.iter dec_ref got;
     resolve_ok a "a" []
   in
   ignore "q1";
@@ -935,7 +945,7 @@ let test_cycle_3 () =
   let target = a1#cap 1 in
   let q2 = call target "q2" [] in
   Alcotest.(check response_promise) "Field 1 OK"
-    (Some (Ok ("got:q2", RO_array.empty)))
+    (Some (Ok (Response.v "got:q2")))
     q2#response;
   dec_ref q2;
   dec_ref target;
@@ -960,7 +970,11 @@ let test_cycle_5 () =
   Alcotest.(check (result unit reject)) "Not a cycle" (Ok ()) @@ br#set_blocker (c :> Core_types.base_ref);
   Alcotest.(check (result unit reject)) "Not a cycle" (Ok ()) @@ cr#set_blocker (a :> Core_types.base_ref);
   let b0 = b#cap 0 in
-  let x = Core_types.return ("reply", RO_array.of_list [b0]) in
+  let reply =
+    Response.v "reply"
+    |> Core_types.Response_payload.with_caps (RO_array.of_list [b0])
+  in
+  let x = Core_types.return reply in
   ar#resolve x;
   Logs.info (fun f -> f "a = %t" a#pp);
   ensure_is_cycle_error_cap (a#cap 0);
@@ -970,7 +984,7 @@ let test_cycle_5 () =
 let test_cycle_6 () =
   let a, ar = Local_struct_promise.make () in
   let a0 = a#cap 0 in
-  a0#call ar "loop" RO_array.empty;
+  a0#call ar (Request.v "loop");
   Logs.info (fun f -> f "a0 = %t" a#pp)
 
 (* The server returns an answer containing a promise. Later, it resolves the promise
@@ -1118,7 +1132,7 @@ let test_broken_connection () =
   let q1 = call bs "Message-1" [] in
   CS.flush c s;
   Alcotest.check response_promise "Echo reply"
-    (Some (Ok ("got:Message-1", RO_array.empty)))
+    (Some (Ok (Response.v "got:Message-1")))
     q1#response;
   dec_ref q1;
   let err = Exception.v "Connection lost" in
@@ -1133,7 +1147,7 @@ let test_ref_counts () =
     let o = object (self)
       inherit Core_types.service
       val id = Capnp_rpc.Debug.OID.next ()
-      method call results _ _  = Core_types.resolve_ok results "answer" RO_array.empty
+      method call results _ = Core_types.resolve_ok results (Response.v "answer")
       method! private release = Hashtbl.remove objects self
       method! pp f = Fmt.pf f "Service(%a, %t)" Capnp_rpc.Debug.OID.pp id self#pp_refcount
     end in
@@ -1196,7 +1210,7 @@ module Level0 = struct
     let bs =
       match Queue.pop from_server with
       | `Return (_, `Results (_, caps), false) ->
-        begin match RO_array.get caps 0 with
+        begin match RO_array.get_exn caps 0 with
           | `SenderHosted id -> id
           | _ -> assert false
         end
@@ -1218,12 +1232,12 @@ module Level0 = struct
   let expect_call t expected =
     match Queue.pop t.from_server with
     | `Call (qid, _, msg, _, _) ->
-      Alcotest.(check string) "Get call" expected msg;
+      Alcotest.(check string) "Get call" expected @@ Request.data msg;
       qid
     | request -> Alcotest.fail (Fmt.strf "Expecting call, got %s" (Testbed.Connection.summary_of_msg request))
 
   let call t target ~qid msg =
-    send t @@ `Call (qid_of_int qid, `ReceiverHosted target, msg, RO_array.empty, `Caller)
+    send t @@ `Call (qid_of_int qid, `ReceiverHosted target, Request.v msg, RO_array.empty, `Caller)
 
   let finish t ~qid =
     send t @@ `Finish (qid_of_int qid, true)
@@ -1254,9 +1268,9 @@ let test_auto_release () =
   dec_ref logger;
   let bs_qid = Level0.expect_bs c in
   let client_bs_id = S.EP.In.ExportId.zero in
-  send @@ `Return (bs_qid, `Results ("bs", RO_array.of_list [`SenderHosted client_bs_id]), true);
+  send @@ `Return (bs_qid, `Results (Response.v "bs", RO_array.of_list [`SenderHosted client_bs_id]), true);
   let q1_qid = Level0.expect_call c "q1" in
-  send @@ `Return (q1_qid, `Results ("a1", RO_array.empty), true);
+  send @@ `Return (q1_qid, `Results (Response.v "a1", RO_array.empty), true);
   S.handle_msg s ~expect:"return:bs";
   S.handle_msg s ~expect:"return:a1";
   Alcotest.(check bool) "Logger released" true logger#released;

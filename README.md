@@ -27,7 +27,7 @@ Some key features:
 
 This library should be used with the [capnp-ocaml][] schema compiler, which generates bindings from schema files.
 
-Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces2> branch, which adds support for compiling interface definitions.
+Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces3> branch, which adds support for compiling interface definitions.
 
 
 ### Status
@@ -295,7 +295,7 @@ Instead of returning the text directly, it will send it to a callback at regular
 
 Run `capnp compile` again to update the generated files.
 
-To write the new `heartbeat_impl` method, we have to use `import` to get the `callback` capability reference out of the request:
+The new `heartbeat_impl` method looks like this:
 
 ```ocaml
     method heartbeat_impl request =
@@ -304,8 +304,7 @@ To write the new `heartbeat_impl` method, we have to use `import` to get the `ca
       let msg = P.msg_get params in
       match P.callback_get params with
       | None -> Service.fail "No callback parameter!"
-      | Some i ->
-        let callback = Payload.import request i in
+      | Some callback ->
         Lwt.async (fun () -> notify callback msg);
         Service.return_empty ()
 ```
@@ -334,7 +333,7 @@ let notify callback msg =
 Exercise: implement `Callback.log` (hint: it's very similar to `Client.ping`)
 
 To write the client for `Echo.heartbeat`, we take a user-provided callback object
-and export it into the request:
+and put it into the request:
 
 ```ocaml
   let heartbeat t msg callback =
@@ -342,8 +341,7 @@ and export it into the request:
     let module R = Api.Reader.Echo.Heartbeat_results in
     let request, params = Capability.Request.create P.init_pointer in
     P.msg_set params msg;
-    let i = Capability.Request.export request callback in
-    P.callback_set params (Some i);
+    P.callback_set params (Some callback);
     Capability.call_for_value_exn t Echo.heartbeat_method request >|= fun response ->
     Payload.release response
 ```
@@ -446,8 +444,7 @@ we export the callback in the response in the same way we previously exported th
       Payload.release request;
       let module R = Api.Builder.Echo.Logger_results in
       let response, results = Service.Response.create R.init_pointer in
-      let i = Service.Response.export response service_logger in
-      R.callback_set results (Some i);
+      R.callback_set results (Some service_logger);
       Service.return response
 ```
 
@@ -462,8 +459,8 @@ The client side is more interesting:
     Capability.call_for_caps t Echo.logger_method request R.callback_get_pipelined
 ```
 
-We could have used `call_for_value` as before, and then used `import` to get the actual capability reference.
-But that would mean waiting for the response to be sent back to us over the network before we could use it.
+We could have used `call_for_value` as before,
+but that would mean waiting for the response to be sent back to us over the network before we could use it.
 Instead, we use `callback_get_pipelined` to get a promise for the capability from the promise of the `logger` call's result.
 This is a `Capability.t`, just as if we'd waited for it.
 

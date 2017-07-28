@@ -75,6 +75,6 @@ let cap s i =
 let return s caps =
   s.caps |> Hashtbl.iter (fun i c ->
       if i < RO_array.length caps then
-        unify c (RO_array.get caps i);
+        unify c (RO_array.get_exn caps i);
     );
   caps |> RO_array.iteri (Hashtbl.replace s.caps)

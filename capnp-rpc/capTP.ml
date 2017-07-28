@@ -197,14 +197,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | `Results (msg, descs) ->
             (* If the answer was local, we need to embargo. *)
             begin match Core_types.Wire.Response.cap_index msg path with
-              | Some i when i >= 0 && i < RO_array.length descs ->
-                begin match RO_array.get descs i with
-                  | `ReceiverAnswer _ | `ReceiverHosted _ -> true
-                  | `SenderPromise _ | `SenderHosted _ -> false
-                  | `ThirdPartyHosted _ -> failwith "todo: answer_cap_needs_disembargo: ThirdPartyHosted"
-                  | `None -> false
-                end
-              | _ -> false
+              | None -> false
+              | Some i ->
+                match RO_array.get ~oob:`None descs i with
+                | `ReceiverAnswer _ | `ReceiverHosted _ -> true
+                | `SenderPromise _ | `SenderHosted _ -> false
+                | `ThirdPartyHosted _ -> failwith "todo: answer_cap_needs_disembargo: ThirdPartyHosted"
+                | `None -> false
             end;
           | `ResultsSentElsewhere -> false      (* Results are remote, so no embargo needed *)
           | `TakeFromOtherQuestion _ -> true    (* Remote will forward back to our answer *)
@@ -244,7 +243,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Resolver p -> Core_types.resolve_payload p payload
       | `Released ->
         match payload with
-        | Ok (_, caps) -> RO_array.iter Core_types.dec_ref caps
+        | Ok payload -> Core_types.Response_payload.release payload
         | Error _ -> ()
 
     let v ~params_for_release ~remote_promise id =
@@ -525,10 +524,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
           match answer#response with
           | None -> Debug.failf "Answer %a is resolved, but no response recorded!" pp t
           | Some (Error _) as e -> e
-          | Some (Ok (msg, _)) ->
+          | Some (Ok msg) ->
             match Core_types.Wire.Response.cap_index msg path with
             | Some i when i >= 0 && i < RO_array.length resolve_targets ->
-              Some (Ok (RO_array.get resolve_targets i))
+              Some (Ok (RO_array.get_exn resolve_targets i))
             | Some i -> Some (Error (Error.exn "Invalid answer cap index %d" i))
             | None -> Some (Ok `None)
 
@@ -699,7 +698,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     val bootstrap : t -> struct_resolver -> Question.t
 
     val call : t -> struct_resolver ->
-      message_target_cap -> Wire.Request.t -> Core_types.cap RO_array.t ->
+      message_target_cap -> Wire.Request.t ->
       results_to:EP.Out.send_results_to ->
       Question.t
 
@@ -809,8 +808,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
                );
       t.queue_send (`Resolve (Export.id ex, Error problem))
 
-    let call t remote_promise (target : message_target_cap) msg caps ~results_to =
+    let call t remote_promise (target : message_target_cap) msg ~results_to =
       let broken_caps = Queue.create () in
+      let caps = Core_types.Request_payload.snapshot_caps msg in
       let descs = RO_array.map (export ~broken_caps t) caps in
       let question = Questions.alloc t.questions
           (Question.v ~params_for_release:(exports_of descs) ~remote_promise)
@@ -827,23 +827,24 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let qid = Question.id question in
       Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
                    pp_cap target
-                   Core_types.Request_payload.pp (msg, caps));
+                   Core_types.Request_payload.pp msg);
       t.queue_send (`Call (qid, message_target, msg, descs, results_to));
       resolve_broken t broken_caps;
       question
 
-    let return_results t answer (msg, caps) =
+    let return_results t answer msg =
+      let caps = Core_types.Response_payload.snapshot_caps msg in
       let aid = Answer.id answer in
       let caps = RO_array.map (fun c -> c#shortest) caps in
       Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
-                   Core_types.Response_payload.pp (msg, caps));
-      RO_array.iter Core_types.inc_ref caps;        (* Copy everything stored in [answer]. *)
+                   Core_types.Response_payload.pp msg);
+      RO_array.iter Core_types.inc_ref caps;        (* Copy everything stored in [msg]. *)
       let broken_caps = Queue.create () in
       let descs = RO_array.map (export ~broken_caps t) caps in
       let exports_for_release = exports_of descs in
       let resolve_targets = RO_array.map (get_resolve_target t) caps in
       Answer.return_resolved answer ~exports_for_release ~resolve_targets;
-      RO_array.iter dec_ref caps;
+      RO_array.iter Core_types.dec_ref caps;
       let ret = `Results (msg, descs) in
       Log.info (fun f -> f ~tags:(with_aid aid t) "Wire results: %a" Out.pp_return ret);
       t.queue_send (`Return (aid, ret, false));
@@ -907,20 +908,20 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Release_resolve_targets targets -> RO_array.iter (release_resolve_target t) targets
     | `Question_actions (q, actions) -> apply_question_actions t q actions
 
-  (* Note: takes ownership of [caps] *)
-  let rec send_call t target (results:Core_types.struct_resolver) msg caps =
+  (* Note: takes ownership of [msg] *)
+  let rec send_call t target (results:Core_types.struct_resolver) msg =
     match results#sealed_dispatch CapTP_results with
     | Some (_, answer) when not (Answer.needs_return answer) ->
       (* The only reason for making this call is to answer a cancelled question (we already
          replied to it to confirm the cancellation). No-one cares about the answer, so do nothing. *)
-      RO_array.iter dec_ref caps;
+      Core_types.Request_payload.release msg;
       Core_types.resolve_exn results Exception.cancelled (* (might be useful for debugging) *)
     | Some (t', answer) when t == t' ->
       let remote_promise = make_remote_promise t in
       (* [results] is at [target]. We can tell the peer to send the results to itself directly. *)
       let question = Send.call t (remote_promise :> Core_types.struct_resolver)
-          target msg caps ~results_to:`Yourself in
-      RO_array.iter dec_ref caps;
+          target msg ~results_to:`Yourself in
+      Core_types.Request_payload.release msg;
       remote_promise#set_question question;
       Answer.return_take_from_question answer question;
       let aid = Answer.id answer in
@@ -931,8 +932,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | _ ->
       let remote_promise = make_remote_promise t in
       let question = Send.call t (remote_promise :> Core_types.struct_resolver)
-          target msg caps ~results_to:`Caller in
-      RO_array.iter dec_ref caps;
+          target msg ~results_to:`Caller in
+      Core_types.Request_payload.release msg;
       remote_promise#set_question question;
       results#resolve (remote_promise :> Core_types.struct_ref)
 
@@ -954,11 +955,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
           Question.release_proxy q |> apply_question_actions t q
         )
 
-      method do_pipeline question i results msg caps =
+      method do_pipeline question i results msg =
         match question with
         | Some target_q ->
           let target = `QuestionCap (target_q, i) in
-          send_call t target results msg caps
+          send_call t target results msg
         | None -> failwith "Not initialised!"
 
       method on_resolve q _ =
@@ -1107,9 +1108,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
           val id = Debug.OID.next ()
 
-          method call results msg caps =
+          method call results msg =
             self#check_refcount;
-            send_call t message_target results msg caps
+            send_call t message_target results msg
 
           method pp f =
             if settled then
@@ -1168,21 +1169,24 @@ module Make (EP : Message_types.ENDPOINT) = struct
        local object [x]. Create an embargo proxy for [x] and send a disembargo
        for it down [old_path]. *)
     let local_embargo t ~old_path x =
-      let embargo = Cap_proxy.local_promise () in
-      (* Store in table *)
-      inc_ref embargo;
-      let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
-      (* Send disembargo request *)
-      let disembargo_request = `Loopback (old_path, embargo_id) in
-      Log.info (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
-                   x#pp
-                   EP.Out.pp_disembargo_request disembargo_request
-               );
-      disembargo t disembargo_request;
-      (* We don't store [x], because when the reply comes back further disembargoes
-         may be needed. *)
-      dec_ref x;
-      (embargo :> Core_types.cap)
+      if x#problem <> None then x (* Don't embargo errors *)
+      else (
+        let embargo = Cap_proxy.local_promise () in
+        (* Store in table *)
+        inc_ref embargo;
+        let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
+        (* Send disembargo request *)
+        let disembargo_request = `Loopback (old_path, embargo_id) in
+        Log.info (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
+                     x#pp
+                     EP.Out.pp_disembargo_request disembargo_request
+                 );
+        disembargo t disembargo_request;
+        (* We don't store [x], because when the reply comes back further disembargoes
+           may be needed. *)
+        dec_ref x;
+        (embargo :> Core_types.cap)
+      )
 
     let maybe_embargo t ~old_path x =
       match old_path with
@@ -1233,8 +1237,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
                requested path then send a disembargo request to it. If not, we can't embargo,
                because the peer has no way to return the response, but we don't need to for errors. *)
             match Core_types.Response_payload.field payload path with
-            | Error (`Invalid_index _) -> answer_promise#cap path (* Don't embargo errors *)
-            | Ok _ -> maybe_embargo t ~old_path:embargo_path (answer_promise#cap path)
+            | None -> answer_promise#cap path (* Don't embargo None *)
+            | Some c -> dec_ref c; maybe_embargo t ~old_path:embargo_path (answer_promise#cap path)
         end
       | `None -> Core_types.null
       | `ThirdPartyHosted _ -> failwith "todo: import"
@@ -1301,16 +1305,17 @@ module Make (EP : Message_types.ENDPOINT) = struct
             | `Promise answer_promise -> `Local (answer_promise#cap path)
       in
       let caps = RO_array.map (import t) descs in
+      let msg = Core_types.Request_payload.with_caps caps msg in
       match target with
       | `Local target ->
         Log.info (fun f -> f ~tags:t.tags "Handling call: (%t).call %a"
-                     target#pp Core_types.Request_payload.pp (msg, caps));
-        target#call answer_resolver msg caps;  (* Takes ownership of [caps]. *)
+                     target#pp Core_types.Request_payload.pp msg);
+        target#call answer_resolver msg;  (* Takes ownership of [caps]. *)
         dec_ref target
       | #message_target_cap as target ->
         Log.info (fun f -> f ~tags:t.tags "Forwarding call: (%a).call %a"
-                     pp_message_target_cap target Core_types.Request_payload.pp (msg, caps));
-        send_call t target answer_resolver msg caps
+                     pp_message_target_cap target Core_types.Request_payload.pp msg);
+        send_call t target answer_resolver msg
 
     let bootstrap t id =
       let promise, answer_resolver = Local_struct_promise.make () in
@@ -1319,8 +1324,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let results =
         match t.bootstrap with
           | Some service ->
-            Core_types.inc_ref service;
-            Ok (Wire.Response.bootstrap, RO_array.of_list [service])
+            let msg =
+              Wire.Response.bootstrap ()
+              |> Core_types.Response_payload.with_caps (RO_array.of_list [with_inc_ref service])
+            in
+            Ok msg
           | None ->
             Error (Error.exn "No bootstrap service available")
       in
@@ -1345,7 +1353,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       match ret with
       | `Results (msg, descs) ->
         let caps = return_results t question msg descs in
-        `Results (msg, caps)
+        `Results (Core_types.Response_payload.with_caps caps msg)
       | #Error.t as err -> err
       | `ResultsSentElsewhere -> `ResultsSentElsewhere
       | `AcceptFromThirdParty -> failwith "todo: AcceptFromThirdParty"
@@ -1372,11 +1380,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
       (* Any disembargo requests have now been sent, so we may finish the question. *)
       Question.return question ret |> apply_question_actions t question;
       begin match ret2 with
-        | `Results (msg, caps) ->
+        | `Results msg ->
           Log.info (fun f -> f ~tags:(with_qid qid t) "Got results: %a"
-                       Core_types.Response_payload.pp (msg, caps)
+                       Core_types.Response_payload.pp msg
                    );
-          Question.resolve question (Ok (msg, caps))
+          Question.resolve question (Ok msg)
         | `TakeFromCancelledQuestion -> () (* Ignore response to cancelled Question *)
         | `TakeFromOtherQuestion (other, remote_promise) ->
           (* (we have added a ref on [other]) *)
@@ -1398,7 +1406,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                   begin match payload with
                     | Error _ as e ->
                       Core_types.resolve_payload embargo_resolver e;
-                    | Ok (msg, caps) ->
+                    | Ok msg ->
                       let embargoes_needed = caps_used ~msg paths_used in
                       let maybe_embargo cap_index cap =
                         inc_ref cap;
@@ -1408,7 +1416,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
                           let old_path = Question.message_target question path in
                           local_embargo t ~old_path cap
                       in
-                      Core_types.resolve_ok embargo_resolver msg (RO_array.mapi maybe_embargo caps);
+                      let caps = Core_types.Response_payload.snapshot_caps msg |> RO_array.mapi maybe_embargo in
+                      Core_types.resolve_ok embargo_resolver
+                        (Core_types.Response_payload.with_caps caps msg)
                   end;
                   dec_ref other;
                   Question.dec_ref question |> apply_question_actions t question

@@ -13,18 +13,34 @@ module String_content = struct
     let root = 0
   end
 
+  type request
+  type response = request
+  type 'a msg = {
+    data : string;
+    caps : Capnp_rpc.S.attachments;
+  }
+
   module Request = struct
-    type t = string
-    let pp = Fmt.string
+    type t = request msg
+
+    let pp f t = Fmt.string f t.data
     let cap_index _ i = Some i
+
+    let attachments t = t.caps
+
+    let v data = {
+      data;
+      caps = Capnp_rpc.S.No_attachments;
+    }
+
+    let data t = t.data
+
+    let bootstrap () = v "(boot)"
+
+    let with_attachments caps t = { t with caps }
   end
 
-  module Response = struct
-    type t = string
-    let pp = Fmt.string
-    let cap_index _ i = Some i
-    let bootstrap = "(boot)"
-  end
+  module Response = Request
 
   let ref_leak_detected fn =
     fn ();

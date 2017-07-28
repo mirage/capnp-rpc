@@ -14,7 +14,7 @@ let to_cap_index = function
 let rec walk ss x = function
   | Field x2 :: xs -> walk (ReaderOps.get_struct ss x) x2 xs
   | [] ->
-    ReaderOps.get_interface ss x |> to_cap_index
+    ReaderOps.get_interface (fun _ i -> Uint32.to_int i) ss x
 
 let resolve payload path =
   let open Schema.Reader in
@@ -23,4 +23,3 @@ let resolve payload path =
   | Field x :: xs ->
     let ss = Payload.content_get payload |> ReaderOps.deref_opt_struct_pointer in
     walk ss x xs
-

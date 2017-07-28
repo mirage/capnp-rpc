@@ -16,23 +16,16 @@ module StructRef : sig
       results are available, they are released. *)
 end
 
-module rec Payload : sig
+module Payload : sig
   type 'a t
   (** An ['a t] is a request or response payload: a struct and a cap table.
       To read the struct, use the one of the generated [_of_payload] methods. *)
-
-  type 'a index = private Uint32.t
-
-  val import : 'a t -> 'b index -> 'b Capability.t
-  (** [import t i] is the capability at index [i] in the table.
-      Use the generated field accessors to get [i].
-      This increases the ref-count on the capability - call [dec_ref] when done with it. *)
 
   val release : 'a t -> unit
   (** [release t] releases the payload, by reducing the ref-count on each capability in it. *)
 end
 
-and Capability : sig
+module Capability : sig
   type 'a t
   (** An ['a t] is a capability reference to a service of type ['a]. *)
 
@@ -51,12 +44,6 @@ and Capability : sig
 
     val create_no_args : unit -> 'a t
     (** [create_no_args ()] is a payload with no content. *)
-
-    val export : 'a t -> 'b capability_t -> 'b Payload.index
-    (** [export t cap] adds [cap] to the payload's CapDescriptor table and returns
-        its index. You can use the index with the generated setter.
-        The request increases the ref-count on [cap]. If you decide not to send
-        the message, use [release] to free it. *)
 
     val release : 'a t -> unit
     (** Clear the exported refs, dropping their ref-counts. This is called automatically
@@ -126,12 +113,6 @@ module Service : sig
     val create_empty : unit -> 'a t
     (** [empty ()] is an empty response. *)
 
-    val export : 'a t -> 'b Capability.t -> 'b Payload.index
-    (** [export t cap] adds [cap] to the payload's CapDescriptor table and returns
-        its index. You can use the index with the generated setter.
-        The response increases the ref-count of [cap]. It will be released when
-        the message is sent. If the message is not sent, you must release it. *)
-
     val release : 'a t -> unit
     (** Clear the exported refs, dropping their ref-counts. This is called automatically
         when you send a message, but you might need it if you decide to abort. *)
@@ -180,7 +161,9 @@ module Untyped : sig
 
   val local : #generic_service -> 'a Capability.t
 
-  val cap_index : Uint32.t option -> _ Payload.index option
+  val get_cap : Capnp.MessageSig.attachments -> Uint32.t -> _ Capability.t
+  val add_cap : Capnp.MessageSig.attachments -> _ Capability.t -> Uint32.t
+  val clear_cap : Capnp.MessageSig.attachments -> Uint32.t -> unit
 
   val unknown_interface : interface_id:Uint64.t -> abstract_method_t
   val unknown_method : interface_id:Uint64.t -> method_id:int -> abstract_method_t

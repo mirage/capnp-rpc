@@ -8,18 +8,18 @@ module Make (C : S.CORE_TYPES) = struct
 
     val name = "local-promise"
 
-    method private do_pipeline q i results msg caps =
+    method private do_pipeline q i results msg =
       (* We add an extra resolver here so that we can report [self]
          as the blocker. *)
       match results#set_blocker (self :> C.base_ref) with
       | Error `Cycle ->
-        RO_array.iter C.dec_ref caps;
+        C.Request_payload.release msg;
         C.resolve_exn results (Exception.v "Attempt to use pipelined call's result as pipeline target!")
       | Ok () ->
         q |> Queue.add (fun p ->
             results#clear_blocker;
             let cap = p#cap i in
-            cap#call results msg caps;
+            cap#call results msg;
             C.dec_ref cap
           )
 

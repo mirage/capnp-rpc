@@ -1,7 +1,7 @@
 open Capnp_core
 open Lwt.Infix
 
-module Log = Rpc.Log
+module Log = Capnp_rpc.Debug.Log
 
 module Response = Response
 module RO_array = Capnp_rpc.RO_array
@@ -9,7 +9,7 @@ module RO_array = Capnp_rpc.RO_array
 type abstract_response_promise = Core_types.struct_ref
 
 type abstract_method_t =
-  Schema.Reader.Payload.t * Core_types.cap RO_array.t -> abstract_response_promise
+  Schema.Reader.Payload.t -> abstract_response_promise
 
 type 'a response_promise = abstract_response_promise
 type ('a, 'b) method_t = abstract_method_t
@@ -30,15 +30,15 @@ let local (s:#generic) =
 
     method! private release = s#release
 
-    method call results call caps =
+    method call results msg =
       let open Schema.Reader in
-      let call = Rpc.readable_req call in
+      let call = Msg.Request.readable msg in
       let interface_id = Call.interface_id_get call in
       let method_id = Call.method_id_get call in
       Log.info (fun f -> f "Invoking local method %a" pp_method (interface_id, method_id));
       let p = Call.params_get call in
       let m = s#dispatch ~interface_id ~method_id in
-      match m (p, caps) with
+      match m p with
       | r -> results#resolve r
       | exception ex ->
         Log.warn (fun f -> f "Uncaught exception handling %a: %a" pp_method (interface_id, method_id) Fmt.exn ex);
@@ -48,8 +48,7 @@ let local (s:#generic) =
 
 (* The simple case for returning a message (rather than another value). *)
 let return resp =
-  let resp, caps = Response.finish resp in
-  Core_types.return (resp, caps)
+  Core_types.return @@ Response.finish resp
 
 let return_empty () =
   return @@ Response.create_empty ()
@@ -62,15 +61,12 @@ let return_lwt fn =
   Lwt.async (fun () ->
       Lwt.catch (fun () ->
           fn () >|= function
-          | Ok resp ->
-            let msg, caps = Response.finish resp in
-            Core_types.resolve_ok resolver msg caps
-          | Error _ as e ->
-            Core_types.resolve_payload resolver e
+          | Ok resp      -> Core_types.resolve_ok resolver @@ Response.finish resp;
+          | Error _ as e -> Core_types.resolve_payload resolver e
         )
         (fun ex ->
            Log.warn (fun f -> f "Uncaught exception: %a" Fmt.exn ex);
-           Core_types.resolve_exn resolver (Capnp_rpc.Exception.v "Internal error");
+           Core_types.resolve_exn resolver @@ Capnp_rpc.Exception.v "Internal error";
            Lwt.return_unit
         );
     );

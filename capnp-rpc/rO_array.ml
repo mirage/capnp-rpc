@@ -1,13 +1,18 @@
 type 'a t = 'a array
 
+let init = Array.init
 let of_list = Array.of_list
-let get t i = t.(i)
+let get_exn t i = t.(i)
 let length = Array.length
 let map = Array.map
 let mapi = Array.mapi
 let iter = Array.iter
 let iteri = Array.iteri
 let fold_left = Array.fold_left
+
+let get ~oob t i =
+  if i < 0 || i >= Array.length t then oob
+  else Array.get t i
 
 let find fn t =
   let rec loop i =

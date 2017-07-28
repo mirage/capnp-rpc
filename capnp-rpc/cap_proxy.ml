@@ -12,7 +12,7 @@ module Make(C : S.CORE_TYPES) = struct
 
   (* Operations to perform when resolved. *)
   type pending =
-    | Call of C.struct_resolver * Wire.Request.t * cap RO_array.t
+    | Call of C.struct_resolver * Wire.Request.t
     | Watcher of (cap -> unit)
 
   type unresolved = {
@@ -34,10 +34,10 @@ module Make(C : S.CORE_TYPES) = struct
 
       method private release_while_unresolved = ()
 
-      method call results msg caps =
+      method call results msg =
         match state with
-        | Unresolved {queue; rc = _} -> Queue.add (Call (results, msg, caps)) queue
-        | Resolved cap -> cap#call results msg caps
+        | Unresolved {queue; rc = _} -> Queue.add (Call (results, msg)) queue
+        | Resolved cap -> cap#call results msg
 
       method update_rc d =
         match state with
@@ -75,7 +75,7 @@ module Make(C : S.CORE_TYPES) = struct
           Log.info (fun f -> f "Resolved local cap promise: %t" self#pp);
           let forward = function
             | Watcher fn -> C.inc_ref cap; fn cap
-            | Call (result, msg, caps) -> cap#call result msg caps
+            | Call (result, msg) -> cap#call result msg
           in
           Queue.iter forward queue;
         | Resolved _ -> failwith "Already resolved!"

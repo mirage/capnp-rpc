@@ -1,9 +1,10 @@
 open Capnp_direct.Core_types
+open Capnp_direct.String_content
 
 val summary_of_msg :
   [< `Bootstrap of _
   | `Abort of _
-  | `Call of _ * _ * string * _ * _
+  | `Call of _ * _ * Request.t * _ * _
   | `Disembargo_reply of _
   | `Disembargo_request of _
   | `Finish of _
@@ -14,7 +15,7 @@ val summary_of_msg :
        [< `AcceptFromThirdParty
        | `Cancelled
        | `Exception of Capnp_rpc.Exception.t
-       | `Results of string * _
+       | `Results of Response.t * _
        | `ResultsSentElsewhere
        | `TakeFromOtherQuestion of _] *
        _

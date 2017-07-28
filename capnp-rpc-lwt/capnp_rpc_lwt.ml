@@ -3,20 +3,14 @@ open Capnp_core
 
 type 'a or_error = ('a, Capnp_rpc.Error.t) result
 
-module Log = Rpc.Log
+module Log = Capnp_rpc.Debug.Log
 module RO_array = Capnp_rpc.RO_array
 
 module Payload = struct
-  type 'a t = Schema.Reader.Payload.t * Core_types.cap RO_array.t
-  type 'a index = Uint32.t
+  type 'a t = Schema.Reader.Payload.t
 
-  let import (t:'a t) i =
-    let cap = RO_array.get (snd t) (Uint32.to_int i) in       (* TODO: out-of-bounds *)
-    Core_types.inc_ref cap;
-    cap
-
-  let release (_, caps) =
-    RO_array.iter Core_types.dec_ref caps
+  let release t =
+    Core_types.Attachments.release_caps (Msg.attachments_of_payload t)
 end
 
 module Capability = struct
@@ -25,38 +19,29 @@ module Capability = struct
   type ('t, 'a, 'b) method_t = Uint64.t * int
 
   module Request = Request
-  module Response = Payload
 
   let inc_ref = Core_types.inc_ref
   let dec_ref = Core_types.dec_ref
   let pp f x = x#pp f
 
   let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) req =
-    let open Schema.Builder in
     Log.info (fun f -> f "Calling %a" Capnp.RPC.Registry.pp_method m);
-    let c = Request.get_call req in
     let (interface_id, method_id) = m in
-    Call.interface_id_set c interface_id;
-    Call.method_id_set_exn c method_id;
+    let msg = Request.finish ~interface_id ~method_id req in
     let results, resolver = Local_struct_promise.make () in
-    target#call resolver (Rpc.Builder c) (Request.caps req);
+    target#call resolver msg;
     results
 
-  let call_for_value cap m req =
+  let call_for_value cap m req : _ Payload.t or_error Lwt.t =
     let p, r = Lwt.task () in
     let result = call cap m req in
     let finish = lazy (Core_types.dec_ref result) in
     Lwt.on_cancel p (fun () -> Lazy.force finish);
     result#when_resolved (function
         | Error _ as e -> Lwt.wakeup r e
-        | Ok (resp, caps) ->
+        | Ok resp ->
           Lazy.force finish;
-          let open Schema.Reader in
-          let resp = Rpc.readable_resp resp in
-          match Return.get resp with
-          | Results results ->
-            Lwt.wakeup r @@ Ok (results, caps)
-          | _ -> assert false
+          Lwt.wakeup r @@ Ok (Msg.Response.readable resp)
       );
     p
 
@@ -113,7 +98,7 @@ module Untyped = struct
   let capability_field t f = t#cap [Xform.Field f]
 
   let content_of_payload (t : 'a Payload.t) : pointer_r =
-    Schema.Reader.Payload.content_get (fst t)
+    Schema.Reader.Payload.content_get t
 
   let local = Service.local
 
@@ -124,7 +109,14 @@ module Untyped = struct
 
   let abstract_method x = x
 
-  let cap_index x = x
+  let get_cap a i =
+    Core_types.Attachments.cap (Uint32.to_int i) (Msg.unwrap_attachments a)
+
+  let add_cap a cap =
+    Core_types.Attachments.add_cap (Msg.unwrap_attachments a) cap |> Uint32.of_int
+
+  let clear_cap a i =
+    Core_types.Attachments.clear_cap (Msg.unwrap_attachments a) (Uint32.to_int i)
 
   let unknown_interface ~interface_id _req =
     Core_types.fail ~ty:`Unimplemented "Unknown interface %a" Uint64.printer interface_id

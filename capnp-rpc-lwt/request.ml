@@ -2,43 +2,28 @@ open Capnp_core
 open Schema.Builder
 module RO_array = Capnp_rpc.RO_array
 
-type 'a t = {
-  msg : Message.t;
-  mutable n_exports : int;
-  mutable exports_rev : Core_types.cap list;
-}
+type 'a t = Message.t
 
 let create init =
-  let msg = Message.init_root () in
+  let msg = Message.init_root () |> with_attachments (Msg.wrap_attachments (Core_types.Attachments.builder ())) in
   let call = Message.call_init msg in
   let p = Call.params_get call in
   let content = init (Payload.content_get p) in
-  {msg; n_exports = 0; exports_rev = []}, content
+  msg, content
 
 let create_no_args () =
   let msg = Message.init_root () in
   ignore (Message.call_init msg);
-  {msg; n_exports = 0; exports_rev = []}
+  msg
 
-let export t cap =
-  Core_types.inc_ref cap;
-  let i = t.n_exports in
-  t.n_exports <- i + 1;
-  t.exports_rev <- cap :: t.exports_rev;
-  Uint32.of_int i
-
-let get_call t =
-  match Message.get t.msg with
-  | Message.Call c -> c
-  | _ -> failwith "Not a call!"
-
-let caps t =
-  let caps = List.rev t.exports_rev |> RO_array.of_list in
-  t.n_exports <- 0;
-  t.exports_rev <- [];
-  caps
+let finish ~interface_id ~method_id t =
+  match Message.get t with
+  | Message.Call c ->
+    let msg = Msg.Request.of_builder c in
+    Call.interface_id_set c interface_id;
+    Call.method_id_set_exn c method_id;
+    msg
+  | _ -> assert false
 
 let release t =
-  List.iter Core_types.dec_ref t.exports_rev;
-  t.n_exports <- 0;
-  t.exports_rev <- []
+  Core_types.Attachments.release_caps (Msg.unwrap_attachments (get_attachments t))

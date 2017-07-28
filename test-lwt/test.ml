@@ -155,18 +155,20 @@ let test_cancel switch =
   Echo.Client.unblock service >|= fun () ->
   Capability.dec_ref service
 
+let float = Alcotest.testable Fmt.float (=)
+
 let test_calculator switch =
   let open Calc in
   let cs = run_server ~switch ~service:Calc.service () in
   let c = get_bootstrap cs in
-  Client.evaluate c (Float 1.) |> Client.final_read >|= Alcotest.(check float) "Simple calc" 1. >>= fun () ->
+  Client.evaluate c (Float 1.) |> Client.final_read >|= Alcotest.check float "Simple calc" 1. >>= fun () ->
   let local_add = Calc.add in
   let expr = Call (local_add, [Float 1.; Float 2.]) in
-  Client.evaluate c expr |> Client.final_read >|= Alcotest.(check float) "Complex with local fn" 3. >>= fun () ->
+  Client.evaluate c expr |> Client.final_read >|= Alcotest.check float "Complex with local fn" 3. >>= fun () ->
   let remote_add = Calc.Client.getOperator c `Add in
-  Calc.Client.call remote_add [5.; 3.] >|= Alcotest.(check float) "Check fn" 8. >>= fun () ->
+  Calc.Client.call remote_add [5.; 3.] >|= Alcotest.check float "Check fn" 8. >>= fun () ->
   let expr = Call (remote_add, [Float 1.; Float 2.]) in
-  Client.evaluate c expr |> Client.final_read >|= Alcotest.(check float) "Complex with remote fn" 3. >>= fun () ->
+  Client.evaluate c expr |> Client.final_read >|= Alcotest.check float "Complex with remote fn" 3. >>= fun () ->
   Capability.dec_ref remote_add;
   Capability.dec_ref c;
   Lwt.return ()

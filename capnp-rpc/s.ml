@@ -1,8 +1,31 @@
 type 'a brand = ..
+type attachments = ..
+
+type attachments += No_attachments
+
+module type WIRE_PAYLOAD = sig
+  type t
+  (** A message payload.
+      This is typically a byte array of some kind, plus a way of attaching capabilities. *)
+
+  type path
+
+  val pp : t Fmt.t
+
+  val cap_index : t -> path -> int option
+  (** [cap_index msg path] is the capability index at [path]. *)
+
+  val attachments : t -> attachments
+  val with_attachments : attachments -> t -> t
+end
 
 module type WIRE = sig
   (** The core RPC logic can be used with different serialisation systems.
       The appropriate types should be provided here. *)
+
+  type request
+  type response
+  type 'a msg
 
   module Path : sig
     (** A field in a message that refers to a capability. *)
@@ -15,29 +38,13 @@ module type WIRE = sig
     val pp : t Fmt.t
   end
 
-  module Request : sig
-    type t
-    (** The content part of a request message payload.
-        This is typically a byte array of some kind (no pointers). *)
-
-    val pp : t Fmt.t
-
-    val cap_index : t -> Path.t -> int option
-    (** [cap_index msg path] is the capability index at [path]. *)
-  end
+  module Request : WIRE_PAYLOAD with type t = request msg and type path := Path.t
 
   module Response : sig
-    type t
-    (** The content part of a response message payload.
-        This is typically a byte array of some kind (no pointers). *)
+    include WIRE_PAYLOAD with type t = response msg and type path := Path.t
 
-    val bootstrap : t
+    val bootstrap : unit -> t
     (** The (empty) content for the reply to the bootstrap message. *)
-
-    val pp : t Fmt.t
-
-    val cap_index : t -> Path.t -> int option
-    (** [cap_index msg path] is the capability index at [path]. *)
   end
 
   val ref_leak_detected : (unit -> unit) -> unit
@@ -50,6 +57,30 @@ module type WIRE = sig
       called at a safe point (e.g. when returning to the main loop).
       Unit-tests may wish to call [fn] immediately to show the error and then
       fail the test. *)
+end
+
+module type PAYLOAD = sig
+  (* Wraps [WIRE_PAYLOAD] to deal with caps rather than attachments. *)
+
+  type t
+  type cap
+  type path
+
+  val snapshot_caps : t -> cap RO_array.t
+
+  val field : t -> path -> cap option
+  (** [field t path] looks up [path] in the message and returns the capability at that index.
+      Returns [None] if the field wasn't set. Returns a broken capability if an index was
+      given but does not exist (i.e. the message is corrupted). Increases the ref-count on the result. *)
+
+  val with_caps : cap RO_array.t -> t -> t
+  (** [with_caps caps t] is a copy of [t] with a new set of capabilities.
+      This is useful to implement [TakeFromOtherQuestion], where the message is the same but
+      embargoes may be needed, and to break cycles. *)
+
+  val release : t -> unit
+
+  val pp : t Fmt.t
 end
 
 module type CORE_TYPES = sig
@@ -93,11 +124,11 @@ module type CORE_TYPES = sig
   class type struct_ref = object
     inherit base_ref
 
-    method when_resolved : ((Wire.Response.t * cap RO_array.t) or_error -> unit) -> unit
+    method when_resolved : (Wire.Response.t or_error -> unit) -> unit
     (** [r#when_resolved fn] queues up [fn] to be called on the result, when it arrives.
         If the result has already arrived, [fn] is called immediately. *)
 
-    method response : (Wire.Response.t * cap RO_array.t) or_error option
+    method response : Wire.Response.t or_error option
     (** [r#response] is [Some payload] if the response has arrived,
         or [None] if we're still waiting. *)
 
@@ -115,8 +146,8 @@ module type CORE_TYPES = sig
   and cap = object
     inherit base_ref
 
-    method call : struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit   (* Takes ownership of [caps] *)
-    (** [c#call results msg args] invokes a method on [c]'s target and eventually resolves [results]
+    method call : struct_resolver -> Wire.Request.t -> unit   (* Takes ownership of [caps] *)
+    (** [c#call results msg] invokes a method on [c]'s target and eventually resolves [results]
         with the answer. *)
 
     method shortest : cap
@@ -161,30 +192,29 @@ module type CORE_TYPES = sig
   end
   (** A [struct_resolver] can be used to resolve some promise. *)
 
-  module Request_payload : sig
-    type t = Wire.Request.t * cap RO_array.t
-    (** The payload of a request or response message. *)
+  module Attachments : sig
+    val builder : unit -> attachments
+    (** [builder ()] is a fresh writable attachments array. *)
 
-    val field : t -> Wire.Path.t -> (cap, [`Invalid_index of int]) result
-    (** [field t path] looks up [path] in the message and returns the capability at that index.
-        Returns [Ok null] if the field wasn't set. *)
+    val cap : int -> attachments -> cap
+    (** [cap i t] is the capability at index [i] in [t]. The reference count is increased by one. *)
 
-    val pp : t Fmt.t
+    val clear_cap : attachments -> int -> unit
+    (** Replace cap at index [i] with [null] and dec_ref it. *)
+
+    val add_cap : attachments -> cap -> int
+    (** [add_cap t cap] stores [cap] in [t]. [t] must have been created by [builder].
+        Increases the ref-count on [cap] by one. *)
+
+    val release_caps : attachments -> unit
+    (** [release_caps a] decreases the ref-count of every capability in [a]. *)
   end
 
-  module Response_payload : sig
-    type t = Wire.Response.t * cap RO_array.t
-    (** The payload of a request or response message. *)
+  module Request_payload : PAYLOAD with type t = Wire.Request.t and type cap := cap and type path := Wire.Path.t
+  (** The payload of a request message. *)
 
-    val field : t -> Wire.Path.t -> (cap, [`Invalid_index of int]) result
-    (** [field t path] looks up [path] in the message and returns the capability at that index.
-        Returns [Ok null] if the field wasn't set. *)
-
-    val field_or_err : t -> Wire.Path.t -> cap
-    (** Like [field], but returns a broken cap on error. *)
-
-    val pp : t Fmt.t
-  end
+  module Response_payload : PAYLOAD with type t = Wire.Response.t and type cap := cap and type path := Wire.Path.t
+  (** The payload of a response message. *)
 
   class virtual ref_counted : object
     method private virtual release : unit
@@ -209,7 +239,7 @@ module type CORE_TYPES = sig
   class virtual service : object
     inherit base_ref
     inherit ref_counted
-    method virtual call : struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit (* Takes ownership of [caps] *)
+    method virtual call : struct_resolver -> Wire.Request.t -> unit (* Takes ownership of message. *)
     method shortest : cap
     method private release : unit
     method when_more_resolved : (cap -> unit) -> unit
@@ -240,9 +270,9 @@ module type CORE_TYPES = sig
   val resolve_payload : #struct_resolver -> Response_payload.t or_error -> unit
   (** [resolve_payload r x] is [r#resolve (resolved x)]. [r] takes ownership of [x]. *)
 
-  val resolve_ok : #struct_resolver -> Wire.Response.t -> cap RO_array.t -> unit
-  (** [resolve_ok r msg caps] is [resolve_payload r (Ok (msg, caps))].
-      [r] takes ownership of [caps]. *)
+  val resolve_ok : #struct_resolver -> Wire.Response.t -> unit
+  (** [resolve_ok r msg] is [resolve_payload r (Ok msg)].
+      [r] takes ownership of [msg]. *)
 
   val resolve_exn : #struct_resolver -> Exception.t -> unit
   (** [resolve_exn r exn] is [resolve_payload r (Error (`Exception exn))]. *)

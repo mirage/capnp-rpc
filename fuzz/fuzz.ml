@@ -72,6 +72,13 @@ type cap_ref_counters = {
 let pp_counters f {next_to_send; next_expected; _} = Fmt.pf f "{send=%d; expect=%d}" next_to_send next_expected
 
 module Msg = struct
+  type 'a msg = {
+    contents : 'a;
+    attachments : Capnp_rpc.S.attachments;
+  }
+
+  let pp_msg pp_contents f {contents; attachments = _} = pp_contents f contents
+
   module Path = struct
     type t = int
     let compare = compare
@@ -80,7 +87,7 @@ module Msg = struct
   end
 
   module Request = struct
-    type t = {
+    type contents = {
       sender : OID.t;
       sending_step : int;
       target : Direct.cap;
@@ -89,24 +96,46 @@ module Msg = struct
       arg_ids : Direct.cap RO_array.t;
       answer : Direct.struct_ref;
     }
-    let pp f {sender; sending_step; seq; counters; _} = Fmt.pf f "{call_id=%a:%d; cap_ref=%a; sending_step=%d}"
+
+    type t = contents msg
+
+    let pp_contents f {sender; sending_step; seq; counters; _} =
+      Fmt.pf f "{call_id=%a:%d; cap_ref=%a; sending_step=%d}"
         OID.pp sender seq
         pp_counters counters
         sending_step
 
+    let pp = pp_msg pp_contents
+
     let cap_index _ i = Some i
 
-    let mark_cancelled t =
-      if t.seq < t.counters.next_expected then ()       (* Already delivered *)
-      else t.counters.cancelled <- IntSet.add t.seq t.counters.cancelled
+    let mark_cancelled {contents; _} =
+      if contents.seq < contents.counters.next_expected then ()       (* Already delivered *)
+      else contents.counters.cancelled <- IntSet.add contents.seq contents.counters.cancelled
+
+    let with_attachments attachments x = {x with attachments}
+    let attachments x = x.attachments
+
+    let v ~target ~sender ~sending_step ~counters ~seq ~answer ~arg_ids =
+      let contents = { target; sender; sending_step;
+                       counters; seq; answer; arg_ids } in
+      { contents; attachments = Capnp_rpc.S.No_attachments }
   end
 
   module Response = struct
-    type t = string
-    let pp = Fmt.string
+    type contents = string
+    type t = contents msg
+    let pp = pp_msg Fmt.string
     let cap_index _ i = Some i
-    let bootstrap = "(boot)"
+    let bootstrap () = {contents = "(boot)"; attachments = Capnp_rpc.S.No_attachments}
+    let with_attachments attachments x = {x with attachments}
+    let attachments x = x.attachments
+    let v contents =
+      { contents; attachments = Capnp_rpc.S.No_attachments }
   end
+
+  type request = Request.contents
+  type response = Response.contents
 
   let ref_leak_detected fn =
     fn ();
@@ -115,8 +144,8 @@ module Msg = struct
   let summary = function
     | `Abort _ -> "abort"
     | `Bootstrap _ -> "bootstrap"
-    | `Call (_, _, msg, _, _) -> Fmt.strf "call:%a:%d" OID.pp msg.Request.sender msg.Request.seq
-    | `Return (_, `Results (msg, _), _) -> "return:" ^ msg
+    | `Call (_, _, msg, _, _) -> Fmt.strf "call:%a:%d" OID.pp msg.contents.Request.sender msg.contents.Request.seq
+    | `Return (_, `Results (msg, _), _) -> "return:" ^ msg.contents
     | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
     | `Return (_, `Cancelled, _) -> "return:(cancelled)"
     | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
@@ -385,8 +414,12 @@ module Vat = struct
                     (RO_array.pp Core_types.pp) args
                     OID.pp sender counters.next_to_send
                     Direct.pp_struct answer);
-      let msg = { Msg.Request.target; sender; sending_step = !step;
-                  counters; seq = counters.next_to_send; answer; arg_ids } in
+      let msg =
+        Msg.Request.v
+          ~target ~sender ~sending_step:!step ~counters ~seq:counters.next_to_send
+          ~answer ~arg_ids
+        |> Core_types.Request_payload.with_caps args
+      in
       let answer_var = OID.next () in
       let results, resolver = Local_struct_promise.make () in
       WrapArray.add state.structs {Struct_info.sr = results; direct = answer; var = answer_var; call = msg};
@@ -397,7 +430,7 @@ module Vat = struct
                (Fmt.Dump.list pp_var) arg_refs
            );
       counters.next_to_send <- succ counters.next_to_send;
-      cap#call resolver msg args
+      cap#call resolver msg
 
   (* Reply to a random question. *)
   let do_answer state () =
@@ -419,7 +452,8 @@ module Vat = struct
             "reply"
             (Fmt.Dump.list pp_inc_var) arg_refs
         );
-      Core_types.resolve_ok answer "reply" args
+      let reply = Msg.Response.v "reply" |> Core_types.Response_payload.with_caps args in
+      Core_types.resolve_ok answer reply
       (* TODO: reply with another promise or with an error *)
 
   let test_service ~target:self_id vat =
@@ -435,9 +469,9 @@ module Vat = struct
 
       method pp_var f = Fmt.pf f "service_%a" OID.pp id
 
-      method call results msg caps =
+      method call results msg =
         super#check_refcount;
-        let {Msg.Request.target; sender; sending_step = _; counters; seq; arg_ids; answer} = msg in
+        let {Msg.Request.target; sender; sending_step = _; counters; seq; arg_ids; answer} = msg.Msg.contents in
         if not (Direct.equal target self_id) then
           failf "Call received by %a, but expected target was %a (answer %a)"
             Direct.pp self_id
@@ -453,6 +487,7 @@ module Vat = struct
         counters.next_expected <- succ counters.next_expected;
         let answer_var = OID.next () in
         begin
+          let caps = Core_types.Request_payload.snapshot_caps msg in
           match RO_array.length caps with
           | 0 -> 
             code (fun f -> Fmt.pf f "let %a = %t#pop0 %S in"
@@ -467,7 +502,7 @@ module Vat = struct
                      expected_msg
                  );
             caps |> RO_array.iteri (fun i c ->
-                let target = RO_array.get arg_ids i in
+                let target = RO_array.get_exn arg_ids i in
                 let cr = make_cap_ref ~target c in
                 code (fun f -> Fmt.pf f "let %a = RO_array.get args %d in" pp_var cr i);
                 WrapArray.add vat.caps cr

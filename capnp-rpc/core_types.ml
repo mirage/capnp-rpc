@@ -19,13 +19,13 @@ module Make(Wire : S.WIRE) = struct
 
   class type struct_ref = object
     inherit base_ref
-    method when_resolved : ((Response.t * cap RO_array.t) or_error -> unit) -> unit
-    method response : (Response.t * cap RO_array.t) or_error option
+    method when_resolved : (Response.t or_error -> unit) -> unit
+    method response : Response.t or_error option
     method cap : Path.t -> cap
   end
   and cap = object
     inherit base_ref
-    method call : struct_resolver -> Request.t -> cap RO_array.t -> unit   (* Takes ownership of [caps] *)
+    method call : struct_resolver -> Request.t -> unit   (* Takes ownership of message *)
     method shortest : cap
     method when_more_resolved : (cap -> unit) -> unit
     method problem : Exception.t option
@@ -41,6 +41,9 @@ module Make(Wire : S.WIRE) = struct
   let pp_cap_list f caps = RO_array.pp pp f caps
 
   type 'a S.brand += Gc : unit S.brand
+
+  type S.attachments += RO_caps of cap RO_array.t
+  type S.attachments += RW_caps of cap Dyn_array.t
 
   let inc_ref x = x#update_rc 1
   let dec_ref x = x#update_rc (-1)
@@ -92,8 +95,13 @@ module Make(Wire : S.WIRE) = struct
     end
 
   let rec broken_cap ex = object (self : cap)
-    method call results _ caps =
-      RO_array.iter dec_ref caps;
+    method call results msg =
+      begin match Request.attachments msg with
+      | S.No_attachments -> ()
+      | RO_caps caps -> RO_array.iter dec_ref caps
+      | RW_caps caps -> Dyn_array.iter dec_ref caps; Dyn_array.reset caps
+      | _ -> failwith "Unknown attachment type!"
+      end;
       results#resolve (broken_struct (`Exception ex))
     method update_rc _ = ()
     method pp f = Exception.pp f ex
@@ -128,7 +136,7 @@ module Make(Wire : S.WIRE) = struct
     | None -> Ok null (* The field wasn't set - OK *)
     | Some i when i < 0 || i >= RO_array.length caps -> Error (`Invalid_index i)
     | Some i ->
-      let cap = RO_array.get caps i in
+      let cap = RO_array.get ~oob:null caps i in
       if cap == null then Error (`Invalid_index i)  (* Index was marked as unused *)
       else Ok cap
 
@@ -148,66 +156,122 @@ module Make(Wire : S.WIRE) = struct
     | Ok p -> cap_in_payload i p
     | Error e -> cap_of_err e
 
-  module Request_payload = struct
-    type t = Request.t * cap RO_array.t
-    let pp f (msg, caps) = Fmt.pf f "@[%a%a@]" Request.pp msg pp_cap_list caps
+  module Attachments = struct
+    let dispatch ~ro ~rw = function
+      | RO_caps caps -> ro caps
+      | RW_caps caps -> rw caps
+      | S.No_attachments -> ro RO_array.empty
+      | _ -> failwith "Unknown attachment type!"
 
-    let field (msg, caps) path =
-      let i = Request.cap_index msg path in
-      cap_in_cap_list i caps
-  end
+    let pp f = function
+      | RO_caps caps -> pp_cap_list f caps
+      | RW_caps caps -> Dyn_array.pp pp f caps
+      | S.No_attachments -> ()
+      | _ -> Fmt.string f "Unknown attachment type!"
 
-  module Response_payload = struct
-    type t = Response.t * cap RO_array.t
-    let pp f (msg, caps) = Fmt.pf f "@[%a%a@]" Response.pp msg pp_cap_list caps
+    let iter f =
+      dispatch
+        ~ro:(RO_array.iter f)
+        ~rw:(Dyn_array.iter f)
 
-    let field (msg, caps) path =
-      let i = Response.cap_index msg path in
-      cap_in_cap_list i caps
+    let snapshot =
+      dispatch
+        ~ro:(fun caps -> caps)
+        ~rw:Dyn_array.snapshot
 
-    let field_or_err (msg, caps) path =
-      let i = Response.cap_index msg path in
-      cap_in_cap_list_or_err i caps
-  end
+    let oob = broken_cap (Exception.v "Invalid capability index!")
 
-  let return (msg, caps) = object (self : struct_ref)
-    inherit ref_counted as super
-
-    val mutable caps = caps
-
-    val id = Debug.OID.next ()
-
-    method response = Some (Ok (msg, caps))
-
-    method when_resolved fn = fn (Ok (msg, caps))
-
-    method cap path =
-      let i = Response.cap_index msg path in
-      let cap = cap_in_cap_list_or_err i caps in
+    let cap i t =
+      let cap =
+        dispatch t
+          ~ro:(fun caps -> RO_array.get ~oob caps i)
+          ~rw:(fun caps -> Dyn_array.get ~oob caps i)
+      in
       inc_ref cap;
       cap
 
-    method pp f = Fmt.pf f "returned(%a, %t):%a"
+    let rw_caps =
+      dispatch
+        ~rw:(fun caps -> caps)
+        ~ro:(fun _ -> failwith "This message is read-only!")
+
+    let add_cap t cap =
+      let caps = rw_caps t in
+      let i = Dyn_array.length caps in
+      inc_ref cap;
+      Dyn_array.add caps cap;
+      i
+
+    let clear_cap t i =
+      let old = Dyn_array.replace (rw_caps t) i null in
+      dec_ref old
+
+    let release_caps = iter dec_ref
+
+    let builder () = RW_caps (Dyn_array.create 4 ~unused:null)
+  end
+
+  module Payload (M : S.WIRE_PAYLOAD with type path := Wire.Path.t) = struct
+    type t = M.t
+
+    let snapshot_caps t = M.attachments t |> Attachments.snapshot
+
+    let with_caps caps t =
+      M.with_attachments (RO_caps caps) t
+
+    let release t =
+      M.attachments t |> Attachments.release_caps
+
+    let pp f msg =
+      Fmt.pf f "@[%a%a@]" M.pp msg Attachments.pp (M.attachments msg)
+
+    let field msg path =
+      match M.cap_index msg path with
+      | None -> None
+      | Some i -> Some (Attachments.cap i (M.attachments msg))
+
+    let check_invariants t =
+      M.attachments t |> Attachments.iter (fun c -> c#check_invariants)
+  end
+
+  module Request_payload = Payload(Wire.Request)
+  module Response_payload = Payload(Wire.Response)
+
+  let return msg = object (self : struct_ref)
+    inherit ref_counted as super
+
+    val id = Debug.OID.next ()
+
+    method response = Some (Ok msg)
+
+    method when_resolved fn = fn (Ok msg)
+
+    method cap path =
+      match Response_payload.field msg path with
+      | None -> null
+      | Some cap -> cap
+
+    method pp f =
+      Fmt.pf f "returned(%a, %t):%a"
         Debug.OID.pp id
         self#pp_refcount
-        Response_payload.pp (msg, caps)
+        Response_payload.pp msg
 
     method private release =
-      RO_array.iter dec_ref caps;
-      caps <- RO_array.empty;
+      Response_payload.release msg;
       ignore (Sys.opaque_identity self) (* Prevent self from being GC'd until this point *)
 
     method blocker = None
 
     method! check_invariants =
       super#check_invariants;
-      RO_array.iter (fun c -> c#check_invariants) caps
+      Response_payload.check_invariants msg
   end
 
   class virtual service = object (self : #cap)
     inherit ref_counted
 
-    method virtual call : struct_resolver -> Request.t -> cap RO_array.t -> unit
+    method virtual call : struct_resolver -> Request.t -> unit
     method private release = ()
     method pp f = Fmt.string f "<service>"
     method shortest = (self :> cap)
@@ -225,6 +289,6 @@ module Make(Wire : S.WIRE) = struct
     | Error msg -> broken_struct msg
 
   let resolve_payload (r:#struct_resolver) (x:Response_payload.t or_error) = r#resolve (resolved x)
-  let resolve_ok r msg caps = resolve_payload r (Ok (msg, caps))
+  let resolve_ok r msg = resolve_payload r (Ok msg)
   let resolve_exn r ex = resolve_payload r (Error (`Exception ex))
 end

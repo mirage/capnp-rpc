@@ -28,7 +28,7 @@ let async_tagged label fn =
 
 let pp_msg f call =
   let open Reader in
-  let call = Rpc.readable_req call in
+  let call = Msg.Request.readable call in
   let interface_id = Call.interface_id_get call in
   let method_id = Call.method_id_get call in
   Capnp.RPC.Registry.pp_method f (interface_id, method_id)
