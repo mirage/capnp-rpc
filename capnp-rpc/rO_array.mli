@@ -1,7 +1,9 @@
 type 'a t
 
 val of_list : 'a list -> 'a t
-val get : 'a t -> int -> 'a
+val init : int -> (int -> 'a) -> 'a t
+val get_exn : 'a t -> int -> 'a
+val get : oob:'a -> 'a t -> int -> 'a
 val length : 'a t -> int
 val map : ('a -> 'b) -> 'a t -> 'b t
 val mapi : (int -> 'a -> 'b) -> 'a t -> 'b t

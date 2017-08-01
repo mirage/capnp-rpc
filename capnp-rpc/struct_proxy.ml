@@ -16,7 +16,7 @@ module Make (C : S.CORE_TYPES) = struct
   class type struct_ref_internal = object
     inherit struct_resolver
 
-    method pipeline : Wire.Path.t -> C.struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit
+    method pipeline : Wire.Path.t -> C.struct_resolver -> Wire.Request.t -> unit
     method field_update_rc : Wire.Path.t -> int -> unit
 
     method field_blocker : Wire.Path.t -> base_ref option
@@ -99,10 +99,10 @@ module Make (C : S.CORE_TYPES) = struct
 
       val id = Debug.OID.next ()
 
-      method call results msg caps =
+      method call results msg =
         match state with
-        | PromiseField (p, path) -> p#pipeline path results msg caps
-        | ForwardingField c -> c#call results msg caps
+        | PromiseField (p, path) -> p#pipeline path results msg
+        | ForwardingField c -> c#call results msg
 
       method pp f =
         match state with
@@ -171,7 +171,7 @@ module Make (C : S.CORE_TYPES) = struct
     method private virtual pp_unresolved : 'promise Fmt.t
 
     method private virtual do_pipeline : 'promise ->
-      Wire.Path.t -> C.struct_resolver -> Wire.Request.t -> cap RO_array.t -> unit
+      Wire.Path.t -> C.struct_resolver -> Wire.Request.t -> unit
 
     method private virtual on_resolve : 'promise -> struct_ref -> unit
     (* We have just started forwarding. Send any queued data onwards. *)
@@ -184,10 +184,10 @@ module Make (C : S.CORE_TYPES) = struct
     method private field_resolved _f = ()
     (** [field_resolved f] is called when [f] has been resolved. *)
 
-    method pipeline path results msg caps =
+    method pipeline path results msg =
       dispatch state
-        ~unresolved:(fun x -> self#do_pipeline x.target path results msg caps)
-        ~forwarding:(fun x -> (x#cap path)#call results msg caps)
+        ~unresolved:(fun x -> self#do_pipeline x.target path results msg)
+        ~forwarding:(fun x -> (x#cap path)#call results msg)
 
     method response =
       dispatch state
@@ -263,16 +263,17 @@ module Make (C : S.CORE_TYPES) = struct
             cycle_err "Resolving:@,  %t@,with:@,  %t" self#pp x#pp
           else match x#response with
             | Some (Error _) | None -> x
-            | Some (Ok (msg, caps)) ->
+            | Some (Ok payload) ->
               (* Only break the fields which have cycles, not the whole promise.
                  Otherwise, it can lead to out-of-order delivery where a message
                  that should have been delivered to a working target instead gets
                  dropped. Note also that fields can depend on other fields. *)
+              let caps = C.Response_payload.snapshot_caps payload in
               let detector_caps = Array.make (RO_array.length caps) cycle_marker in
-              u.cycle_detector <- Some (msg, detector_caps);
+              u.cycle_detector <- Some (payload, detector_caps);
               let break_cycles c =
                 for i = 0 to Array.length detector_caps - 1 do
-                  detector_caps.(i) <- RO_array.get caps i
+                  detector_caps.(i) <- RO_array.get_exn caps i
                 done;
                 if c#blocker = Some (self :> C.base_ref) then
                   C.broken_cap (Exception.v (Fmt.strf "<cycle: %t>" c#pp))
@@ -283,7 +284,7 @@ module Make (C : S.CORE_TYPES) = struct
               else (
                 RO_array.iter C.inc_ref fixed_caps;
                 C.dec_ref x;
-                C.return (msg, fixed_caps)
+                C.return @@ C.Response_payload.with_caps fixed_caps payload
               )
         in
         state <- Forwarding x;
@@ -357,9 +358,9 @@ module Make (C : S.CORE_TYPES) = struct
         | Error (`Exception e) -> fn (C.broken_cap e)
         | Error `Cancelled -> fn (C.broken_cap Exception.cancelled)
         | Ok payload ->
-          let cap = C.Response_payload.field_or_err payload i in
-          C.inc_ref cap;
-          fn cap
+          match C.Response_payload.field payload i with
+          | None -> fn C.null
+          | Some cap -> fn cap
       in
       dispatch state
         ~unresolved:(fun u -> Queue.add (fun p -> p#when_resolved fn) u.when_resolved)

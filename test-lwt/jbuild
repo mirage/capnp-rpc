@@ -9,5 +9,5 @@
   ((name runtest)
    (package capnp-rpc-lwt)
    (deps (test.bc))
-   (action (run ${<} -ev)))
+   (action (run ${<})))
 )

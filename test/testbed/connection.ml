@@ -1,4 +1,6 @@
 module RO_array = Capnp_rpc.RO_array
+module Request = Capnp_direct.String_content.Request
+module Response = Capnp_direct.String_content.Response
 
 let src = Logs.Src.create "test-net" ~doc:"Cap'n Proto RPC tests"
 module Log = (val Logs.src_log src: Logs.LOG)
@@ -9,8 +11,8 @@ let stats_t = Alcotest.of_pp Stats.pp
 let summary_of_msg = function
   | `Abort _ -> "abort"
   | `Bootstrap _ -> "bootstrap"
-  | `Call (_, _, msg, _, _) -> "call:" ^ msg
-  | `Return (_, `Results (msg, _), _) -> "return:" ^ msg
+  | `Call (_, _, msg, _, _) -> "call:" ^ (Request.data msg)
+  | `Return (_, `Results (msg, _), _) -> "return:" ^ (Response.data msg)
   | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
   | `Return (_, `Cancelled, _) -> "return:(cancelled)"
   | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
@@ -61,8 +63,8 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   }
 
   let pp_msg f = function
-    | #EP.In.t as msg -> EP.In.pp_recv Fmt.string f msg
-    | `Unimplemented out -> Fmt.pf f "Unimplemented(%a)" (EP.Out.pp_recv Fmt.string) out
+    | #EP.In.t as msg -> EP.In.pp_recv Request.pp f msg
+    | `Unimplemented out -> Fmt.pf f "Unimplemented(%a)" (EP.Out.pp_recv Request.pp) out
 
   let dump f t =
     Fmt.pf f "%a@,%a"
@@ -81,14 +83,15 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 
   let pop_msg ?expect t =
     match Queue.pop t.recv_queue with
-    | exception Queue.Empty -> Alcotest.fail "No messages found!"
+    | exception Queue.Empty ->
+      Alcotest.fail (Fmt.strf "No messages found! (expecting %a)" Fmt.(option string) expect)
     | msg ->
       begin match msg with
         | #EP.In.t as msg ->
           let tags = EP.In.with_qid_tag (Conn.tags t.conn) msg in
-          Log.info (fun f -> f ~tags "<- %a" (EP.In.pp_recv Fmt.string) msg)
+          Log.info (fun f -> f ~tags "<- %a" (EP.In.pp_recv Request.pp) msg)
         | `Unimplemented out ->
-          Log.info (fun f -> f ~tags:(Conn.tags t.conn) "<- Unimplemented(%a)" (EP.Out.pp_recv Fmt.string) out)
+          Log.info (fun f -> f ~tags:(Conn.tags t.conn) "<- Unimplemented(%a)" (EP.Out.pp_recv Request.pp) out)
       end;
       match expect with
       | None -> msg

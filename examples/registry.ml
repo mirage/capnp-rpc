@@ -30,17 +30,16 @@ let service () =
       let module P = Api.Reader.Registry.SetEchoService_params in
       match P.service_get (P.of_payload params) with
       | None -> assert false
-      | Some s ->
+      | Some new_service ->
         Capability.dec_ref echo_service;
-        echo_service <- Payload.import params s;
+        echo_service <- new_service;
         Payload.release params;
         Service.return_empty ()
 
     method echo_service_impl _params =
       let module R = Api.Builder.Registry.EchoService_results in
       let resp, results = Service.Response.create R.init_pointer in
-      let cap_index = Service.Response.export resp echo_service in
-      R.service_set results (Some cap_index);
+      R.service_set results (Some echo_service);
       Service.return_lwt (fun () ->
         fst blocked >|= fun () -> Ok resp
       )
@@ -49,9 +48,8 @@ let service () =
       let module R = Api.Builder.Registry.EchoServicePromise_results in
       let resp, results = Service.Response.create R.init_pointer in
       let promise, resolver = Capability.promise () in
-      let cap_index = Service.Response.export resp promise in
+      R.service_set results (Some promise);
       Capability.dec_ref promise;
-      R.service_set results (Some cap_index);
       Lwt.async (fun () ->
           fst blocked >|= fun () ->
           Capability.inc_ref echo_service;
@@ -79,8 +77,8 @@ let service () =
       let module Foo = Api.Builder.Foo in
       let module Bar = Api.Builder.Bar in
       let _b2 = Foo.b_init f1 in
-      Foo.echo_set f1 (Some (Service.Response.export resp echo_service));
-      Bar.version_set b1 (Some (Service.Response.export resp version_service));
+      Foo.echo_set f1 (Some echo_service);
+      Bar.version_set b1 (Some version_service);
       Service.return resp
   end
 
@@ -88,7 +86,7 @@ module Client = struct
   let set_echo_service t echo_service =
     let module P = Api.Builder.Registry.SetEchoService_params in
     let req, p = Capability.Request.create P.init_pointer in
-    P.service_set p (Some (Capability.Request.export req echo_service));
+    P.service_set p (Some echo_service);
     Capability.call_for_value t Api.Reader.Registry.set_echo_service_method req >|= ignore
 
   (* Waits until unblocked before returning *)

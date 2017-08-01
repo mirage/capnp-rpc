@@ -70,7 +70,7 @@ let message : Endpoint_types.Out.t -> _ =
     Bootstrap.question_id_set boot (QuestionId.uint32 qid);
     Message.to_message b
   | `Call (qid, target, request, descs, results_to) ->
-    let c = Rpc.writable_req request in
+    let c = Msg.Request.writable request in
     Call.question_id_set c (QuestionId.uint32 qid);
     set_target (Call.target_init c) target;
     let p = Call.params_get c in
@@ -116,7 +116,7 @@ let message : Endpoint_types.Out.t -> _ =
       match return with
       | `Results (msg, descs) ->
         (* [msg] has payload filled in, but nothing else. *)
-        let ret = Rpc.writable_resp msg in
+        let ret = Msg.Response.writable msg in
         write_caps_array descs (results_of_return ret);
         ret
       | `Exception ex ->

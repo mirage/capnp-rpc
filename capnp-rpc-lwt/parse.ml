@@ -6,8 +6,8 @@ module Reader = Schema.Reader
 module Log = Capnp_rpc.Debug.Log
 
 module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
-  module Msg = Capnp_rpc.Message_types.Make(Core_types)(T)
-  open Msg
+  module Message_types = Capnp_rpc.Message_types.Make(Core_types)(T)
+  open Message_types
 
   let parse_xform x =
     let open Reader.PromisedAnswer.Op in
@@ -60,7 +60,7 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
       match Return.get return with
       | Return.Results results ->
         let descs = parse_descs (Payload.cap_table_get_list results |> RO_array.of_list) in
-        `Results (Rpc.Readonly return, descs)
+        `Results (Msg.Response.of_reader return, descs)
       | Return.Exception ex -> `Exception (parse_exn ex)
       | Return.Canceled -> `Cancelled
       | Return.ResultsSentElsewhere -> `ResultsSentElsewhere
@@ -92,7 +92,7 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
     let descs = parse_descs (Payload.cap_table_get_list p |> RO_array.of_list) in
     (* Get target *)
     let target = parse_target (Call.target_get call) in
-    let msg = Rpc.Readonly call in
+    let msg = Msg.Request.of_reader call in
     let results_to =
       let r = Call.send_results_to_get call in
       let open Call.SendResultsTo in

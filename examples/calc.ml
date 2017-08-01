@@ -16,21 +16,18 @@ let or_fail msg = function
   | None -> failwith msg
 
 (* Write an expression into a message, exporting function capabilities. *)
-let rec write_expr ~req b expr =
+let rec write_expr b expr =
   let open Api.Builder.Calculator in
-  let export x = Capability.Request.export req x in
   match expr with
   | Float f -> Expression.literal_set b f
-  | Prev v ->
-    let i = export v in
-    Expression.previous_result_set b (Some i)
+  | Prev v -> Expression.previous_result_set b (Some v)
   | Param i -> Expression.parameter_set b (Uint32.of_int i)
   | Call (f, args) ->
     let c = Expression.call_init b in
-    Expression.Call.function_set c (Some (export f));
+    Expression.Call.function_set c (Some f);
     let args_b = Expression.Call.params_init c (List.length args) in
     args |> List.iteri (fun i arg ->
-        write_expr ~req (Capnp.Array.get args_b i) arg
+        write_expr (Capnp.Array.get args_b i) arg
       )
 
 (* A more user-friendly API for the Calculator interface *)
@@ -39,7 +36,7 @@ module Client = struct
     let module P = Api.Builder.Calculator.Evaluate_params in
     let module R = Api.Reader.Calculator.Evaluate_results in
     let req, p = Capability.Request.create P.init_pointer in
-    write_expr ~req (P.expression_init p) expr;
+    write_expr (P.expression_init p) expr;
     Capability.call_for_caps t Api.Reader.Calculator.evaluate_method req R.value_get_pipelined
 
   let getOperator t op =
@@ -182,17 +179,16 @@ let sub = binop ( -. )
 let mul = binop ( *. )
 let div = binop ( /. )
 
-let rec parse_expr ~req r =
+let rec parse_expr r =
   let open Api.Reader.Calculator in
   match Expression.get r with
   | Expression.Literal f -> Float f
   | Expression.PreviousResult None -> failwith "PreviousResult but no cap!"
-  | Expression.PreviousResult (Some v) -> Prev (Payload.import req v)
+  | Expression.PreviousResult (Some v) -> Prev v
   | Expression.Parameter p -> Param (Uint32.to_int p)
   | Expression.Call c ->
-    let fn_i = Expression.Call.function_get c |> or_fail "Missing fn" in
-    let fn_obj = Payload.import req fn_i in
-    let params = Expression.Call.params_get_list c |> List.map (parse_expr ~req) in
+    let fn_obj = Expression.Call.function_get c |> or_fail "Missing fn" in
+    let params = Expression.Call.params_get_list c |> List.map parse_expr in
     Call (fn_obj, params)
   | Expression.Undefined _ ->
     failwith "Unknown expression type"
@@ -208,26 +204,24 @@ let service =
       let module R = Api.Builder.Calculator.DefFunction_results in
       let params = P.of_payload req in
       let n_args = P.param_count_get_int_exn params in
-      let body = P.body_get params |> parse_expr ~req in
+      let body = P.body_get params |> parse_expr in
       let fn_obj = fn n_args body in
       release_expr body;
       let resp, results = Service.Response.create R.init_pointer in
-      let fn_id = Service.Response.export resp fn_obj in
-      R.func_set results (Some fn_id);
+      R.func_set results (Some fn_obj);
       Service.return resp
 
     method evaluate_impl req =
       let module P = Api.Reader.Calculator.Evaluate_params in
       let module R = Api.Builder.Calculator.Evaluate_results in
       let params = P.of_payload req in
-      let expr = parse_expr ~req (P.expression_get params) in
+      let expr = parse_expr (P.expression_get params) in
       Payload.release req;
       let value_obj = eval expr in
       release_expr expr;
       let resp, results = Service.Response.create R.init_pointer in
-      let value_id = Service.Response.export resp value_obj in
+      R.value_set results (Some value_obj);
       Capability.dec_ref value_obj;
-      R.value_set results (Some value_id);
       Service.return resp
 
     method get_operator_impl req =
@@ -244,7 +238,6 @@ let service =
         | O.Undefined _ -> failwith "Unknown operator"
       in
       let resp, results = Service.Response.create R.init_pointer in
-      let op_id = Service.Response.export resp op_obj in
-      R.func_set results (Some op_id);
+      R.func_set results (Some op_obj);
       Service.return resp
   end
