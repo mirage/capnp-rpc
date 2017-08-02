@@ -1,6 +1,8 @@
 open Capnp_core
 open Lwt.Infix
 
+module ReaderOps = Capnp.Runtime.ReaderInc.Make(Capnp.BytesMessage)
+
 module Log = Capnp_rpc.Debug.Log
 
 module Response = Response
@@ -8,11 +10,13 @@ module RO_array = Capnp_rpc.RO_array
 
 type abstract_response_promise = Core_types.struct_ref
 
+type abstract
+
 type abstract_method_t =
-  Schema.Reader.Payload.t -> abstract_response_promise
+  abstract Schema.reader_t -> (unit -> unit) -> abstract_response_promise
 
 type 'a response_promise = abstract_response_promise
-type ('a, 'b) method_t = abstract_method_t
+type ('a, 'b) method_t = 'a -> (unit -> unit) -> Core_types.struct_ref
 
 let pp_method = Capnp.RPC.Registry.pp_method
 
@@ -37,10 +41,14 @@ let local (s:#generic) =
       let method_id = Call.method_id_get call in
       Log.info (fun f -> f "Invoking local method %a" pp_method (interface_id, method_id));
       let p = Call.params_get call in
-      let m = s#dispatch ~interface_id ~method_id in
-      match m p with
+      let m : abstract_method_t = s#dispatch ~interface_id ~method_id in
+      let release_params () = Core_types.Request_payload.release msg in
+      let contents : abstract Schema.reader_t =
+        Payload.content_get p |> ReaderOps.deref_opt_struct_pointer |> ReaderOps.cast_struct in
+      match m contents release_params with
       | r -> results#resolve r
       | exception ex ->
+        release_params ();
         Log.warn (fun f -> f "Uncaught exception handling %a: %a" pp_method (interface_id, method_id) Fmt.exn ex);
         Core_types.resolve_payload results
           (Error (Capnp_rpc.Error.exn "Internal error from %a" pp_method (interface_id, method_id)))

@@ -14,3 +14,7 @@ val find : ('a -> bool) -> 'a t -> 'a option
 val empty : 'a t
 val pp : 'a Fmt.t -> 'a t Fmt.t
 val equal : ('a -> 'a -> bool) -> 'a t -> 'a t -> bool
+
+val release : 'a t -> 'a -> unit
+(** [release t null] replaces every element in the array with [null].
+    This is useful to mark the array as finished. *)

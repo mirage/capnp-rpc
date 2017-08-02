@@ -79,6 +79,8 @@ module type PAYLOAD = sig
       embargoes may be needed, and to break cycles. *)
 
   val release : t -> unit
+  (** [release t] frees all the capabilities attached to this message.
+      It is safe to call this multiple times; only the first call has any effect. *)
 
   val pp : t Fmt.t
 end

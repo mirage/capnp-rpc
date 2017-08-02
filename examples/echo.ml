@@ -15,11 +15,11 @@ let service () =
 
     method! pp f = Fmt.pf f "echo-service(%a)" Capnp_rpc.Debug.OID.pp id
 
-    method ping_impl = fun req ->
+    method ping_impl params release_params =
       let module P = Api.Reader.Echo.Ping_params in
       let module R = Api.Builder.Echo.Ping_results in
-      let params = P.of_payload req in
       let msg = P.msg_get params in
+      release_params ();
       let resp, results = Service.Response.create R.init_pointer in
       R.reply_set results (Fmt.strf "got:%d:%s" count msg);
       count <- count + 1;
@@ -30,7 +30,8 @@ let service () =
       )
       else Service.return resp
 
-    method unblock_impl _ =
+    method unblock_impl _ release_params =
+      release_params ();
       Lwt.wakeup (snd blocked) ();
       blocked <- Lwt.wait ();
       Service.return_empty ()
@@ -45,10 +46,9 @@ module Client = struct
     let req, p = Capability.Request.create P.init_pointer in
     P.slow_set p slow;
     P.msg_set p msg;
-    Capability.call_for_value_exn t Api.Reader.Echo.ping_method req >|= fun resp ->
-    R.of_payload resp |> R.reply_get
+    Capability.call_for_value_exn t Api.Reader.Echo.ping_method req >|= R.reply_get
 
   let unblock t =
     let req = Capability.Request.create_no_args () in
-    Capability.call_for_value t Api.Reader.Echo.unblock_method req >|= ignore
+    Capability.call_for_unit_exn t Api.Reader.Echo.unblock_method req
 end
