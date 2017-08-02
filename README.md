@@ -1,6 +1,6 @@
 ## OCaml Cap'n'Proto RPC library
 
-Status: RPC Level 1 with two-party networking is now usable.
+Status: RPC Level 1 with two-party networking is working.
 
 Copyright 2017 Docker, Inc.
 Released under the [Apache 2.0 license](LICENSE).
@@ -51,7 +51,7 @@ To build, you will need a platform with the capnproto package available (e.g. De
 
     git clone https://github.com/mirage/capnp-rpc.git
     cd capnp-rpc
-    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces2"
+    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces4"
     opam pin add -nyk git capnp-rpc .
     opam pin add -nyk git capnp-rpc-lwt .
     opam depext capnp-rpc-lwt alcotest
@@ -65,7 +65,7 @@ If you have trouble building, you can build it with Docker from a known-good sta
 
 ### Structure of the library
 
-The code is split into two libraries:
+The code is split into three libraries:
 
 - `capnp-rpc` contains the logic of the [Cap'n Proto RPC Protocol][], but does not depend on any particular serialisation.
   The tests in the `test` directory test the logic using a simple representation where messages are OCaml data-structures
@@ -74,7 +74,9 @@ The code is split into two libraries:
 - `capnp-rpc-lwt` instantiates the `capnp-rpc` functor using the Cap'n Proto serialisation for messages and Lwt for concurrency.
   The tests in `test-lwt` test this by sending Cap'n Proto messages over a Unix-domain socket.
 
-Users of the library will normally want to use `capnp-rpc-lwt`.
+- `capnp-rpc-unix` adds helper functions for parsing command-line arguments and setting up connections over Unix sockets.
+
+Users of the library will normally want to use `capnp-rpc-lwt` and, in most cases, `capnp-rpc-unix`.
 
 ### Testing
 
