@@ -1,4 +1,8 @@
+module Message = Capnp.Message.BytesMessage
+
 type 'a or_error = ('a, Capnp_rpc.Error.t) result
+
+type 'a reader_t = 'a Message.StructStorage.reader_t
 
 module StructRef : sig
   type 'a t
@@ -16,15 +20,6 @@ module StructRef : sig
       results are available, they are released. *)
 end
 
-module Payload : sig
-  type 'a t
-  (** An ['a t] is a request or response payload: a struct and a cap table.
-      To read the struct, use the one of the generated [_of_payload] methods. *)
-
-  val release : 'a t -> unit
-  (** [release t] releases the payload, by reducing the ref-count on each capability in it. *)
-end
-
 module Capability : sig
   type 'a t
   (** An ['a t] is a capability reference to a service of type ['a]. *)
@@ -38,7 +33,7 @@ module Capability : sig
     type 'a t
     (** An ['a t] is a builder for the out-going request's payload. *)
 
-    val create : (Capnp.Message.rw Capnp.BytesMessage.Slice.t -> 'a) -> 'a t * 'a
+    val create : (Capnp.Message.rw Message.Slice.t -> 'a) -> 'a t * 'a
     (** [create init] is a fresh request payload and contents builder.
         Use one of the generated [init_pointer] functions for [init]. *)
 
@@ -58,19 +53,33 @@ module Capability : sig
       when finished with the result (consider using one of the [call_for_*] functions
       instead for a simpler interface). *)
 
-  val call_for_value : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b Payload.t or_error Lwt.t
-  (** [call_for_value m req] invokes [m ret] and waits for the response.
+  val call_and_wait : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t ->
+    ('b reader_t * (unit -> unit)) or_error Lwt.t
+  (** [call_and_wait m req] invokes [m req] and waits for the response.
       This is simpler than using [call], but doesn't support pipelining
       (you can't use any capabilities in the response in another message until the
       response arrives).
-      Call [Payload.release] when done with the results, to release any capabilities it might
+      On success, it returns [Ok (response, release_response_caps)].
+      Call [release_response_caps] when done with the results, to release any capabilities it might
       contain that you didn't use (remembering that future versions of the protocol might add
       new optional capabilities you don't know about yet).
+      If you don't need any capabilities from the result, consider using [call_for_value] instead.
       Doing [Lwt.cancel] on the result will send a cancel message to the target
       for remote calls. *)
 
-  val call_for_value_exn : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b Payload.t Lwt.t
+  val call_for_value : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> 'b reader_t or_error Lwt.t
+  (** [call_for_value m req] is similar to [call_and_wait], but automatically
+      releases any capabilities in the response before returning. Use this if
+      you aren't expecting any capabilities in the response. *)
+
+  val call_for_value_exn : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> 'b reader_t Lwt.t
   (** Wrapper for [call_for_value] that turns errors in Lwt failures. *)
+
+  val call_for_unit : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> unit or_error Lwt.t
+  (** Wrapper for [call_for_value] that ignores the result. *)
+
+  val call_for_unit_exn : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> unit Lwt.t
+  (** Wrapper for [call_for_unit] that raises an exception on error. *)
 
   val call_for_caps : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> ('b StructRef.t -> 'c) -> 'c
   (** [call_for_caps] is a wrapper for [call] that passes the results to a
@@ -100,13 +109,17 @@ module Capability : sig
 end
 
 module Service : sig
-  type ('a, 'b) method_t = 'a Payload.t -> 'b StructRef.t
+  type ('a, 'b) method_t = 'a -> (unit -> unit) -> 'b StructRef.t
+  (** An ('a, 'b) method_t is a method implementation that takes
+      a reader for the parameters and
+      a function to release the capabilities in the parameters,
+      and returns a promise for the results. *)
 
   module Response : sig
     type 'b t
     (** An ['a t] is a builder for the out-going response's payload. *)
 
-    val create : (Capnp.Message.rw Capnp.BytesMessage.Slice.t -> 'a) -> 'a t * 'a
+    val create : (Capnp.Message.rw Message.Slice.t -> 'a) -> 'a t * 'a
     (** [create init] is a fresh request payload and contents builder.
         Use one of the generated [init_pointer] functions for [init]. *)
 
@@ -138,13 +151,11 @@ module Untyped : sig
       schema compiler. The generated code provides type-safe wrappers for
       everything here. *)
 
-  type pointer_r = Capnp.Message.ro Capnp.BytesMessage.Slice.t option
-
-  val content_of_payload : 'a Payload.t -> pointer_r
-
   type abstract_method_t
 
-  val abstract_method : ('a, 'b) Service.method_t -> abstract_method_t
+  type 'a reader_t = 'a Message.StructStorage.reader_t
+
+  val abstract_method : ('a reader_t, 'b) Service.method_t -> abstract_method_t
 
   val define_method : interface_id:Uint64.t -> method_id:int ->
     ('t, 'a, 'b) Capability.method_t

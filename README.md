@@ -27,7 +27,7 @@ Some key features:
 
 This library should be used with the [capnp-ocaml][] schema compiler, which generates bindings from schema files.
 
-Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces3> branch, which adds support for compiling interface definitions.
+Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces4> branch, which adds support for compiling interface definitions.
 
 
 ### Status
@@ -201,11 +201,11 @@ let service =
   Api.Builder.Echo.local @@ object
     inherit Api.Builder.Echo.service
 
-    method ping_impl request =
+    method ping_impl params release_param_caps =
       let module P = Api.Reader.Echo.Ping_params in
       let module R = Api.Builder.Echo.Ping_results in
-      let params = P.of_payload request in
       let msg = P.msg_get params in
+      release_param_caps ();
       let response, results = Service.Response.create R.init_pointer in
       R.reply_set results ("echo:" ^ msg);
       Service.return response
@@ -216,12 +216,16 @@ The first line (`module Api`) instantiates the generated code to use bytes-backe
 
 `service` must provide one OCaml method for each method defined in the schema file, with `_impl` on the end of each one.
 
-There's a bit of ugly boilerplate here (maybe it will improve in future), but it's quite simple:
+There's a bit of ugly boilerplate here, but it's quite simple:
 
 - `P` is the module for reading the call's parameters.
 - `R` is the module for building the response's results.
-- `params` is the data content of the request (later, we'll see about calls with capabilities too).
+- `params` is the content of the request.
 - `msg` is the string value of the `msg` field.
+- `release_param_caps` releases any capabilities passed in the parameters.
+  In this case there aren't any, but remember that a client using some future
+  version of this protocol might pass us some optional capabilities, and so we
+  should always free them anyway.
 - `response` is the complete message to be sent back, and `results` is the data part of it.
 - `Service.Response.create R.init_pointer` creates a new response message, using `R.init_pointer` to initialise the payload contents.
 - `Service.return` returns the results immediately (like `Lwt.return`).
@@ -238,19 +242,13 @@ module Client = struct
     let module R = Api.Reader.Echo.Ping_results in
     let request, params = Capability.Request.create P.init_pointer in
     P.msg_set params msg;
-    Capability.call_for_value_exn t Echo.ping_method request >|= fun response ->
-    let results = R.of_payload response in
-    Payload.release response;
-    R.reply_get results
+    Capability.call_for_value_exn t Echo.ping_method request >|= R.reply_get
 end
 ```
 
 `Capability.call_for_value_exn` sends the request message to the service and waits for the response to arrive.
 If the response is an error, it raises an exception.
-
-`Payload.release` frees any capabilities that we were passed.
-In this case, there won't be any, but a future version of the protocol might add some optional capabilities,
-so we should release them as we don't use them.
+`R.reply_get` extracts the `reply` field of the result.
 
 With the boilerplate out of the way, we can now write a `main.ml` to test it:
 
@@ -298,11 +296,12 @@ Run `capnp compile` again to update the generated files.
 The new `heartbeat_impl` method looks like this:
 
 ```ocaml
-    method heartbeat_impl request =
+    method heartbeat_impl params release_params =
       let module P = Api.Reader.Echo.Heartbeat_params in
-      let params = P.of_payload request in
       let msg = P.msg_get params in
-      match P.callback_get params with
+      let callback = P.callback_get params in
+      release_params ();
+      match callback with
       | None -> Service.fail "No callback parameter!"
       | Some callback ->
         Lwt.async (fun () -> notify callback msg);
@@ -310,7 +309,8 @@ The new `heartbeat_impl` method looks like this:
 ```
 
 Note that all parameters in Cap'n Proto are optional, so we have to check for `callback` not being set
-(string parameters appear as `""` if not set).
+(data parameters such as `msg` get a default value from the schema, which is
+`""` for strings if not set explicitly).
 
 `notify callback msg` just sends a few messages to `callback` in a loop, and then releases it:
 
@@ -342,9 +342,11 @@ and put it into the request:
     let request, params = Capability.Request.create P.init_pointer in
     P.msg_set params msg;
     P.callback_set params (Some callback);
-    Capability.call_for_value_exn t Echo.heartbeat_method request >|= fun response ->
-    Payload.release response
+    Capability.call_for_unit_exn t Echo.heartbeat_method request
 ```
+
+`Capability.call_for_unit_exn` is a convenience wrapper around
+`Callback.call_for_value_exn` that discards the result.
 
 In `main.ml`, we can now wrap a regular OCaml function as the callback:
 
@@ -440,8 +442,8 @@ The implementation of the new method in the service is simple -
 we export the callback in the response in the same way we previously exported the client's callback in the request:
 
 ```ocaml
-    method logger_impl request =
-      Payload.release request;
+    method logger_impl _ release_params =
+      release_params ();
       let module R = Api.Builder.Echo.Logger_results in
       let response, results = Service.Response.create R.init_pointer in
       R.callback_set results (Some service_logger);
@@ -459,10 +461,10 @@ The client side is more interesting:
     Capability.call_for_caps t Echo.logger_method request R.callback_get_pipelined
 ```
 
-We could have used `call_for_value` as before,
-but that would mean waiting for the response to be sent back to us over the network before we could use it.
+We could have used `call_and_wait` here
+(which is similar to `call_for_value` but doesn't automatically discard any capabilities in the result).
+However, that would mean waiting for the response to be sent back to us over the network before we could use it.
 Instead, we use `callback_get_pipelined` to get a promise for the capability from the promise of the `logger` call's result.
-This is a `Capability.t`, just as if we'd waited for it.
 
 Note: the last argument to `call_for_caps` is a function for extracting the capabilities from the promised result.
 In the common case where you just want one and it's in the root result struct, you can just pass the accessor directly,
@@ -486,6 +488,7 @@ Service logger: Message from client
 
 In this case, we didn't wait for the `logger` call to return before using the logger.
 The RPC library pipelined the `log` call directly to the promised logger from its previous question.
+On the wire, the messages looks like "Please call the object returned in answer to my previous question".
 
 Now, let's say we'd like the server to send heartbeats to itself:
 
@@ -501,7 +504,7 @@ Here, we ask the server for its logger and then (without waiting for the reply),
 
 Previously, when we exported our local `callback` object, it arrived at the service as a proxy that sent messages back to the client over the network.
 But when we send the server's own logger back to it, the RPC system detects this and "shortens" the path;
-the capability reference that the `heartbeat` message gets is a direct reference to its own logger, which
+the capability reference that the `heartbeat` handler gets is a direct reference to its own logger, which
 it can call without using the network.
 
 For full details of the API, see the comments in `capnp-rpc-lwt/capnp_rpc_lwt.mli`.

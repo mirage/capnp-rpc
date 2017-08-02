@@ -41,3 +41,8 @@ let equal eq a b =
     in
     loop l
   )
+
+let release t v =
+  for i = 0 to Array.length t - 1 do
+    t.(i) <- v;
+  done

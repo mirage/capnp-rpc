@@ -206,7 +206,12 @@ module Make(Wire : S.WIRE) = struct
       let old = Dyn_array.replace (rw_caps t) i null in
       dec_ref old
 
-    let release_caps = iter dec_ref
+    let released = broken_cap (Exception.v "Capabilities have already been released!")
+
+    let release_caps =
+      dispatch
+        ~ro:(fun caps -> RO_array.iter dec_ref caps; RO_array.release caps released)
+        ~rw:(fun caps -> Dyn_array.iter dec_ref caps; Dyn_array.reset caps)
 
     let builder () = RW_caps (Dyn_array.create 4 ~unused:null)
   end
