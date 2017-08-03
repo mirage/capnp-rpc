@@ -2,7 +2,7 @@ module Log = Capnp_rpc.Debug.Log
 module B = Schema.Builder
 module R = Schema.Reader
 module RO_array = Capnp_rpc.RO_array
-module Message = Capnp.Message.BytesMessage.Message
+module StructStorage = Capnp.Message.BytesMessage.StructStorage
 
 type Capnp.MessageSig.attachments += RPC_attachments of Capnp_rpc.S.attachments
 
@@ -13,11 +13,11 @@ module Path = struct
   let root = []
 end
 
-type request = Schema.struct_Call_9469473312751832276
-type response = Schema.struct_Return_11392333052105676602
+type request = [`Call_9469473312751832276]
+type response = [`Return_11392333052105676602]
 type 'a msg =
-  | Builder of 'a Schema.builder_t
-  | Readonly of 'a Schema.reader_t
+  | Builder of 'a StructStorage.builder_t
+  | Readonly of 'a StructStorage.reader_t
 (* We can sometimes avoid a copy by returning the builder directly.
    e.g. the application code builds a call and passes it to a proxy, which transmits
    it over the network. A message can only be transmitted once. *)
