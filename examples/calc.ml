@@ -3,7 +3,7 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
 
-module Api = Calculator.MakeRPC(Capnp.BytesMessage)(Capnp_rpc_lwt)
+module Api = Calculator.MakeRPC(Capnp_rpc_lwt)
 
 type expr =
   | Float of float

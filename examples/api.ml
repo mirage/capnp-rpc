@@ -1,1 +1,1 @@
-include Test_api.MakeRPC(Capnp.BytesMessage)(Capnp_rpc_lwt)
+include Test_api.MakeRPC(Capnp_rpc_lwt)
