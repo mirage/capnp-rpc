@@ -16,12 +16,12 @@ let create_no_args () =
   ignore (Message.call_init msg);
   msg
 
-let finish ~interface_id ~method_id t =
+let finish m t =
   match Message.get t with
   | Message.Call c ->
     let msg = Msg.Request.of_builder c in
-    Call.interface_id_set c interface_id;
-    Call.method_id_set_exn c method_id;
+    Call.interface_id_set c @@ Capnp.RPC.MethodID.interface_id m;
+    Call.method_id_set_exn c @@ Capnp.RPC.MethodID.method_id m;
     msg
   | _ -> assert false
 

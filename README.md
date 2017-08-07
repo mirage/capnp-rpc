@@ -27,7 +27,7 @@ Some key features:
 
 This library should be used with the [capnp-ocaml][] schema compiler, which generates bindings from schema files.
 
-Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces4> branch, which adds support for compiling interface definitions.
+Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces5> branch, which adds support for compiling interface definitions.
 
 
 ### Status
@@ -51,7 +51,7 @@ To build, you will need a platform with the capnproto package available (e.g. De
 
     git clone https://github.com/mirage/capnp-rpc.git
     cd capnp-rpc
-    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces4"
+    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces5"
     opam pin add -nyk git capnp-rpc .
     opam pin add -nyk git capnp-rpc-lwt .
     opam depext capnp-rpc-lwt alcotest
@@ -200,16 +200,16 @@ open Lwt.Infix
 open Capnp_rpc_lwt
 
 let service =
-  Api.Builder.Echo.local @@ object
-    inherit Api.Builder.Echo.service
+  let module Echo = Api.Service.Echo in
+  Echo.local @@ object
+    inherit Echo.service
 
     method ping_impl params release_param_caps =
-      let module P = Api.Reader.Echo.Ping_params in
-      let module R = Api.Builder.Echo.Ping_results in
-      let msg = P.msg_get params in
+      let open Echo.Ping in
+      let msg = Params.msg_get params in
       release_param_caps ();
-      let response, results = Service.Response.create R.init_pointer in
-      R.reply_set results ("echo:" ^ msg);
+      let response, results = Service.Response.create Results.init_pointer in
+      Results.reply_set results ("echo:" ^ msg);
       Service.return response
   end
 ```
@@ -220,37 +220,40 @@ The first line (`module Api`) instantiates the generated code to use bytes-backe
 
 There's a bit of ugly boilerplate here, but it's quite simple:
 
-- `P` is the module for reading the call's parameters.
-- `R` is the module for building the response's results.
-- `params` is the content of the request.
+- The `Api.Service.Echo.Ping` module defines the server-side API for the `ping` method.
+- `Ping.Params` is a reader for the parameters.
+- `Ping.Results` is a builder for the results.
 - `msg` is the string value of the `msg` field.
 - `release_param_caps` releases any capabilities passed in the parameters.
   In this case there aren't any, but remember that a client using some future
-  version of this protocol might pass us some optional capabilities, and so we
+  version of this protocol might pass some optional capabilities, and so you
   should always free them anyway.
 - `response` is the complete message to be sent back, and `results` is the data part of it.
-- `Service.Response.create R.init_pointer` creates a new response message, using `R.init_pointer` to initialise the payload contents.
+- `Service.Response.create Results.init_pointer` creates a new response message, using `Results.init_pointer` to initialise the payload contents.
 - `Service.return` returns the results immediately (like `Lwt.return`).
 
-The client implementation is similar, but note that `Reader` and `Builder` are the other way around:
-we now want to *build* the parameters but *read* the results:
+The client implementation is similar, but uses `Api.Client` instead of `Api.Service`.
+Here, we have a *builder* for the parameters and a *reader* for the results.
+`Api.Client.Echo.Ping.method_id` is a globally unique identifier for the ping method.
 
 ```ocaml
 module Client = struct
-  module Echo = Api.Reader.Echo
+  module Echo = Api.Client.Echo
 
   let ping t msg =
-    let module P = Api.Builder.Echo.Ping_params in
-    let module R = Api.Reader.Echo.Ping_results in
-    let request, params = Capability.Request.create P.init_pointer in
-    P.msg_set params msg;
-    Capability.call_for_value_exn t Echo.ping_method request >|= R.reply_get
+    let open Echo.Ping in
+    let request, params = Capability.Request.create Params.init_pointer in
+    Params.msg_set params msg;
+    Capability.call_for_value_exn t method_id request >|= Results.reply_get
 end
 ```
 
 `Capability.call_for_value_exn` sends the request message to the service and waits for the response to arrive.
 If the response is an error, it raises an exception.
-`R.reply_get` extracts the `reply` field of the result.
+`Results.reply_get` extracts the `reply` field of the result.
+
+We don't need to release the capabilities of the results, as `call_for_value_exn` does that automatically.
+We'll see how to handle capabilities later.
 
 With the boilerplate out of the way, we can now write a `main.ml` to test it:
 
@@ -299,9 +302,9 @@ The new `heartbeat_impl` method looks like this:
 
 ```ocaml
     method heartbeat_impl params release_params =
-      let module P = Api.Reader.Echo.Heartbeat_params in
-      let msg = P.msg_get params in
-      let callback = P.callback_get params in
+      let open Echo.Heartbeat in
+      let msg = Params.msg_get params in
+      let callback = Params.callback_get params in
       release_params ();
       match callback with
       | None -> Service.fail "No callback parameter!"
@@ -339,12 +342,11 @@ and put it into the request:
 
 ```ocaml
   let heartbeat t msg callback =
-    let module P = Api.Builder.Echo.Heartbeat_params in
-    let module R = Api.Reader.Echo.Heartbeat_results in
-    let request, params = Capability.Request.create P.init_pointer in
-    P.msg_set params msg;
-    P.callback_set params (Some callback);
-    Capability.call_for_unit_exn t Echo.heartbeat_method request
+    let open Echo.Heartbeat in
+    let request, params = Capability.Request.create Params.init_pointer in
+    Params.msg_set params msg;
+    Params.callback_set params (Some callback);
+    Capability.call_for_unit_exn t method_id request
 ```
 
 `Capability.call_for_unit_exn` is a convenience wrapper around
@@ -445,10 +447,10 @@ we export the callback in the response in the same way we previously exported th
 
 ```ocaml
     method logger_impl _ release_params =
+      let open Echo.Logger in
       release_params ();
-      let module R = Api.Builder.Echo.Logger_results in
-      let response, results = Service.Response.create R.init_pointer in
-      R.callback_set results (Some service_logger);
+      let response, results = Service.Response.create Results.init_pointer in
+      Results.callback_set results (Some service_logger);
       Service.return response
 ```
 
@@ -458,9 +460,9 @@ The client side is more interesting:
 
 ```ocaml
   let logger t =
-    let module R = Api.Reader.Echo.Logger_results in
+    let open Echo.Logger in
     let request = Capability.Request.create_no_args () in
-    Capability.call_for_caps t Echo.logger_method request R.callback_get_pipelined
+    Capability.call_for_caps t method_id request Results.callback_get_pipelined
 ```
 
 We could have used `call_and_wait` here
@@ -470,7 +472,8 @@ Instead, we use `callback_get_pipelined` to get a promise for the capability fro
 
 Note: the last argument to `call_for_caps` is a function for extracting the capabilities from the promised result.
 In the common case where you just want one and it's in the root result struct, you can just pass the accessor directly,
-as shown. Doing it this way allows `call_for_caps` to release the result automatically for us.
+as shown.
+Doing it this way allows `call_for_caps` to release any unused capabilities in the result automatically for us.
 
 We can test it as follows:
 
