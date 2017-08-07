@@ -1,3 +1,5 @@
+open Capnp.RPC
+
 module Message = Capnp.Message.BytesMessage
 
 type 'a or_error = ('a, Capnp_rpc.Error.t) result
@@ -26,9 +28,6 @@ module Capability : sig
 
   type 'a capability_t = 'a t (* (alias because we have too many t's) *)
 
-  type ('t, 'a, 'b) method_t
-  (** A method on some instance, as seen by the client application code. *)
-
   module Request : sig
     type 'a t
     (** An ['a t] is a builder for the out-going request's payload. *)
@@ -45,7 +44,7 @@ module Capability : sig
         when you send a message, but you might need it if you decide to abort. *)
   end
 
-  val call : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> 'b StructRef.t
+  val call : 't capability_t -> ('t, 'a, 'b) MethodID.t -> 'a Request.t -> 'b StructRef.t
   (** [call m req] invokes [m req] and returns a promise for the result.
       Messages may be sent to the capabilities that will be in the result
       before the result arrives - they will be pipelined to the service
@@ -53,7 +52,7 @@ module Capability : sig
       when finished with the result (consider using one of the [call_for_*] functions
       instead for a simpler interface). *)
 
-  val call_and_wait : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t ->
+  val call_and_wait : 't capability_t -> ('t, 'a, 'b reader_t) MethodID.t -> 'a Request.t ->
     ('b reader_t * (unit -> unit)) or_error Lwt.t
   (** [call_and_wait m req] invokes [m req] and waits for the response.
       This is simpler than using [call], but doesn't support pipelining
@@ -67,21 +66,21 @@ module Capability : sig
       Doing [Lwt.cancel] on the result will send a cancel message to the target
       for remote calls. *)
 
-  val call_for_value : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> 'b reader_t or_error Lwt.t
+  val call_for_value : 't capability_t -> ('t, 'a, 'b reader_t) MethodID.t -> 'a Request.t -> 'b reader_t or_error Lwt.t
   (** [call_for_value m req] is similar to [call_and_wait], but automatically
       releases any capabilities in the response before returning. Use this if
       you aren't expecting any capabilities in the response. *)
 
-  val call_for_value_exn : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> 'b reader_t Lwt.t
+  val call_for_value_exn : 't capability_t -> ('t, 'a, 'b reader_t) MethodID.t -> 'a Request.t -> 'b reader_t Lwt.t
   (** Wrapper for [call_for_value] that turns errors in Lwt failures. *)
 
-  val call_for_unit : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> unit or_error Lwt.t
+  val call_for_unit : 't capability_t -> ('t, 'a, 'b reader_t) MethodID.t -> 'a Request.t -> unit or_error Lwt.t
   (** Wrapper for [call_for_value] that ignores the result. *)
 
-  val call_for_unit_exn : 't capability_t -> ('t, 'a, 'b reader_t) method_t -> 'a Request.t -> unit Lwt.t
+  val call_for_unit_exn : 't capability_t -> ('t, 'a, 'b reader_t) MethodID.t -> 'a Request.t -> unit Lwt.t
   (** Wrapper for [call_for_unit] that raises an exception on error. *)
 
-  val call_for_caps : 't capability_t -> ('t, 'a, 'b) method_t -> 'a Request.t -> ('b StructRef.t -> 'c) -> 'c
+  val call_for_caps : 't capability_t -> ('t, 'a, 'b) MethodID.t -> 'a Request.t -> ('b StructRef.t -> 'c) -> 'c
   (** [call_for_caps] is a wrapper for [call] that passes the results to a
       callback and finishes them automatically when it returns.
       In the common case where you want a single cap "foo" from the result, use
@@ -156,9 +155,6 @@ module Untyped : sig
   type 'a reader_t = 'a Message.StructStorage.reader_t
 
   val abstract_method : ('a reader_t, 'b) Service.method_t -> abstract_method_t
-
-  val define_method : interface_id:Uint64.t -> method_id:int ->
-    ('t, 'a, 'b) Capability.method_t
 
   val struct_field : 'a StructRef.t -> int -> 'b StructRef.t
 

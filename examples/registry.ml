@@ -2,23 +2,23 @@ open Lwt.Infix
 open Capnp_rpc_lwt
 
 let version_service =
-  Api.Builder.Version.local @@
-  object
-    inherit Api.Builder.Version.service
+  let module Version = Api.Service.Version in
+  Version.local @@ object
+    inherit Version.service
 
     method read_impl _ release_params =
+      let open Version.Read in
       release_params ();
-      let module R = Api.Builder.Version.Read_results in
-      let resp, results = Service.Response.create R.init_pointer in
-      R.version_set results "0.1";
+      let resp, results = Service.Response.create Results.init_pointer in
+      Results.version_set results "0.1";
       Service.return resp
   end
 
 (* A service that can return other services. *)
 let service () =
-  Api.Builder.Registry.local @@
-  object
-    inherit Api.Builder.Registry.service
+  let module Registry = Api.Service.Registry in
+  Registry.local @@ object
+    inherit Registry.service
 
     val mutable blocked = Lwt.wait ()
     val mutable echo_service = Echo.service ()
@@ -28,8 +28,8 @@ let service () =
     method! pp f = Fmt.string f "registry"
 
     method set_echo_service_impl params release_params =
-      let module P = Api.Reader.Registry.SetEchoService_params in
-      let new_service = P.service_get params in
+      let open Registry.SetEchoService in
+      let new_service = Params.service_get params in
       release_params ();
       match new_service with
       | None -> assert false
@@ -40,19 +40,19 @@ let service () =
 
     method echo_service_impl _params release_params =
       release_params ();
-      let module R = Api.Builder.Registry.EchoService_results in
-      let resp, results = Service.Response.create R.init_pointer in
-      R.service_set results (Some echo_service);
+      let open Registry.EchoService in
+      let resp, results = Service.Response.create Results.init_pointer in
+      Results.service_set results (Some echo_service);
       Service.return_lwt (fun () ->
         fst blocked >|= fun () -> Ok resp
       )
 
     method echo_service_promise_impl _params release_params =
       release_params ();
-      let module R = Api.Builder.Registry.EchoServicePromise_results in
-      let resp, results = Service.Response.create R.init_pointer in
+      let open Registry.EchoServicePromise in
+      let resp, results = Service.Response.create Results.init_pointer in
       let promise, resolver = Capability.promise () in
-      R.service_set results (Some promise);
+      Results.service_set results (Some promise);
       Capability.dec_ref promise;
       Lwt.async (fun () ->
           fst blocked >|= fun () ->
@@ -76,10 +76,10 @@ let service () =
          bar (b1):
            version = version_service
        *)
-      let module R = Api.Builder.Registry.Complex_results in
-      let resp, results = Service.Response.create R.init_pointer in
-      let f1 = R.foo_init results in
-      let b1 = R.bar_init results in
+      let open Registry.Complex in
+      let resp, results = Service.Response.create Results.init_pointer in
+      let f1 = Results.foo_init results in
+      let b1 = Results.bar_init results in
       let module Foo = Api.Builder.Foo in
       let module Bar = Api.Builder.Bar in
       let _b2 = Foo.b_init f1 in
@@ -89,42 +89,47 @@ let service () =
   end
 
 module Client = struct
+  module Registry = Api.Client.Registry
+
   let set_echo_service t echo_service =
-    let module P = Api.Builder.Registry.SetEchoService_params in
-    let req, p = Capability.Request.create P.init_pointer in
-    P.service_set p (Some echo_service);
-    Capability.call_for_unit_exn t Api.Reader.Registry.set_echo_service_method req
+    let open Registry.SetEchoService in
+    let req, p = Capability.Request.create Params.init_pointer in
+    Params.service_set p (Some echo_service);
+    Capability.call_for_unit_exn t method_id req
 
   (* Waits until unblocked before returning *)
   let echo_service t =
+    let open Registry.EchoService in
     let req = Capability.Request.create_no_args () in
-    let module R = Api.Reader.Registry.EchoService_results in
-    Capability.call_for_caps t Api.Reader.Registry.echo_service_method req R.service_get_pipelined
+    Capability.call_for_caps t method_id req Results.service_get_pipelined
 
   (* Returns a promise immediately. Resolves promise when unblocked. *)
   let echo_service_promise t =
+    let open Registry.EchoServicePromise in
     let req = Capability.Request.create_no_args () in
-    let module R = Api.Reader.Registry.EchoServicePromise_results in
-    Capability.call_for_caps t Api.Reader.Registry.echo_service_promise_method req R.service_get_pipelined
+    Capability.call_for_caps t method_id req Results.service_get_pipelined
 
   let unblock t =
+    let open Registry.Unblock in
     let req = Capability.Request.create_no_args () in
-    Capability.call_for_unit_exn t Api.Reader.Registry.unblock_method req
+    Capability.call_for_unit_exn t method_id req
 
   let complex t =
+    let open Registry.Complex in
     let req = Capability.Request.create_no_args () in
-    let module R = Api.Reader.Registry.Complex_results in
     let module Foo = Api.Reader.Foo in
     let module Bar = Api.Reader.Bar in
-    Capability.call_for_caps t Api.Reader.Registry.complex_method req @@ fun result ->
-    let echo_service = R.foo_get_pipelined result |> Foo.echo_get_pipelined in
-    let version = R.bar_get_pipelined result |> Bar.version_get_pipelined in
+    Capability.call_for_caps t method_id req @@ fun result ->
+    let echo_service = Results.foo_get_pipelined result |> Foo.echo_get_pipelined in
+    let version = Results.bar_get_pipelined result |> Bar.version_get_pipelined in
     (echo_service, version)
 end
 
 module Version = struct
+  module Version = Api.Client.Version
+
   let read t =
+    let open Version.Read in
     let req = Capability.Request.create_no_args () in
-    let module R = Api.Reader.Version.Read_results in
-    Capability.call_for_value_exn t Api.Reader.Version.read_method req >|= R.version_get
+    Capability.call_for_value_exn t method_id req >|= Results.version_get
 end

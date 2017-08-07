@@ -13,8 +13,8 @@ module Path = struct
   let root = []
 end
 
-type request = [`Call_9469473312751832276]
-type response = [`Return_11392333052105676602]
+type request = [`Call_836a53ce789d4cd4]
+type response = [`Return_9e19b28d3db3573a]
 type 'a msg =
   | Builder of 'a StructStorage.builder_t
   | Readonly of 'a StructStorage.reader_t

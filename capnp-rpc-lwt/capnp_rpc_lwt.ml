@@ -12,7 +12,7 @@ module RO_array = Capnp_rpc.RO_array
 module Capability = struct
   type 'a t = Core_types.cap
   type 'a capability_t = 'a t
-  type ('t, 'a, 'b) method_t = Uint64.t * int
+  type ('t, 'a, 'b) method_t = ('t, 'a, 'b) Capnp.RPC.MethodID.t
 
   module Request = Request
 
@@ -21,14 +21,13 @@ module Capability = struct
   let pp f x = x#pp f
 
   let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) (req : 'a Request.t) =
-    Log.info (fun f -> f "Calling %a" Capnp.RPC.Registry.pp_method m);
-    let (interface_id, method_id) = m in
-    let msg = Request.finish ~interface_id ~method_id req in
+    Log.info (fun f -> f "Calling %a" Capnp.RPC.MethodID.pp m);
+    let msg = Request.finish m req in
     let results, resolver = Local_struct_promise.make () in
     target#call resolver msg;
     results
 
-  let call_and_wait cap (m : ('t, 'a, 'b) method_t) req : 'b or_error Lwt.t =
+  let call_and_wait cap (m : ('t, 'a, 'b reader_t) method_t) req =
     let p, r = Lwt.task () in
     let result = call cap m req in
     let finish = lazy (Core_types.dec_ref result) in
@@ -57,7 +56,7 @@ module Capability = struct
     | Error e ->
       let msg = Fmt.strf "Error calling %t(%a): %a"
           cap#pp
-          Capnp.RPC.Registry.pp_method m
+          Capnp.RPC.MethodID.pp m
           Capnp_rpc.Error.pp e in
       Lwt.fail (Failure msg)
 
@@ -109,9 +108,6 @@ module Untyped = struct
   let capability_field t f = t#cap [Xform.Field f]
 
   let local = Service.local
-
-  let define_method ~interface_id ~method_id : ('t, 'a, 'b) Capability.method_t =
-    (interface_id, method_id)
 
   type 'a reader_t = 'a Message.StructStorage.reader_t
 
