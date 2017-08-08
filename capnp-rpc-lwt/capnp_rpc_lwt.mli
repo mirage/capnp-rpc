@@ -1,10 +1,10 @@
 open Capnp.RPC
 
-module Message = Capnp.Message.BytesMessage
+include (module type of Capnp.BytesMessage)
 
 type 'a or_error = ('a, Capnp_rpc.Error.t) result
 
-type 'a reader_t = 'a Message.StructStorage.reader_t
+type 'a reader_t = 'a StructStorage.reader_t
 
 module StructRef : sig
   type 'a t
@@ -32,7 +32,7 @@ module Capability : sig
     type 'a t
     (** An ['a t] is a builder for the out-going request's payload. *)
 
-    val create : (Capnp.Message.rw Message.Slice.t -> 'a) -> 'a t * 'a
+    val create : (Capnp.Message.rw Slice.t -> 'a) -> 'a t * 'a
     (** [create init] is a fresh request payload and contents builder.
         Use one of the generated [init_pointer] functions for [init]. *)
 
@@ -80,7 +80,7 @@ module Capability : sig
   val call_for_unit_exn : 't capability_t -> ('t, 'a, 'b reader_t) MethodID.t -> 'a Request.t -> unit Lwt.t
   (** Wrapper for [call_for_unit] that raises an exception on error. *)
 
-  val call_for_caps : 't capability_t -> ('t, 'a, 'b) MethodID.t -> 'a Request.t -> ('b StructRef.t -> 'c) -> 'c
+  val call_for_caps : 't capability_t -> ('t, 'a, 'b reader_t) MethodID.t -> 'a Request.t -> ('b StructRef.t -> 'c) -> 'c
   (** [call_for_caps] is a wrapper for [call] that passes the results to a
       callback and finishes them automatically when it returns.
       In the common case where you want a single cap "foo" from the result, use
@@ -118,7 +118,7 @@ module Service : sig
     type 'b t
     (** An ['a t] is a builder for the out-going response's payload. *)
 
-    val create : (Capnp.Message.rw Message.Slice.t -> 'a) -> 'a t * 'a
+    val create : (Capnp.Message.rw Slice.t -> 'a) -> 'a t * 'a
     (** [create init] is a fresh request payload and contents builder.
         Use one of the generated [init_pointer] functions for [init]. *)
 
@@ -152,7 +152,7 @@ module Untyped : sig
 
   type abstract_method_t
 
-  type 'a reader_t = 'a Message.StructStorage.reader_t
+  type 'a reader_t = 'a StructStorage.reader_t
 
   val abstract_method : ('a reader_t, 'b) Service.method_t -> abstract_method_t
 

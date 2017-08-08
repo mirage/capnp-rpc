@@ -1,10 +1,10 @@
 open Lwt.Infix
 open Capnp_core
 
-module Message = Capnp.Message.BytesMessage
+include Capnp.Message.BytesMessage
 
 type 'a or_error = ('a, Capnp_rpc.Error.t) result
-type 'a reader_t = 'a Message.StructStorage.reader_t
+type 'a reader_t = 'a StructStorage.reader_t
 
 module Log = Capnp_rpc.Debug.Log
 module RO_array = Capnp_rpc.RO_array
@@ -109,12 +109,12 @@ module Untyped = struct
 
   let local = Service.local
 
-  type 'a reader_t = 'a Message.StructStorage.reader_t
+  type 'a reader_t = 'a StructStorage.reader_t
 
   type abstract_method_t = Service.abstract_method_t
 
   let abstract_method x req release =
-    x (Message.StructStorage.cast_reader req) release
+    x (StructStorage.cast_reader req) release
 
   let get_cap a i =
     Core_types.Attachments.cap (Uint32.to_int i) (Msg.unwrap_attachments a)

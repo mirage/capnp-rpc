@@ -24,8 +24,9 @@ type 'a msg =
 
 let with_attachments a t =
   match t with
-  | Builder x -> Builder (B.with_attachments (RPC_attachments a) x)
-  | Readonly x -> Readonly (R.with_attachments (RPC_attachments a) x)
+  | Builder x -> Builder (StructStorage.with_attachments (RPC_attachments a) x)
+  | Readonly None -> Readonly None
+  | Readonly (Some x) -> Readonly (Some (StructStorage.with_attachments (RPC_attachments a) x))
 
 let unwrap_attachments = function
   | RPC_attachments x -> x
@@ -33,11 +34,9 @@ let unwrap_attachments = function
   | _ -> failwith "Unknown attachment type!"
 
 let attachments = function
-  | Builder ss -> unwrap_attachments @@ B.get_attachments ss
-  | Readonly ss -> unwrap_attachments @@ R.get_attachments ss
-
-let attachments_of_payload payload =
-  unwrap_attachments @@ R.get_attachments payload
+  | Readonly None -> Capnp_rpc.S.No_attachments
+  | Readonly (Some ss) -> unwrap_attachments @@ StructStorage.get_attachments ss
+  | Builder ss -> unwrap_attachments @@ StructStorage.get_attachments ss
 
 let wrap_attachments a = RPC_attachments a
 

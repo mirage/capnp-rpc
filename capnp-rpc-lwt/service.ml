@@ -1,8 +1,6 @@
 open Capnp_core
 open Lwt.Infix
 
-module ReaderOps = Capnp.Runtime.ReaderInc.Make(Capnp.BytesMessage)
-
 module Log = Capnp_rpc.Debug.Log
 
 module Response = Response
@@ -44,7 +42,7 @@ let local (s:#generic) =
       let m : abstract_method_t = s#dispatch ~interface_id ~method_id in
       let release_params () = Core_types.Request_payload.release msg in
       let contents : abstract Schema.reader_t =
-        Payload.content_get p |> ReaderOps.deref_opt_struct_pointer |> ReaderOps.cast_struct in
+        Payload.content_get p |> Schema.ReaderOps.deref_opt_struct_pointer |> Schema.ReaderOps.cast_struct in
       match m contents release_params with
       | r -> results#resolve r
       | exception ex ->

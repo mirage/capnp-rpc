@@ -27,7 +27,7 @@ Some key features:
 
 This library should be used with the [capnp-ocaml][] schema compiler, which generates bindings from schema files.
 
-Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces5> branch, which adds support for compiling interface definitions.
+Currently, you need to pin the <https://github.com/talex5/capnp-ocaml/tree/interfaces6> branch, which adds support for compiling interface definitions.
 
 
 ### Status
@@ -51,7 +51,7 @@ To build, you will need a platform with the capnproto package available (e.g. De
 
     git clone https://github.com/mirage/capnp-rpc.git
     cd capnp-rpc
-    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces5"
+    opam pin add -n capnp "https://github.com/talex5/capnp-ocaml.git#interfaces6"
     opam pin add -nyk git capnp-rpc .
     opam pin add -nyk git capnp-rpc-lwt .
     opam depext capnp-rpc-lwt alcotest
@@ -194,7 +194,7 @@ The next step is to implement a client and server (in a new `echo.ml` file) usin
 For the server, you should inherit from the generated `Api.Builder.Echo.server` class:
 
 ```ocaml
-module Api = Echo_api.MakeRPC(Capnp.BytesMessage)(Capnp_rpc_lwt)
+module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
 
 open Lwt.Infix
 open Capnp_rpc_lwt
@@ -214,7 +214,7 @@ let service =
   end
 ```
 
-The first line (`module Api`) instantiates the generated code to use bytes-backed messages and this library's RPC implementation.
+The first line (`module Api`) instantiates the generated code to use this library's RPC implementation.
 
 `service` must provide one OCaml method for each method defined in the schema file, with `_impl` on the end of each one.
 

@@ -42,4 +42,3 @@ end
 
 val wrap_attachments : Capnp_rpc.S.attachments -> Capnp.MessageSig.attachments
 val unwrap_attachments : Capnp.MessageSig.attachments -> Capnp_rpc.S.attachments
-val attachments_of_payload : Schema.Reader.Payload.t -> Capnp_rpc.S.attachments
