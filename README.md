@@ -1,12 +1,9 @@
-## OCaml Cap'n'Proto RPC library
+## OCaml Cap'n Proto RPC library
 
 Status: RPC Level 1 with two-party networking is working.
 
 Copyright 2017 Docker, Inc.
-Released under the [Apache 2.0 license](LICENSE).
-
-The calculator and RPC schema files are from the [Cap'n Proto][] project and have their own license (MIT;
-included in the files).
+See [LICENSE.md](LICENSE.md) for details.
 
 ### Overview
 
@@ -77,18 +74,6 @@ The code is split into three libraries:
 - `capnp-rpc-unix` adds helper functions for parsing command-line arguments and setting up connections over Unix sockets.
 
 Users of the library will normally want to use `capnp-rpc-lwt` and, in most cases, `capnp-rpc-unix`.
-
-### Testing
-
-Running `make test` will run through the tests in `test-lwt/test.ml`, which run some in-process examples.
-
-The calculator example can also be run across two Unix processes:
-
-1. Start the server:
-   `./_build/default/test-bin/calc.bc serve unix:/tmp/calc.socket`
-
-2. In another terminal, run the client:
-   `./_build/default/test-bin/calc.bc connect unix:/tmp/calc.socket`
 
 ### Conceptual model
 
@@ -161,7 +146,7 @@ This defines the `Echo` interface as having a single method called `ping`
 which takes a struct containing a text field called `msg`
 and returns a struct containing another text field called `reply`.
 
-Save this as `echo_api.capnp` and compile it interface using capnp:
+Save this as `echo_api.capnp` and compile it using capnp:
 
 ```
 $ capnp compile echo_api.capnp -o ocaml
@@ -191,7 +176,7 @@ echo_api.capnp --> echo_api.mli echo_api.ml
 
 The next step is to implement a client and server (in a new `echo.ml` file) using the generated `Echo_api` OCaml module.
 
-For the server, you should inherit from the generated `Api.Builder.Echo.server` class:
+For the server, you should inherit from the generated `Api.Service.Echo.service` class:
 
 ```ocaml
 module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
@@ -515,7 +500,22 @@ it can call without using the network.
 For full details of the API, see the comments in `capnp-rpc-lwt/capnp_rpc_lwt.mli`.
 
 
-### Fuzzing
+### Contributing
+
+#### Testing
+
+Running `make test` will run through the tests in `test-lwt/test.ml`, which run some in-process examples.
+
+The calculator example can also be run across two Unix processes:
+
+1. Start the server:
+   `./_build/default/test-bin/calc.bc serve unix:/tmp/calc.socket`
+
+2. In another terminal, run the client:
+   `./_build/default/test-bin/calc.bc connect unix:/tmp/calc.socket`
+
+
+#### Fuzzing
 
 Running `make fuzz` will run the AFL fuzz tester. You will need to use a version of the OCaml compiler with AFL support (e.g. `opam sw 4.04.0+afl`).
 

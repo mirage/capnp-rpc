@@ -1,3 +1,6 @@
+(** The abstract Cap'n Proto RPC network protocol.
+    @see <https://capnproto.org/rpc.html> *)
+
 module Make (EP : Message_types.ENDPOINT) : sig
   type t
   (** A [t] is a connection to a remote vat. *)

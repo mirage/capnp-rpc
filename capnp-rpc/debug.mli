@@ -1,4 +1,10 @@
+(** Diagnostics. *)
+
 module Log : Logs.LOG
+(** The library's logger. *)
+
+val src : Logs.src
+(** Control the log level for [Log]. *)
 
 val qid_tag : Uint32.t Logs.Tag.def
 (** [qid_tag] is used in log reports to tag the question (or answer) ID in the call. *)
@@ -15,6 +21,8 @@ val invariant_broken : (Format.formatter -> unit) -> 'a
 (** [invariant_broken msg] raises [Invariant_broken msg]. *)
 
 module OID : sig
+  (** Unique object IDs, for debugging. *)
+
   type t
   (** A unique ID which can be attached to objects to aid debugging. *)
 

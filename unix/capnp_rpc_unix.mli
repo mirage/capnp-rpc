@@ -1,3 +1,5 @@
+(** Helpers for using {!Capnp_rpc_lwt} on traditional operating systems. *)
+
 open Capnp_rpc_lwt
 
 module Listen_address : sig

@@ -1,3 +1,5 @@
+(** Errors returned by calls. *)
+
 type t = [
   | `Exception of Exception.t
   | `Cancelled
