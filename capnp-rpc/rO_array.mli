@@ -1,3 +1,5 @@
+(** A read-only array. *)
+
 type 'a t
 
 val of_list : 'a list -> 'a t

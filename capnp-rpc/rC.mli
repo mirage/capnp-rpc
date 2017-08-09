@@ -1,4 +1,4 @@
-(* A ref-count type that raises an exception on overflow. *)
+(** A ref-count type that raises an exception on overflow. *)
 
 type t
 (** A number used as a reference count. *)

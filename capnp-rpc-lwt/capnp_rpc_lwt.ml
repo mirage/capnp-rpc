@@ -4,7 +4,6 @@ open Capnp_core
 include Capnp.Message.BytesMessage
 
 type 'a or_error = ('a, Capnp_rpc.Error.t) result
-type 'a reader_t = 'a StructStorage.reader_t
 
 module Log = Capnp_rpc.Debug.Log
 module RO_array = Capnp_rpc.RO_array
@@ -27,7 +26,7 @@ module Capability = struct
     target#call resolver msg;
     results
 
-  let call_and_wait cap (m : ('t, 'a, 'b reader_t) method_t) req =
+  let call_and_wait cap (m : ('t, 'a, 'b StructStorage.reader_t) method_t) req =
     let p, r = Lwt.task () in
     let result = call cap m req in
     let finish = lazy (Core_types.dec_ref result) in
@@ -108,8 +107,6 @@ module Untyped = struct
   let capability_field t f = t#cap [Xform.Field f]
 
   let local = Service.local
-
-  type 'a reader_t = 'a StructStorage.reader_t
 
   type abstract_method_t = Service.abstract_method_t
 

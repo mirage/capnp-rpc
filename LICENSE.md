@@ -1,4 +1,13 @@
+Copyright 2017 Docker, Inc.
 
+This library is released under the Apache 2.0 license.
+
+The calculator and RPC schema files are from the [Cap'n Proto][] project and have their own license (MIT;
+included in the files).
+
+[Cap'n Proto]: https://capnproto.org/
+
+```
                                  Apache License
                            Version 2.0, January 2004
                         https://www.apache.org/licenses/
@@ -189,3 +198,4 @@
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+```

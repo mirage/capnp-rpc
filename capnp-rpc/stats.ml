@@ -1,3 +1,5 @@
+(** Statistics for CapTP connections. *)
+
 type t = {
   n_questions : int;
   n_answers : int;

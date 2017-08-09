@@ -1,3 +1,5 @@
+(** Cap'n Proto exceptions. *)
+
 type ty = [
   | `Failed
   | `Overloaded

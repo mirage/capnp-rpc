@@ -1,6 +1,5 @@
-(* This module defines the information in the messages that goes over the wire.
-   These messages are turned into actual byte streams elsewhere.
-*)
+(** This module defines the information in the messages that goes over the wire.
+    These messages are turned into actual byte streams elsewhere. *)
 
 module EmbargoId = Id.Make ( )
 
@@ -16,7 +15,7 @@ module type TABLE_TYPES = sig
 end
 
 module Flip (T : TABLE_TYPES) = struct
-  (* [Flip T] is the types for the other end of [T]'s connection. *)
+  (** [Flip T] is the types for the other end of [T]'s connection. *)
 
   module QuestionId = T.AnswerId
   module AnswerId = T.QuestionId
@@ -25,8 +24,8 @@ module Flip (T : TABLE_TYPES) = struct
 end
 
 module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
-  (* This module defines the information in the messages that goes over the wire in one direction.
-     The types are from the point of view of the sender, as in the Cap'n Proto RPC specification. *)
+  (** This module defines the information in the messages that goes over the wire in one direction.
+      The types are from the point of view of the sender, as in the Cap'n Proto RPC specification. *)
 
   open Network
   open Network.Wire
@@ -122,7 +121,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
     | `Yourself -> Fmt.pf f " (results to yourself)"
     | `ThirdParty _ -> Fmt.pf f " (results to third party)"
 
-  (* Describe message from the point of view of the receiver. *)
+  (** Describe message from the point of view of the receiver. *)
   let pp_recv pp_msg : t Fmt.t = fun f -> function
     | `Abort ex -> Fmt.pf f "Abort(%a)" Exception.pp ex
     | `Bootstrap _ -> Fmt.pf f "Bootstrap"

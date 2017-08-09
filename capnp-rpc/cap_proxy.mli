@@ -1,3 +1,6 @@
+(** A local promise for a capability.
+    Queues messages locally. *)
+
 module Make(C : S.CORE_TYPES) : sig
   class type resolver_cap = object
     inherit C.cap

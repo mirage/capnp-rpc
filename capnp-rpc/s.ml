@@ -1,5 +1,14 @@
+(** The core types and module signatures. *)
+
 type 'a brand = ..
+(** A way for objects to provide an optional private API to certain other modules.
+    For example, CapTP proxies appear as plain services, but use this to reveal their
+    target details to the CapTP layer so that it can shorten the path when sending
+    such capabilties over the network. *)
+
 type attachments = ..
+(** The capabilities attached to a message.
+    This is only defined as an open type to avoid a nasty recursive type definition. *)
 
 type attachments += No_attachments
 
@@ -13,7 +22,8 @@ module type WIRE_PAYLOAD = sig
   val pp : t Fmt.t
 
   val cap_index : t -> path -> int option
-  (** [cap_index msg path] is the capability index at [path]. *)
+  (** [cap_index msg path] is the capability index at [path] in the message
+      (i.e the index of the capability in the attachments table). *)
 
   val attachments : t -> attachments
   val with_attachments : attachments -> t -> t
@@ -60,7 +70,7 @@ module type WIRE = sig
 end
 
 module type PAYLOAD = sig
-  (* Wraps [WIRE_PAYLOAD] to deal with caps rather than attachments. *)
+  (** Wraps {!WIRE_PAYLOAD} to deal with caps rather than attachments. *)
 
   type t
   type cap
@@ -114,6 +124,7 @@ module type CORE_TYPES = sig
     method sealed_dispatch : 'a. 'a brand -> 'a option
     (** [c#sealed_dispatch brand] extracts some private data of the given type. *)
   end
+  (** Common methods for [struct_ref] and [cap]. *)
 
   val pp : #base_ref Fmt.t
 
