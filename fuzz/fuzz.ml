@@ -504,7 +504,7 @@ module Vat = struct
             caps |> RO_array.iteri (fun i c ->
                 let target = RO_array.get_exn arg_ids i in
                 let cr = make_cap_ref ~target c in
-                code (fun f -> Fmt.pf f "let %a = RO_array.get args %d in" pp_var cr i);
+                code (fun f -> Fmt.pf f "let %a = RO_array.get_exn args %d in" pp_var cr i);
                 WrapArray.add vat.caps cr
               )
         end;

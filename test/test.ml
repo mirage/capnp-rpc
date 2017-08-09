@@ -764,6 +764,44 @@ let test_local_embargo_14 () =
   CS.flush c s;
   CS.check_finished c s
 
+let _test_local_embargo_15 () =
+  let client_bs = Services.manual () in
+  let server_bs = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags ~client_bs
+    ~server_tags:Test_utils.server_tags server_bs
+  in
+  let to_server = C.bootstrap c in
+  let to_client = S.bootstrap s in
+  let x1 = call_for_cap to_server "q1" [] in
+  CS.flush c s;
+  let x2 = call_for_cap to_client "q2" [] in
+  let x3 = call_for_cap to_client "q3" [] in
+  CS.flush c s;
+  resolve_ok (server_bs#pop0 "q1") "reply" [with_inc_ref x3];
+  resolve_ok (client_bs#pop0 "q2") "reply" [with_inc_ref x1];
+  let m1 = call x2 "m1" [] in
+  S.handle_msg s ~expect:"return:reply";        (* q2 = x3 *)
+  let m2 = call x2 "m2" [] in
+  let local_promise = Cap_proxy.local_promise () in
+  resolve_ok (client_bs#pop0 "q3") "reply" [with_inc_ref local_promise];
+  local_promise#resolve (with_inc_ref to_server);
+  dec_ref local_promise;
+  CS.flush c s;
+  let am1 = server_bs#pop0 "m1" in
+  let am2 = server_bs#pop0 "m2" in
+  resolve_ok am1 "am1" [];
+  resolve_ok am2 "am2" [];
+  dec_ref m1;
+  dec_ref m2;
+  dec_ref x1;
+  dec_ref x2;
+  dec_ref x3;
+  dec_ref to_server;
+  dec_ref to_client;
+  CS.flush c s;
+  CS.check_finished c s
+
 (* The field must still be useable after the struct is released. *)
 let test_fields () =
   let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
@@ -1366,6 +1404,7 @@ let tests = [
   "Local embargo 12", `Quick, test_local_embargo_12;
   "Local embargo 13", `Quick, test_local_embargo_13;
   "Local embargo 14", `Quick, test_local_embargo_14;
+(*   "Local embargo 14", `Quick, test_local_embargo_15; *) (* XXX - failing *)
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
