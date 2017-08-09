@@ -86,15 +86,22 @@ module Make (EP : Message_types.ENDPOINT) = struct
        - If we set [ref_count] to zero, we send a release and set [count] to zero.
        - There is no other way for [count] to become zero.
      *)
+
     type t = {
       id : ImportId.t;
       mutable ref_count : int; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
       mutable count : int;     (* Number of times remote sent us this. *)
       mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
       mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
-      mutable resolution : [In.desc | `Error]; (* [`None] if not yet resolved. *)
+      mutable resolution : disembargo_info;
       proxy : Cap_proxy.resolver_cap Weak_ptr.t (* Our switchable ([Weak_ptr.t] is mutable). *)
     }
+    and disembargo_info = [
+      | `Unresolved
+      | `Local
+      | `Import of t       (* Holds ref *)
+      | `Error
+    ]
 
     let id t = t.id
 
@@ -111,45 +118,66 @@ module Make (EP : Message_types.ENDPOINT) = struct
       assert (t.count > 0);
       t.count <- t.count + 1
 
-    let maybe_release_import t =
-      if t.ref_count = 0 then (
-        assert (t.count > 0);
-        let count = t.count in
-        t.used <- false;
-        t.count <- 0;
-        Weak_ptr.clear t.proxy;
-        [`Release count]
-      ) else []
-
     (* A new local reference (resolve_target). *)
     let inc_ref t =
       assert (t.count > 0);
       t.ref_count <- t.ref_count + 1
 
     (* A [resolve_target] or our switchable no longer needs us. *)
-    let dec_ref t =
+    let rec dec_ref t =
       t.ref_count <- t.ref_count - 1;
-      maybe_release_import t
+      if t.ref_count = 0 then (
+        assert (t.count > 0);
+        let count = t.count in
+        t.used <- false;
+        t.count <- 0;
+        Weak_ptr.clear t.proxy;
+        let free_resolution =
+          match t.resolution with
+          | `Import i -> dec_ref i
+          | `Unresolved | `Local | `Error -> []
+        in
+        `Release count :: free_resolution
+      ) else []
 
     let mark_used t =
       t.used <- true
 
     let used t = t.used
 
-    let mark_resolved t result =
-      if t.resolution <> `None then
+    let mark_resolved t ~get_import result =
+      if t.resolution <> `Unresolved then
         Debug.failf "Got Resolve for already-resolved import %a" pp t
       else match result with
-        | Ok desc -> t.resolution <- (desc :> [In.desc | `Error])
         | Error _ -> t.resolution <- `Error
-
-    let resolution t = t.resolution
+        | Ok desc ->
+          let info =
+            match desc with
+            | `None -> `Error           (* Probably shouldn't happen *)
+            | `Error _ -> `Error        (* Don't need to embargo errors *)
+            | `SenderPromise id | `SenderHosted id -> `Import (get_import id)
+            | `ThirdPartyHosted _ -> failwith "todo: disembargo_reply: ThirdPartyHosted"
+            | `ReceiverAnswer _ | `ReceiverHosted _ -> `Local
+          in
+          t.resolution <- info
 
     let message_target t =
       `ReceiverHosted t.id
 
     let embargo_path t =
       if t.used then Some (message_target t) else None
+
+    (* We have a reference pointing at this target and may need to perform an embargo.
+       This could be either because we pipelined messages to this import, or we pipelined
+       messages to another remote object which we know forwarded them to this one. *)
+    let disembargo_target t =
+      match t.resolution with
+      | `Unresolved -> None         (* No embargoes needed yet *)
+      | `Error -> None        (* Don't need to embargo errors *)
+      | `Import _ as i -> Some i
+      | `Local ->
+        (* The import resolved to a local service. Send a loopback disembargo to flush the path. *)
+        Some (message_target t)
 
     let init_proxy t proxy =
       assert (get_proxy t = None);
@@ -177,7 +205,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       id = id;
       proxy = Weak_ptr.empty ();
       settled;
-      resolution = `None;
+      resolution = `Unresolved;
       used = mark_dirty;
     }
   end
@@ -235,10 +263,21 @@ module Make (EP : Message_types.ENDPOINT) = struct
        one release (rc=0) event.
      *)
 
+    type disembargo_info = [
+      | `Error
+      | `Elsewhere
+      | `Local
+      | `Results of Wire.Response.t * [
+            | `Local
+            | `Import of Import.t       (* Holds ref *)
+            | `None
+          ] RO_array.t
+    ]
+
     type state =
       | Waiting
       | Cancelled
-      | Lingering of In.return
+      | Lingering of disembargo_info
       | Complete
 
     type t = {
@@ -255,6 +294,28 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let pp f q =
       Fmt.pf f "q%a" QuestionId.pp q.id
 
+    let pp_disembargo_desc f = function
+      | `Local -> Fmt.string f "local"
+      | `Import i -> Import.pp f i
+      | `None -> Fmt.string f "none"
+
+    let pp_disembargo_info f : disembargo_info -> unit = function
+      | `Error -> Fmt.string f "error"
+      | `Elsewhere -> Fmt.string f "elsewhere"
+      | `Local -> Fmt.string f "local"
+      | `Results (_, descs) ->
+        (RO_array.pp pp_disembargo_desc) f descs
+
+    let free_disembargo_info = function
+      | `Error -> []
+      | `Elsewhere -> []
+      | `Local -> []
+      | `Results (_, descs) ->
+        RO_array.fold_left (fun acc -> function
+            | `None | `Local -> acc
+            | `Import i -> `Release_import i :: acc
+          ) [] descs
+
     let pp_promise f q =
       match q.remote_promise with
       | `Released -> Fmt.string f "(released)"
@@ -263,7 +324,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let pp_state f = function
       | Waiting     -> Fmt.string f "waiting"
       | Cancelled   -> Fmt.string f "cancelled"
-      | Lingering r -> Fmt.pf f "lingering:%a" In.pp_return r
+      | Lingering i -> Fmt.pf f "lingering:%a" pp_disembargo_info i
       | Complete    -> Fmt.string f "complete"
 
     let dump f t =
@@ -284,7 +345,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       t.ref_count <- RC.pred t.ref_count ~pp;
       if RC.is_zero t.ref_count then match t.state with
         | Waiting -> t.state <- Cancelled; [`Send_finish]
-        | Lingering _ -> t.state <- Complete; [`Send_finish; `Release_table_entry]
+        | Lingering ret -> t.state <- Complete; `Send_finish :: `Release_table_entry :: free_disembargo_info ret
         | Complete -> []        (* (only happens with lost_connection) *)
         | Cancelled -> failwith "Can't hold refs while cancelled!"
       else
@@ -300,32 +361,47 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let cap_used t path =
       PathSet.mem path t.pipelined_fields
 
+    let message_target t path = `ReceiverAnswer (t.id, path)
+
+    (* Extract some useful parts of the response that we may need for embargoes. *)
+    let extract_resolution ~get_import = function
+      | #Error.t -> `Error
+      | `ResultsSentElsewhere -> `Elsewhere (* We don't care about the result, so should never embargo *)
+      | `TakeFromOtherQuestion _ -> `Local  (* Remote will forward back to our answer *)
+      | `AcceptFromThirdParty -> failwith "todo: answer_cap_needs_disembargo: AcceptFromThirdParty"
+      | `Results (msg, descs) ->
+        let extract_cap = function
+          | `ReceiverAnswer _ | `ReceiverHosted _ -> `Local (* Remote will forward back to us *)
+          | `SenderPromise id | `SenderHosted id -> `Import (get_import id) (* Disembargo via import *)
+          | `ThirdPartyHosted _ -> failwith "todo: answer_cap_needs_disembargo: ThirdPartyHosted"
+          | `None -> `None
+        in
+        `Results (msg, RO_array.map extract_cap descs)
+
     (* Something resolved to a promised answer, and we sent a disembargo (because the promise was local).
        When the disembargo response arrived, the local promise had resolved to this question.
-       Do we need another embargo? *)
-    let answer_cap_needs_disembargo t path =
-      cap_used t path && (
+       Do we need another embargo? Return the path down which to send the disembargo request, if so. *)
+    let answer_cap_disembargo t path =
+      if cap_used t path then (
         match t.state with
-        | Waiting | Cancelled -> false  (* Can't disembargo if not returned *)
+        | Waiting | Cancelled -> None  (* Can't disembargo if not returned *)
         | Complete -> failwith "Already finished!" (* Previous disembargo should have kept us alive *)
         | Lingering ret ->
           match ret with
-          | #Error.t -> false
+          | `Error -> None
           | `Results (msg, descs) ->
             (* If the answer was local, we need to embargo. *)
             begin match Core_types.Wire.Response.cap_index msg path with
-              | None -> false
+              | None -> None
               | Some i ->
                 match RO_array.get ~oob:`None descs i with
-                | `ReceiverAnswer _ | `ReceiverHosted _ -> true
-                | `SenderPromise _ | `SenderHosted _ -> false
-                | `ThirdPartyHosted _ -> failwith "todo: answer_cap_needs_disembargo: ThirdPartyHosted"
-                | `None -> false
+                | `Local -> Some (message_target t path)
+                | `Import i -> Some (`Import i)
+                | `None -> None
             end;
-          | `ResultsSentElsewhere -> false      (* Results are remote, so no embargo needed *)
-          | `TakeFromOtherQuestion _ -> true    (* Remote will forward back to our answer *)
-          | `AcceptFromThirdParty -> failwith "todo: answer_cap_needs_disembargo: AcceptFromThirdParty"
-      )
+          | `Elsewhere -> None      (* We don't care about the result (except for forwarding) *)
+          | `Local -> Some (message_target t path)
+      ) else None       (* Not used, so no embargo needed *)
 
     (* A [Return] message has arrived. *)
     let return t ret =
@@ -352,8 +428,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
       match t.remote_promise with
       | `Released -> ()
       | `Resolver p -> Core_types.resolve_payload p (Error (`Exception ex))
-
-    let message_target t path = `ReceiverAnswer (t.id, path)
 
     let resolve t payload =
       match t.remote_promise with
@@ -872,14 +946,15 @@ module Make (EP : Message_types.ENDPOINT) = struct
       t.queue_send (`Finish (qid, false))
   end
 
+  let apply_import_actions t i =
+    List.iter @@ function
+    | `Release count -> Send.release t i count
+
   let apply_question_actions t q =
     List.iter @@ function
     | `Send_finish         -> Send.finish t q
     | `Release_table_entry -> Questions.release t.questions (Question.id q)
-
-  let apply_import_actions t i =
-    List.iter @@ function
-    | `Release count -> Send.release t i count
+    |` Release_import i    -> Import.dec_ref i |> apply_import_actions t i
 
   let release_resolve_target t = function
     | `None | `Local -> ()
@@ -1378,7 +1453,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
       if release_param_caps then List.iter (release t ~ref_count:1) question.params_for_release;
       let ret2 = import_return_caps t question ret in
       (* Any disembargo requests have now been sent, so we may finish the question. *)
-      Question.return question ret |> apply_question_actions t question;
+      let get_import id =
+        let i = Imports.find_exn t.imports id in
+        Import.inc_ref i;
+        i
+      in
+      let disembargo_info = Question.extract_resolution ~get_import ret in
+      Question.return question disembargo_info |> apply_question_actions t question;
       begin match ret2 with
         | `Results msg ->
           Log.info (fun f -> f ~tags:(with_qid qid t) "Got results: %a"
@@ -1447,6 +1528,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Log.info (fun f -> f ~tags:t.tags "Sending disembargo response to %a" EP.Out.pp_desc desc);
       t.queue_send (`Disembargo_reply (desc, embargo_id))
 
+    (* If we're trying to disembargo something that resolved to an import, try to disembargo on
+       that instead. *)
+    let rec disembargo_imports = function
+      | None | Some #EP.Out.message_target as x -> x
+      | Some (`Import i) -> disembargo_imports (Import.disembargo_target i)
+
     let disembargo_request t request =
       Log.info (fun f -> f ~tags:t.tags "Received disembargo request %a" EP.In.pp_disembargo_request request);
       match request with
@@ -1477,26 +1564,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `QuestionCap (q, path) ->
         (* We resolved to a question. If we have pipelined messages to the question and it has
            resolved to a local service then we may need another embargo before using the new
-           local target.
-           XXX: If it resolved to a new remote target then we should switch to using that. *)
-        if Question.answer_cap_needs_disembargo q path then Some (Question.message_target q path)
-        else None
+           local target. *)
+        Question.answer_cap_disembargo q path |> disembargo_imports
       | `Import i ->
         (* We resolved to an import. If we have pipelined messages to the remote export and it
            has resolved to a local service then we will need another embargo before using the new
-           local target.
-           XXX: If it resolved to a new remote target then we should switch to using that. *)
-        if Import.used i then (
-          match Import.resolution i with
-          | `None -> None         (* Not resolved yet; no further embargoes needed *)
-          | `Error -> None        (* Don't need to embargo errors *)
-          | `SenderPromise _ | `SenderHosted _ -> None (* Remote; no embargo needed *)
-          | `ThirdPartyHosted _ -> failwith "todo: disembargo_reply: ThirdPartyHosted"
-          | `ReceiverAnswer _ | `ReceiverHosted _ ->
-            (* We answered this with an import, and have been forwarding things there.
-               The import has since been resolved to a local service, so we need another disembargo. *)
-            Some (Import.message_target i)
-        ) else None
+           local target. *)
+        if Import.used i then disembargo_imports (Import.disembargo_target i)
+        else None
 
     let disembargo_reply t target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
@@ -1523,7 +1598,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
             match Answer.resolve_target answer path with
             | None -> None                    (* No embargoes as still unresolved (target still remote) *)
             | Some (Error _) -> None          (* No embargoes for errors *)
-            | Some (Ok resolve_target) -> double_disembargo_path resolve_target
+            | Some (Ok resolve_target) ->
+              double_disembargo_path resolve_target
       in
       let cap = import t ?embargo_path (target :> EP.In.desc) in
       Log.info (fun f -> f "Disembargo target is %t" cap#pp);
@@ -1557,7 +1633,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
             failwith msg
           | _ -> ()
         end;
-        Import.mark_resolved im new_target;
+        let get_import id =
+          let i = Imports.find_exn t.imports id in
+          Import.inc_ref i;
+          i
+        in
+        Import.mark_resolved im ~get_import new_target;
         match Import.get_proxy im with
         | Some x ->
           (* This will also dec_ref the old remote-promise and the import. *)
