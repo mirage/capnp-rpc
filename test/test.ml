@@ -764,7 +764,7 @@ let test_local_embargo_14 () =
   CS.flush c s;
   CS.check_finished c s
 
-let _test_local_embargo_15 () =
+let test_local_embargo_15 () =
   let client_bs = Services.manual () in
   let server_bs = Services.manual () in
   let c, s = CS.create
@@ -1404,7 +1404,7 @@ let tests = [
   "Local embargo 12", `Quick, test_local_embargo_12;
   "Local embargo 13", `Quick, test_local_embargo_13;
   "Local embargo 14", `Quick, test_local_embargo_14;
-(*   "Local embargo 14", `Quick, test_local_embargo_15; *) (* XXX - failing *)
+  "Local embargo 14", `Quick, test_local_embargo_15;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
