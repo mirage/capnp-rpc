@@ -89,7 +89,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     type t = {
       id : ImportId.t;
-      mutable ref_count : int; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
+      mutable ref_count : RC.t; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
       mutable count : int;     (* Number of times remote sent us this. *)
       mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
       mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
@@ -109,7 +109,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Fmt.pf f "i%a" ImportId.pp t.id
 
     let dump f t =
-      Fmt.pf f "%a" pp_weak (Weak_ptr.get t.proxy)
+      Fmt.pf f "%a -> %a"
+        RC.pp t.ref_count
+        pp_weak (Weak_ptr.get t.proxy)
 
     let get_proxy t = Weak_ptr.get t.proxy
 
@@ -121,17 +123,21 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* A new local reference (resolve_target). *)
     let inc_ref t =
       assert (t.count > 0);
-      t.ref_count <- t.ref_count + 1
+      let pp f = pp f t in
+      t.ref_count <- RC.succ ~pp t.ref_count
+
+    let clear_proxy t =
+      Weak_ptr.clear t.proxy
 
     (* A [resolve_target] or our switchable no longer needs us. *)
     let rec dec_ref t =
-      t.ref_count <- t.ref_count - 1;
-      if t.ref_count = 0 then (
+      let pp f = pp f t in
+      t.ref_count <- RC.pred ~pp t.ref_count;
+      if RC.is_zero t.ref_count then (
         assert (t.count > 0);
         let count = t.count in
         t.used <- false;
         t.count <- 0;
-        Weak_ptr.clear t.proxy;
         let free_resolution =
           match t.resolution with
           | `Import i -> dec_ref i
@@ -181,12 +187,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let init_proxy t proxy =
       assert (get_proxy t = None);
-      inc_ref t;
       Weak_ptr.set t.proxy proxy
 
     let check t =
-      if t.ref_count < 1 then
-        Debug.invariant_broken (fun f -> Fmt.pf f "Import local ref-count < 1, but still in table: %a" dump t);
+      let pp f = pp f t in
+      RC.check ~pp t.ref_count;
       (* Count starts at one and is only incremented, or set to zero when ref_count is zero. *)
       if t.count < 1 then
         Debug.invariant_broken (fun f -> Fmt.pf f "Import remote count < 1, but still in table: %a" dump t);
@@ -200,7 +205,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | _ -> ()
 
     let v ~mark_dirty ~settled id = {
-      ref_count = 0;            (* ([init_proxy] will be called immediately after this) *)
+      ref_count = RC.one;
       count = 1;
       id = id;
       proxy = Weak_ptr.empty ();
@@ -1212,8 +1217,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
         end
       in
       let release = lazy (
-        (* [init_proxy] below will do the [inc_ref] *)
-        Import.dec_ref import |> apply_import_actions t
+        Import.clear_proxy import;
+        Import.dec_ref import |> apply_import_actions t;
       ) in
       (* Imports can resolve to another cap (if unsettled) or break. *)
       let switchable = new switchable ~release cap in
@@ -1236,8 +1241,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
           Core_types.inc_ref proxy;
           (proxy :> Core_types.cap)
         | None ->
-          (* The switchable got GC'd. It may have already dec-ref'd the import, or
-             it may do so later. Make a new one. *)
+          (* The switchable got GC'd. It has already dec-ref'd the import.
+             Make a new proxy. *)
+          Import.inc_ref import;
           (set_import_proxy t ~settled import :> Core_types.cap)
 
     (* We previously pipelined messages to [old_path], which now turns out to be

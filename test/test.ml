@@ -1130,9 +1130,11 @@ let test_resolve_3 () =
   CS.flush c s;
   CS.check_finished c s
 
-(* Resolving an export to another export, which we haven't seen yet. *)
+(* Resolving a remote's export to another export, which we haven't seen yet.
+   We must add the new import to the table before looking it up to set the
+   disembargo target. *)
 let test_resolve_4 () =
-  let service = Services.manual () in (* Bootstrap for vat 0 *)
+  let service = Services.manual () in
   let c, s = CS.create
     ~client_tags:Test_utils.client_tags
     ~server_tags:Test_utils.server_tags service
@@ -1153,7 +1155,7 @@ let test_resolve_4 () =
 
 (* Finishing a question releases multiple imports *)
 let test_resolve_5 () =
-  let service = Services.manual () in (* Bootstrap for vat 1 *)
+  let service = Services.manual () in
   let c, s = CS.create
     ~client_tags:Test_utils.client_tags
     ~server_tags:Test_utils.server_tags service
@@ -1174,6 +1176,35 @@ let test_resolve_5 () =
   dec_ref q1;
   dec_ref to_service;
   dec_ref promise;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* When a proxy is released it must be removed from the import,
+   which may need to hang around for forwarding. *)
+let test_resolve_6 () =
+  let client_bs = Services.manual () in
+  let server_bs = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags ~client_bs
+    ~server_tags:Test_utils.server_tags server_bs
+  in
+  let to_server = C.bootstrap c in
+  let to_client = S.bootstrap s in
+  CS.flush c s;
+  let x = call_for_cap to_server "q1" [] in
+  let y = call_for_cap to_client "q2" [] in
+  S.handle_msg s ~expect:"call:q1";
+  resolve_ok (server_bs#pop0 "q1") "a1" [to_client; Core_types.null];
+  C.handle_msg c ~expect:"call:q2";
+  resolve_ok (client_bs#pop0 "q2") "a2" [x];
+  C.handle_msg c ~expect:"return:a1";
+  C.handle_msg c ~expect:"resolve";
+  S.handle_msg s ~expect:"return:a2";
+  C.handle_msg c ~expect:"finish";
+  S.handle_msg s ~expect:"finish";
+  S.handle_msg s ~expect:"release";
+  dec_ref y;
+  dec_ref to_server;
   CS.flush c s;
   CS.check_finished c s
 
@@ -1490,6 +1521,7 @@ let tests = [
   "Resolve 3", `Quick, test_resolve_3;
   "Resolve 4", `Quick, test_resolve_4;
   "Resolve 5", `Quick, test_resolve_5;
+  "Resolve 6", `Quick, test_resolve_6;
   "Ref-counts", `Quick, test_ref_counts;
   "Auto-release", `Quick, test_auto_release;
   "Unimplemented", `Quick, test_unimplemented;

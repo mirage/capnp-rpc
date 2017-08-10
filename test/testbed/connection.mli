@@ -44,6 +44,8 @@ module type ENDPOINT = sig
 
   val stats : t -> Capnp_rpc.Stats.t
 
+  val check_invariants : t -> unit
+
   val check_finished : t -> name:string -> unit
 
   val disconnect : t -> Capnp_rpc.Exception.t -> unit
