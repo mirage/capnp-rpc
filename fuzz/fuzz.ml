@@ -39,6 +39,7 @@ let code =
   else (
     let script = open_out test_script_path in
     let code = Format.formatter_of_out_channel script in
+    Fmt.pf code "[@@@@@@ocaml.warning \"-26-27\"]@.";
     Fmt.pf code "@[<v2>let test_ () =@,";
     at_exit (fun () ->
         Fmt.pf code "CS.check_finished c s";
