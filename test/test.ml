@@ -860,6 +860,25 @@ let test_cancel_2 () =
   CS.flush c s;
   CS.check_finished c s
 
+(* Don't forget to release the returned cap if the question was cancelled. *)
+let test_cancel_3 () =
+  let service = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags
+    ~server_tags:Test_utils.server_tags service
+  in
+  let proxy_to_service = C.bootstrap c in
+  let q1 = call proxy_to_service "q1" [] in
+  S.handle_msg s ~expect:"bootstrap";
+  S.handle_msg s ~expect:"call:q1";
+  resolve_ok (service#pop0 "q1") "reply" [Core_types.null];
+  C.handle_msg c ~expect:"return:(boot)";
+  dec_ref q1;
+  C.handle_msg c ~expect:"return:reply";
+  dec_ref proxy_to_service;
+  CS.flush c s;
+  CS.check_finished c s
+
 (* Asking for the same field twice gives the same object. *)
 let test_duplicates () =
   let service = Services.manual () in
@@ -1108,6 +1127,84 @@ let test_resolve_3 () =
   dec_ref proxy_to_service;
   CS.flush c s;
   dec_ref q2;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* Resolving a remote's export to another export, which we haven't seen yet.
+   We must add the new import to the table before looking it up to set the
+   disembargo target. *)
+let test_resolve_4 () =
+  let service = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags
+    ~server_tags:Test_utils.server_tags service
+  in
+  let to_server = C.bootstrap c in
+  let x = Cap_proxy.local_promise () in
+  let q1 = call to_server "q1" [x] in
+  x#resolve (Services.manual () :> Core_types.cap);
+  CS.flush c s;
+  let to_x, a1 = service#pop1 "q1" in
+  resolve_ok a1 "a1" [];
+  dec_ref to_x;
+  dec_ref q1;
+  dec_ref x;
+  dec_ref to_server;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* Finishing a question releases multiple imports *)
+let test_resolve_5 () =
+  let service = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags
+    ~server_tags:Test_utils.server_tags service
+  in
+  let promise = Cap_proxy.local_promise () in
+  let to_service = C.bootstrap c in
+  let q1 = call to_service "q1" [promise] in
+  S.handle_msg s ~expect:"bootstrap";
+  S.handle_msg s ~expect:"call:q1";
+  let to_promise, a1 = service#pop1 "q1" in
+  resolve_ok a1 "a1" [to_promise];
+  C.handle_msg c ~expect:"return:(boot)";
+  promise#resolve (Services.manual () :> Core_types.cap);
+  C.handle_msg c ~expect:"return:a1";
+  S.handle_msg s ~expect:"finish";      (* Bootstrap *)
+  S.handle_msg s ~expect:"resolve";
+  S.handle_msg s ~expect:"finish";
+  dec_ref q1;
+  dec_ref to_service;
+  dec_ref promise;
+  CS.flush c s;
+  CS.check_finished c s
+
+(* When a proxy is released it must be removed from the import,
+   which may need to hang around for forwarding. *)
+let test_resolve_6 () =
+  let client_bs = Services.manual () in
+  let server_bs = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags ~client_bs
+    ~server_tags:Test_utils.server_tags server_bs
+  in
+  let to_server = C.bootstrap c in
+  let to_client = S.bootstrap s in
+  CS.flush c s;
+  let x = call_for_cap to_server "q1" [] in
+  let y = call_for_cap to_client "q2" [] in
+  S.handle_msg s ~expect:"call:q1";
+  resolve_ok (server_bs#pop0 "q1") "a1" [to_client; Core_types.null];
+  C.handle_msg c ~expect:"call:q2";
+  resolve_ok (client_bs#pop0 "q2") "a2" [x];
+  C.handle_msg c ~expect:"return:a1";
+  C.handle_msg c ~expect:"resolve";
+  S.handle_msg s ~expect:"return:a2";
+  C.handle_msg c ~expect:"finish";
+  S.handle_msg s ~expect:"finish";
+  S.handle_msg s ~expect:"release";
+  dec_ref y;
+  dec_ref to_server;
   CS.flush c s;
   CS.check_finished c s
 
@@ -1404,11 +1501,12 @@ let tests = [
   "Local embargo 12", `Quick, test_local_embargo_12;
   "Local embargo 13", `Quick, test_local_embargo_13;
   "Local embargo 14", `Quick, test_local_embargo_14;
-  "Local embargo 14", `Quick, test_local_embargo_15;
+  "Local embargo 15", `Quick, test_local_embargo_15;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
   "Cancel 2", `Quick, test_cancel_2;
+  "Cancel 3", `Quick, test_cancel_3;
   "Duplicates", `Quick, test_duplicates;
   "Re-export", `Quick, test_single_export;
   "Shorten field", `Quick, test_shorten_field;
@@ -1421,6 +1519,9 @@ let tests = [
   "Resolve", `Quick, test_resolve;
   "Resolve 2", `Quick, test_resolve_2;
   "Resolve 3", `Quick, test_resolve_3;
+  "Resolve 4", `Quick, test_resolve_4;
+  "Resolve 5", `Quick, test_resolve_5;
+  "Resolve 6", `Quick, test_resolve_6;
   "Ref-counts", `Quick, test_ref_counts;
   "Auto-release", `Quick, test_auto_release;
   "Unimplemented", `Quick, test_unimplemented;

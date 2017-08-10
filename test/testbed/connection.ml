@@ -48,7 +48,7 @@ module type ENDPOINT = sig
   val bootstrap : t -> cap
 
   val stats : t -> Capnp_rpc.Stats.t
-
+  val check_invariants : t -> unit
   val check_finished : t -> name:string -> unit
 
   val disconnect : t -> Capnp_rpc.Exception.t -> unit
@@ -119,6 +119,9 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   let stats t = Conn.stats t.conn
 
   let finished = Capnp_rpc.Exception.v "Tests finished"
+
+  let check_invariants t =
+    Conn.check t.conn
 
   let check_finished t ~name =
     Alcotest.(check stats_t) (name ^ " finished") Stats.zero @@ stats t;
