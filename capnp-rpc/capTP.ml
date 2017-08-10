@@ -65,6 +65,123 @@ module Make (EP : Message_types.ENDPOINT) = struct
   module Exports = Table.Allocating(ExportId)
   module Imports = Table.Tracking(ImportId)
 
+  module Import = struct
+    (* An entry in the imports table has a corresponding switchable, which the user of the library holds.
+       There are three possible events:
+
+       - The user reduces the switchable's ref-count to zero, indicating that
+         they don't need the import any longer.
+
+       - The peer resolves the import to something else (or the connection is
+         lost, resolving it to an exception).
+
+       - The peer quotes the same import ID again.
+         If we hadn't sent a release before this, it must be for the same object.
+         If we had sent a release then it might or might not be the same object.
+
+       We hold a weak-ref to the switchable so that if the user leaks it we will notice.
+
+       [ref_count] is zero iff [count] is zero:
+       - Initially, both are one.
+       - If we set [ref_count] to zero, we send a release and set [count] to zero.
+       - There is no other way for [count] to become zero.
+     *)
+    type t = {
+      id : ImportId.t;
+      mutable ref_count : int; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
+      mutable count : int;     (* Number of times remote sent us this. *)
+      mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
+      mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
+      mutable resolution : [In.desc | `Error]; (* [`None] if not yet resolved. *)
+      proxy : Cap_proxy.resolver_cap Weak_ptr.t (* Our switchable ([Weak_ptr.t] is mutable). *)
+    }
+
+    let id t = t.id
+
+    let pp f t =
+      Fmt.pf f "i%a" ImportId.pp t.id
+
+    let dump f t =
+      Fmt.pf f "%a" pp_weak (Weak_ptr.get t.proxy)
+
+    let get_proxy t = Weak_ptr.get t.proxy
+
+    (* A new export from the peer. *)
+    let inc_count t =
+      assert (t.count > 0);
+      t.count <- t.count + 1
+
+    let maybe_release_import t =
+      if t.ref_count = 0 then (
+        assert (t.count > 0);
+        let count = t.count in
+        t.used <- false;
+        t.count <- 0;
+        Weak_ptr.clear t.proxy;
+        [`Release count]
+      ) else []
+
+    (* A new local reference (resolve_target). *)
+    let inc_ref t =
+      assert (t.count > 0);
+      t.ref_count <- t.ref_count + 1
+
+    (* A [resolve_target] or our switchable no longer needs us. *)
+    let dec_ref t =
+      t.ref_count <- t.ref_count - 1;
+      maybe_release_import t
+
+    let mark_used t =
+      t.used <- true
+
+    let used t = t.used
+
+    let mark_resolved t result =
+      if t.resolution <> `None then
+        Debug.failf "Got Resolve for already-resolved import %a" pp t
+      else match result with
+        | Ok desc -> t.resolution <- (desc :> [In.desc | `Error])
+        | Error _ -> t.resolution <- `Error
+
+    let resolution t = t.resolution
+
+    let message_target t =
+      `ReceiverHosted t.id
+
+    let embargo_path t =
+      if t.used then Some (message_target t) else None
+
+    let init_proxy t proxy =
+      assert (get_proxy t = None);
+      inc_ref t;
+      Weak_ptr.set t.proxy proxy
+
+    let check t =
+      if t.ref_count < 1 then
+        Debug.invariant_broken (fun f -> Fmt.pf f "Import local ref-count < 1, but still in table: %a" dump t);
+      (* Count starts at one and is only incremented, or set to zero when ref_count is zero. *)
+      if t.count < 1 then
+        Debug.invariant_broken (fun f -> Fmt.pf f "Import remote count < 1, but still in table: %a" dump t);
+      match get_proxy t with
+      | Some x -> x#check_invariants
+      | None -> ()
+
+    let lost_connection t ~broken_cap =
+      match get_proxy t with
+      | Some switchable when switchable#problem = None -> switchable#resolve broken_cap
+      | _ -> ()
+
+    let v ~mark_dirty ~settled id = {
+      ref_count = 0;            (* ([init_proxy] will be called immediately after this) *)
+      count = 1;
+      id = id;
+      proxy = Weak_ptr.empty ();
+      settled;
+      resolution = `None;
+      used = mark_dirty;
+    }
+  end
+
   module Question = struct
     (* State model for questions:
 
@@ -255,123 +372,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
         params_for_release;
         pipelined_fields = PathSet.empty
       }
-  end
-
-  module Import = struct
-    (* An entry in the imports table has a corresponding switchable, which the user of the library holds.
-       There are three possible events:
-
-       - The user reduces the switchable's ref-count to zero, indicating that
-         they don't need the import any longer.
-
-       - The peer resolves the import to something else (or the connection is
-         lost, resolving it to an exception).
-
-       - The peer quotes the same import ID again.
-         If we hadn't sent a release before this, it must be for the same object.
-         If we had sent a release then it might or might not be the same object.
-
-       We hold a weak-ref to the switchable so that if the user leaks it we will notice.
-
-       [ref_count] is zero iff [count] is zero:
-       - Initially, both are one.
-       - If we set [ref_count] to zero, we send a release and set [count] to zero.
-       - There is no other way for [count] to become zero.
-     *)
-    type t = {
-      id : ImportId.t;
-      mutable ref_count : int; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
-      mutable count : int;     (* Number of times remote sent us this. *)
-      mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
-      mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
-      mutable resolution : [In.desc | `Error]; (* [`None] if not yet resolved. *)
-      proxy : Cap_proxy.resolver_cap Weak_ptr.t (* Our switchable ([Weak_ptr.t] is mutable). *)
-    }
-
-    let id t = t.id
-
-    let pp f t =
-      Fmt.pf f "i%a" ImportId.pp t.id
-
-    let dump f t =
-      Fmt.pf f "%a" pp_weak (Weak_ptr.get t.proxy)
-
-    let get_proxy t = Weak_ptr.get t.proxy
-
-    (* A new export from the peer. *)
-    let inc_count t =
-      assert (t.count > 0);
-      t.count <- t.count + 1
-
-    let maybe_release_import t =
-      if t.ref_count = 0 then (
-        assert (t.count > 0);
-        let count = t.count in
-        t.used <- false;
-        t.count <- 0;
-        Weak_ptr.clear t.proxy;
-        [`Release count]
-      ) else []
-
-    (* A new local reference (resolve_target). *)
-    let inc_ref t =
-      assert (t.count > 0);
-      t.ref_count <- t.ref_count + 1
-
-    (* A [resolve_target] or our switchable no longer needs us. *)
-    let dec_ref t =
-      t.ref_count <- t.ref_count - 1;
-      maybe_release_import t
-
-    let mark_used t =
-      t.used <- true
-
-    let used t = t.used
-
-    let mark_resolved t result =
-      if t.resolution <> `None then
-        Debug.failf "Got Resolve for already-resolved import %a" pp t
-      else match result with
-        | Ok desc -> t.resolution <- (desc :> [In.desc | `Error])
-        | Error _ -> t.resolution <- `Error
-
-    let resolution t = t.resolution
-
-    let message_target t =
-      `ReceiverHosted t.id
-
-    let embargo_path t =
-      if t.used then Some (message_target t) else None
-
-    let init_proxy t proxy =
-      assert (get_proxy t = None);
-      inc_ref t;
-      Weak_ptr.set t.proxy proxy
-
-    let check t =
-      if t.ref_count < 1 then
-        Debug.invariant_broken (fun f -> Fmt.pf f "Import local ref-count < 1, but still in table: %a" dump t);
-      (* Count starts at one and is only incremented, or set to zero when ref_count is zero. *)
-      if t.count < 1 then
-        Debug.invariant_broken (fun f -> Fmt.pf f "Import remote count < 1, but still in table: %a" dump t);
-      match get_proxy t with
-      | Some x -> x#check_invariants
-      | None -> ()
-
-    let lost_connection t ~broken_cap =
-      match get_proxy t with
-      | Some switchable when switchable#problem = None -> switchable#resolve broken_cap
-      | _ -> ()
-
-    let v ~mark_dirty ~settled id = {
-      ref_count = 0;            (* ([init_proxy] will be called immediately after this) *)
-      count = 1;
-      id = id;
-      proxy = Weak_ptr.empty ();
-      settled;
-      resolution = `None;
-      used = mark_dirty;
-    }
   end
 
   type message_target_cap = [
