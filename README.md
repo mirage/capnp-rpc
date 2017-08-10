@@ -1,6 +1,6 @@
 ## OCaml Cap'n Proto RPC library
 
-Status: RPC Level 1 with two-party networking is working.
+Status: RPC Level 1 with two-party networking is complete.
 
 Copyright 2017 Docker, Inc.
 See [LICENSE.md](LICENSE.md) for details.
@@ -27,10 +27,9 @@ This library should be used with the [capnp-ocaml][] schema compiler, which gene
 
 ### Status
 
-This library is new and unfinished, but it is usable.
-It has been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
+The library been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
 
-All level 1 features are implemented, but check the issues page for known bugs.
+All level 1 features are implemented.
 
 The library does not currently provide support for establishing new encrypted network connections.
 Instead, the user of the library is responsible for creating a secure channel to the target service and then giving it to the library.
@@ -252,10 +251,29 @@ let () =
   end
 ```
 
-The service is now usable:
+If you're building with jbuilder, here's a suitable `jbuild` file:
 
 ```
-$ ./main
+(jbuild_version 1)
+
+(executable (
+  (name main)
+  (libraries (capnp-rpc-lwt capnp-rpc-unix))
+  (flags (:standard -w -53-55))
+))
+
+(rule
+ ((targets (echo_api.ml echo_api.mli))
+  (deps (echo_api.capnp))
+  (action  (run capnpc -o ocaml ${<}))))
+```
+
+The service is now usable:
+
+```bash
+$ opam install capnp-rpc-unix
+$ jbuilder build --dev main.exe
+$ ./_build/default/main.exe
 Got reply "echo:foo"
 ```
 
@@ -279,7 +297,8 @@ interface Echo {
 This version of the protocol adds a `heartbeat` method.
 Instead of returning the text directly, it will send it to a callback at regular intervals.
 
-Run `capnp compile` again to update the generated files.
+Run `capnp compile` again to update the generated files
+(if you're using the jbuild file then this will happen automatically and you should delete the generated `echo_api.ml` and `echo_api.mli` files from the source directory instead).
 
 The new `heartbeat_impl` method looks like this:
 
@@ -318,7 +337,7 @@ let notify callback msg =
   loop 3
 ```
 
-Exercise: implement `Callback.log` (hint: it's very similar to `Client.ping`)
+Exercise: implement `Callback.log` (hint: it's very similar to `Client.ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
 
 To write the client for `Echo.heartbeat`, we take a user-provided callback object
 and put it into the request:
@@ -339,6 +358,7 @@ In `main.ml`, we can now wrap a regular OCaml function as the callback:
 
 ```ocaml
 open Lwt.Infix
+open Capnp_rpc_lwt
 
 let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
@@ -356,9 +376,9 @@ let () =
   end
 ```
 
-Exercise: implement `Callback.service` (hint: it's similar to the original `ping` service)
+Exercise: implement `Callback.service fn` (hint: it's similar to the original `ping` service, but pass the message to `fn` and return with `Service.return_empty ()`)
 
-And testing it should give:
+And testing it should give (three times, at one second intervals):
 
 ```
 $ ./main
@@ -367,7 +387,7 @@ Callback got "foo"
 Callback got "foo"
 ```
 
-Note that the client gives the echo service permission to call the callback service by sending a message containing the callback to the service.
+Note that the client gives the echo service permission to call its callback service by sending a message containing the callback to the service.
 No other access control updates are needed.
 
 Note also a design choice here in the API: we could have made the `Echo.Client.heartbeat` function take an OCaml callback and wrap it, but instead we chose to take a service and make `main.ml` do the wrapping.
@@ -491,7 +511,7 @@ let run_client service =
 Here, we ask the server for its logger and then (without waiting for the reply), tell it to send heartbeat messages to the promised logger.
 
 Previously, when we exported our local `callback` object, it arrived at the service as a proxy that sent messages back to the client over the network.
-But when we send the server's own logger back to it, the RPC system detects this and "shortens" the path;
+But when we send the (promise of the) server's own logger back to it, the RPC system detects this and "shortens" the path;
 the capability reference that the `heartbeat` handler gets is a direct reference to its own logger, which
 it can call without using the network.
 

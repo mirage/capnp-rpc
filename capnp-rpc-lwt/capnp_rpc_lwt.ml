@@ -19,6 +19,8 @@ module Capability = struct
   let dec_ref = Core_types.dec_ref
   let pp f x = x#pp f
 
+  let problem x = x#problem
+
   let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) (req : 'a Request.t) =
     Log.info (fun f -> f "Calling %a" Capnp.RPC.MethodID.pp m);
     let msg = Request.finish m req in

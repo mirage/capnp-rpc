@@ -52,7 +52,7 @@ module Make(C : S.CORE_TYPES) = struct
       method resolve (cap:cap) =
         match state with
         | Unresolved u when RC.is_zero u.rc ->
-          Log.info (fun f -> f "Ignoring resolution of unused promise %t to %t" self#pp cap#pp);
+          Log.debug (fun f -> f "Ignoring resolution of unused promise %t to %t" self#pp cap#pp);
           C.dec_ref cap
         | Unresolved {queue; rc} ->
           let pp f = self#pp f in
@@ -72,7 +72,7 @@ module Make(C : S.CORE_TYPES) = struct
             | None -> ()
           end;
           state <- Resolved cap;
-          Log.info (fun f -> f "Resolved local cap promise: %t" self#pp);
+          Log.debug (fun f -> f "Resolved local cap promise: %t" self#pp);
           let forward = function
             | Watcher fn -> C.inc_ref cap; fn cap
             | Call (result, msg) -> cap#call result msg

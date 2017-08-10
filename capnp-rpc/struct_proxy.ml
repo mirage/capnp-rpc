@@ -115,7 +115,7 @@ module Make (C : S.CORE_TYPES) = struct
         | ForwardingField c -> c#update_rc d
 
       method resolve cap =
-        Log.info (fun f -> f "Resolved field(%a) to %t" Debug.OID.pp id cap#pp);
+        Log.debug (fun f -> f "Resolved field(%a) to %t" Debug.OID.pp id cap#pp);
         match state with
         | ForwardingField _ -> failwith "Field already resolved!"
         | PromiseField _ -> state <- ForwardingField cap
@@ -250,8 +250,8 @@ module Make (C : S.CORE_TYPES) = struct
           Debug.OID.pp id
 
     method resolve x =
-      Log.info (fun f -> f "@[Updating: %t@\n\
-                            @      to: -> %t" self#pp x#pp);
+      Log.debug (fun f -> f "@[Updating: %t@\n\
+                             @      to: -> %t" self#pp x#pp);
       match state with
       | Finished -> dec_ref x (* Cancelled *)
       | Forwarding x -> failwith (Fmt.strf "Already forwarding (to %t)!" x#pp)
@@ -431,6 +431,6 @@ module Make (C : S.CORE_TYPES) = struct
     method sealed_dispatch _ = None
 
     initializer
-      Log.info (fun f -> f "Created %t" self#pp)
+      Log.debug (fun f -> f "Created %t" self#pp)
   end
 end
