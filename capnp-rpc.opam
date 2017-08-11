@@ -10,7 +10,7 @@ build: ["jbuilder" "build" "-p" name "-j" jobs]
 build-test: ["jbuilder" "runtest" "-p" name]
 
 depends: [
-  "capnp"
+  "uint"
   "astring"
   "fmt"
   "logs"
