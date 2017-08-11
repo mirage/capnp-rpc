@@ -39,23 +39,11 @@ See `test-bin/calc.ml` for an example program that can provide or consume a serv
 Level 3 support is not implemented yet, so if host Alice has connections to hosts Bob and Carol and passes an object hosted at Bob to Carol, the resulting messages between Carol and Bob will be routed via Alice.
 
 
-### Building
+### Installing
 
-To build, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
+To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
 
-    git clone https://github.com/mirage/capnp-rpc.git
-    cd capnp-rpc
-    opam pin add -nyk git capnp-rpc .
-    opam pin add -nyk git capnp-rpc-lwt .
-    opam pin add -nyk git capnp-rpc-unix .
-    opam depext capnp-rpc-lwt alcotest
-    opam install --deps-only -t capnp-rpc-unix
-    make test
-
-The `examples` directory contains some test services.
-Running `make test` will run through the tests in `test-lwt/test.ml`, which make use of the examples.
-
-If you have trouble building, you can build it with Docker from a known-good state using `docker build .`.
+    opam depext -i capnp-rpc-unix
 
 ### Structure of the library
 
@@ -520,6 +508,21 @@ For full details of the API, see the comments in `capnp-rpc-lwt/capnp_rpc_lwt.ml
 
 ### Contributing
 
+### Building
+
+To build:
+
+    git clone https://github.com/mirage/capnp-rpc.git
+    cd capnp-rpc
+    opam pin add -nyk git capnp-rpc .
+    opam pin add -nyk git capnp-rpc-lwt .
+    opam pin add -nyk git capnp-rpc-unix .
+    opam depext capnp-rpc-lwt alcotest
+    opam install --deps-only -t capnp-rpc-unix
+    make test
+
+If you have trouble building, you can build it with Docker from a known-good state using `docker build .`.
+
 #### Testing
 
 Running `make test` will run through the tests in `test-lwt/test.ml`, which run some in-process examples.
@@ -531,7 +534,6 @@ The calculator example can also be run across two Unix processes:
 
 2. In another terminal, run the client:
    `./_build/default/test-bin/calc.bc connect unix:/tmp/calc.socket`
-
 
 #### Fuzzing
 
