@@ -1,8 +1,11 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
 
+type t = Api.Service.Registry.t Capability.t
+
 let version_service =
   let module Version = Api.Service.Version in
+
   Version.local @@ object
     inherit Version.service
 
@@ -14,7 +17,6 @@ let version_service =
       Service.return resp
   end
 
-(* A service that can return other services. *)
 let service () =
   let module Registry = Api.Service.Registry in
   Registry.local @@ object
@@ -97,13 +99,11 @@ module Client = struct
     Params.service_set p (Some echo_service);
     Capability.call_for_unit_exn t method_id req
 
-  (* Waits until unblocked before returning *)
   let echo_service t =
     let open Registry.EchoService in
     let req = Capability.Request.create_no_args () in
     Capability.call_for_caps t method_id req Results.service_get_pipelined
 
-  (* Returns a promise immediately. Resolves promise when unblocked. *)
   let echo_service_promise t =
     let open Registry.EchoServicePromise in
     let req = Capability.Request.create_no_args () in
@@ -127,6 +127,8 @@ end
 
 module Version = struct
   module Version = Api.Client.Version
+
+  type t = Version.t Capability.t
 
   let read t =
     let open Version.Read in

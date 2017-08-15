@@ -34,7 +34,7 @@ let connect addr =
     Logs.info (fun f -> f "Evaluating expression...");
     let remote_add = Calc.Client.getOperator calc `Add in
     let result = Calc.Client.evaluate calc Calc.(Call (remote_add, [Float 40.0; Float 2.0])) in
-    Calc.Client.read result >>= fun v ->
+    Calc.Client.Value.read result >>= fun v ->
     Fmt.pr "Result: %f@." v;
     Lwt.return_unit
   end

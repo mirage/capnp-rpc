@@ -1,6 +1,8 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
 
+type t = Api.Service.Echo.t Capability.t
+
 (* This was supposed to be a simple ping service, but I wanted to test out-of-order
    replies, so it has become a bit messy... *)
 let service () =
@@ -38,8 +40,6 @@ let service () =
 
 module Client = struct
   module Echo = Api.Client.Echo
-
-  type t = Echo.t Capability.t
 
   let ping t ?(slow=false) msg =
     let open Echo.Ping in

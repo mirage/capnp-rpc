@@ -1,9 +1,11 @@
-(* This is the OCaml version of the C++ capnp calculator example. *)
-
 open Lwt.Infix
 open Capnp_rpc_lwt
 
 module Api = Calculator.MakeRPC(Capnp_rpc_lwt)
+
+type calc = [`Calculator_97983392df35cc36]
+type value = [`Value_c3e69d34d3ee48d2]
+type fn = [`Function_ede83a3d96840394]
 
 type expr =
   | Float of float
@@ -33,6 +35,9 @@ let rec write_expr b expr =
 (* A more user-friendly API for the Calculator interface *)
 module Client = struct
   module C = Api.Client.Calculator
+
+  type t = calc Capability.t
+
   let evaluate t expr =
     let open C.Evaluate in
     let req, p = Capability.Request.create Params.init_pointer in
@@ -51,21 +56,29 @@ module Client = struct
       );
     Capability.call_for_caps t method_id req Results.func_get_pipelined
 
-  let read v =
-    let open Api.Client.Calculator.Value.Read in
-    let req = Capability.Request.create_no_args () in
-    Capability.call_for_value_exn v method_id req >|= Results.value_get
+  module Value = struct
+    type t = value Capability.t
 
-  let final_read v =
-    read v >|= fun result ->
-    Capability.dec_ref v;
-    result
+    let read v =
+      let open Api.Client.Calculator.Value.Read in
+      let req = Capability.Request.create_no_args () in
+      Capability.call_for_value_exn v method_id req >|= Results.value_get
 
-  let call fn args =
-    let open Api.Client.Calculator.Function.Call in
-    let req, p = Capability.Request.create Params.init_pointer in
-    ignore (Params.params_set_list p args);
-    Capability.call_for_value_exn fn method_id req >|= Results.value_get
+    let final_read v =
+      read v >|= fun result ->
+      Capability.dec_ref v;
+      result
+  end
+
+  module Fn = struct
+    type t = fn Capability.t
+
+    let call fn args =
+      let open Api.Client.Calculator.Function.Call in
+      let req, p = Capability.Request.create Params.init_pointer in
+      ignore (Params.params_set_list p args);
+      Capability.call_for_value_exn fn method_id req >|= Results.value_get
+  end
 end
 
 (* Export a literal float as a service with a [read] method. *)
@@ -100,9 +113,9 @@ let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t = fu
   | Call (f, params) ->
     let params = params |> Lwt_list.map_p (fun p ->
         let value = eval ~args p in
-        Client.final_read value
+        Client.Value.final_read value
       ) in
-    let result = params >>= Client.call f in
+    let result = params >>= Client.Fn.call f in
     let open Api.Service.Calculator in
     Value.local @@ object
       inherit Value.service
@@ -145,7 +158,7 @@ let fn n_args body =
       release_params ();
       (* Functions return floats, not Value objects, so we have to wait here. *)
       Service.return_lwt (fun () ->
-          Client.final_read value >|= fun value ->
+          Client.Value.final_read value >|= fun value ->
           let resp, r = Service.Response.create Results.init_pointer in
           Results.value_set r value;
           Ok resp
