@@ -28,19 +28,19 @@ and Fn : sig
       and evaluates [body]. *)
 
   val local_binop : (float -> float -> float) -> Fn.t
-  (** [local_binop fn] is a capability to a local service providing function [op] (of two arguments). *)
+  (** [local_binop fn] is a capability to a local service providing function [fn] (of two arguments). *)
 
   val add : t
-  (** [add] is [binop ( +. )] *)
+  (** [add] is [local_binop ( +. )] *)
 
   val sub : t
-  (** [sub] is [binop ( -. )] *)
+  (** [sub] is [local_binop ( -. )] *)
 
   val mul : t
-  (** [mul] is [binop ( *. )] *)
+  (** [mul] is [local_binop ( *. )] *)
 
   val div : t
-  (** [div] is [binop ( /. )] *)
+  (** [div] is [local_binop ( /. )] *)
 end
 
 and Expr : sig
@@ -59,4 +59,4 @@ val getOperator : t -> [`Add | `Subtract | `Multiply | `Divide] -> Fn.t
 (** [getOperator t op] is a remote operator function provided by [t]. *)
 
 val local : t
-(* A capability to a local calculator service *)
+(** A capability to a local calculator service *)
