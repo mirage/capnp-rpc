@@ -169,7 +169,7 @@ module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
 open Lwt.Infix
 open Capnp_rpc_lwt
 
-let service =
+let local =
   let module Echo = Api.Service.Echo in
   Echo.local @@ object
     inherit Echo.service
@@ -186,7 +186,7 @@ let service =
 
 The first line (`module Api`) instantiates the generated code to use this library's RPC implementation.
 
-`service` must provide one OCaml method for each method defined in the schema file, with `_impl` on the end of each one.
+The service object must provide one OCaml method for each method defined in the schema file, with `_impl` on the end of each one.
 
 There's a bit of ugly boilerplate here, but it's quite simple:
 
@@ -207,15 +207,13 @@ Here, we have a *builder* for the parameters and a *reader* for the results.
 `Api.Client.Echo.Ping.method_id` is a globally unique identifier for the ping method.
 
 ```ocaml
-module Client = struct
-  module Echo = Api.Client.Echo
+module Echo = Api.Client.Echo
 
-  let ping t msg =
-    let open Echo.Ping in
-    let request, params = Capability.Request.create Params.init_pointer in
-    Params.msg_set params msg;
-    Capability.call_for_value_exn t method_id request >|= Results.reply_get
-end
+let ping t msg =
+  let open Echo.Ping in
+  let request, params = Capability.Request.create Params.init_pointer in
+  Params.msg_set params msg;
+  Capability.call_for_value_exn t method_id request >|= Results.reply_get
 ```
 
 `Capability.call_for_value_exn` sends the request message to the service and waits for the response to arrive.
@@ -232,8 +230,8 @@ open Lwt.Infix
 
 let () =
   Lwt_main.run begin
-    let service = Echo.service in
-    Echo.Client.ping service "foo" >>= fun reply ->
+    let service = Echo.local in
+    Echo.ping service "foo" >>= fun reply ->
     Fmt.pr "Got reply %S@." reply;
     Lwt.return_unit
   end
@@ -325,18 +323,18 @@ let notify callback msg =
   loop 3
 ```
 
-Exercise: implement `Callback.log` (hint: it's very similar to `Client.ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
+Exercise: implement `Callback.log` (hint: it's very similar to `ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
 
 To write the client for `Echo.heartbeat`, we take a user-provided callback object
 and put it into the request:
 
 ```ocaml
-  let heartbeat t msg callback =
-    let open Echo.Heartbeat in
-    let request, params = Capability.Request.create Params.init_pointer in
-    Params.msg_set params msg;
-    Params.callback_set params (Some callback);
-    Capability.call_for_unit_exn t method_id request
+let heartbeat t msg callback =
+  let open Echo.Heartbeat in
+  let request, params = Capability.Request.create Params.init_pointer in
+  Params.msg_set params msg;
+  Params.callback_set params (Some callback);
+  Capability.call_for_unit_exn t method_id request
 ```
 
 `Capability.call_for_unit_exn` is a convenience wrapper around
@@ -352,19 +350,19 @@ let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
 
 let run_client service =
-  let callback = Echo.Callback.service callback_fn in
-  Echo.Client.heartbeat service "foo" callback >>= fun () ->
+  let callback = Echo.Callback.local callback_fn in
+  Echo.heartbeat service "foo" callback >>= fun () ->
   Capability.dec_ref callback;
   fst (Lwt.wait ())
 
 let () =
   Lwt_main.run begin
-    let service = Echo.service in
+    let service = Echo.local in
     run_client service
   end
 ```
 
-Exercise: implement `Callback.service fn` (hint: it's similar to the original `ping` service, but pass the message to `fn` and return with `Service.return_empty ()`)
+Exercise: implement `Callback.local fn` (hint: it's similar to the original `ping` service, but pass the message to `fn` and return with `Service.return_empty ()`)
 
 And testing it should give (three times, at one second intervals):
 
@@ -378,7 +376,7 @@ Callback got "foo"
 Note that the client gives the echo service permission to call its callback service by sending a message containing the callback to the service.
 No other access control updates are needed.
 
-Note also a design choice here in the API: we could have made the `Echo.Client.heartbeat` function take an OCaml callback and wrap it, but instead we chose to take a service and make `main.ml` do the wrapping.
+Note also a design choice here in the API: we could have made the `Echo.heartbeat` function take an OCaml callback and wrap it, but instead we chose to take a service and make `main.ml` do the wrapping.
 The advantage to doing it this way is that `main.ml` may one day want to pass a remote callback, as we'll see later.
 
 This still isn't very exciting, because we just stored an OCaml object pointer in a message and then pulled it out again.
@@ -397,15 +395,15 @@ let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
 
 let run_client service =
-  let callback = Echo.Callback.service callback_fn in
-  Echo.Client.heartbeat service "foo" callback >>= fun () ->
+  let callback = Echo.Callback.local callback_fn in
+  Echo.heartbeat service "foo" callback >>= fun () ->
   Capability.dec_ref callback;
   fst (Lwt.wait ())
 
 let socket_path = `Unix "/tmp/demo.socket"
 
 let () =
-  let server_thread = Capnp_rpc_unix.serve ~offer:Echo.service socket_path in
+  let server_thread = Capnp_rpc_unix.serve ~offer:Echo.local socket_path in
   let service = Capnp_rpc_unix.connect socket_path in
   Lwt_main.run @@ Lwt.pick [
     server_thread;
@@ -414,7 +412,7 @@ let () =
 ```
 
 `Capnp_rpc_unix.serve` creates the named socket in the filesystem and waits for incoming connections.
-Each client can access its "bootstrap" service, `Echo.service`.
+Each client can access its "bootstrap" service, `Echo.local`.
 
 `Capnp_rpc_unix.connect` connects to the server socket and returns (a promise for) its bootstrap service.
 
@@ -429,7 +427,7 @@ Let's say the server also offers a logging service, which the client can get fro
 interface Echo {
   ping      @0 (msg :Text) -> (reply :Text);
   heartbeat @1 (msg :Text, callback :Callback) -> ();
-  logger    @2 () -> (callback :Callback);
+  getLogger @2 () -> (callback :Callback);
 }
 ```
 
@@ -437,29 +435,29 @@ The implementation of the new method in the service is simple -
 we export the callback in the response in the same way we previously exported the client's callback in the request:
 
 ```ocaml
-    method logger_impl _ release_params =
-      let open Echo.Logger in
+    method get_logger_impl _ release_params =
+      let open Echo.GetLogger in
       release_params ();
       let response, results = Service.Response.create Results.init_pointer in
       Results.callback_set results (Some service_logger);
       Service.return response
 ```
 
-Exercise: create a `service_logger` that prints out whatever it gets (hint: use `Callback.service`)
+Exercise: create a `service_logger` that prints out whatever it gets (hint: use `Callback.local`)
 
 The client side is more interesting:
 
 ```ocaml
-  let logger t =
-    let open Echo.Logger in
-    let request = Capability.Request.create_no_args () in
-    Capability.call_for_caps t method_id request Results.callback_get_pipelined
+let get_logger t =
+  let open Echo.GetLogger in
+  let request = Capability.Request.create_no_args () in
+  Capability.call_for_caps t method_id request Results.callback_get_pipelined
 ```
 
 We could have used `call_and_wait` here
 (which is similar to `call_for_value` but doesn't automatically discard any capabilities in the result).
 However, that would mean waiting for the response to be sent back to us over the network before we could use it.
-Instead, we use `callback_get_pipelined` to get a promise for the capability from the promise of the `logger` call's result.
+Instead, we use `callback_get_pipelined` to get a promise for the capability from the promise of the `getLogger` call's result.
 
 Note: the last argument to `call_for_caps` is a function for extracting the capabilities from the promised result.
 In the common case where you just want one and it's in the root result struct, you can just pass the accessor directly,
@@ -470,7 +468,7 @@ We can test it as follows:
 
 ```ocaml
 let run_client service =
-  let logger = Echo.Client.logger service in
+  let logger = Echo.get_logger service in
   Echo.Callback.log logger "Message from client" >|= function
   | Ok () -> ()
   | Error err -> Fmt.epr "Server's logger failed: %a" Capnp_rpc.Error.pp err
@@ -482,16 +480,19 @@ This should print something like:
 Service logger: Message from client
 ```
 
-In this case, we didn't wait for the `logger` call to return before using the logger.
+In this case, we didn't wait for the `getLogger` call to return before using the logger.
 The RPC library pipelined the `log` call directly to the promised logger from its previous question.
-On the wire, the messages looks like "Please call the object returned in answer to my previous question".
+On the wire, the messages are sent together, and look like:
+
+1. What is your logger?
+2. Please call the object returned in answer to my previous question (1).
 
 Now, let's say we'd like the server to send heartbeats to itself:
 
 ```ocaml
 let run_client service =
-  let callback = Echo.Client.logger service in
-  Echo.Client.heartbeat service "foo" callback >>= fun () ->
+  let callback = Echo.get_logger service in
+  Echo.heartbeat service "foo" callback >>= fun () ->
   Capability.dec_ref callback;
   fst (Lwt.wait ())
 ```

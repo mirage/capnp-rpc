@@ -1,8 +1,11 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
 
+type t = Api.Service.Registry.t Capability.t
+
 let version_service =
   let module Version = Api.Service.Version in
+
   Version.local @@ object
     inherit Version.service
 
@@ -14,14 +17,13 @@ let version_service =
       Service.return resp
   end
 
-(* A service that can return other services. *)
-let service () =
+let local () =
   let module Registry = Api.Service.Registry in
   Registry.local @@ object
     inherit Registry.service
 
     val mutable blocked = Lwt.wait ()
-    val mutable echo_service = Echo.service ()
+    val mutable echo_service = Echo.local ()
 
     method! release = Capability.dec_ref echo_service
 
@@ -88,45 +90,43 @@ let service () =
       Service.return resp
   end
 
-module Client = struct
-  module Registry = Api.Client.Registry
+module Registry = Api.Client.Registry
 
-  let set_echo_service t echo_service =
-    let open Registry.SetEchoService in
-    let req, p = Capability.Request.create Params.init_pointer in
-    Params.service_set p (Some echo_service);
-    Capability.call_for_unit_exn t method_id req
+let set_echo_service t echo_service =
+  let open Registry.SetEchoService in
+  let req, p = Capability.Request.create Params.init_pointer in
+  Params.service_set p (Some echo_service);
+  Capability.call_for_unit_exn t method_id req
 
-  (* Waits until unblocked before returning *)
-  let echo_service t =
-    let open Registry.EchoService in
-    let req = Capability.Request.create_no_args () in
-    Capability.call_for_caps t method_id req Results.service_get_pipelined
+let echo_service t =
+  let open Registry.EchoService in
+  let req = Capability.Request.create_no_args () in
+  Capability.call_for_caps t method_id req Results.service_get_pipelined
 
-  (* Returns a promise immediately. Resolves promise when unblocked. *)
-  let echo_service_promise t =
-    let open Registry.EchoServicePromise in
-    let req = Capability.Request.create_no_args () in
-    Capability.call_for_caps t method_id req Results.service_get_pipelined
+let echo_service_promise t =
+  let open Registry.EchoServicePromise in
+  let req = Capability.Request.create_no_args () in
+  Capability.call_for_caps t method_id req Results.service_get_pipelined
 
-  let unblock t =
-    let open Registry.Unblock in
-    let req = Capability.Request.create_no_args () in
-    Capability.call_for_unit_exn t method_id req
+let unblock t =
+  let open Registry.Unblock in
+  let req = Capability.Request.create_no_args () in
+  Capability.call_for_unit_exn t method_id req
 
-  let complex t =
-    let open Registry.Complex in
-    let req = Capability.Request.create_no_args () in
-    let module Foo = Api.Reader.Foo in
-    let module Bar = Api.Reader.Bar in
-    Capability.call_for_caps t method_id req @@ fun result ->
-    let echo_service = Results.foo_get_pipelined result |> Foo.echo_get_pipelined in
-    let version = Results.bar_get_pipelined result |> Bar.version_get_pipelined in
-    (echo_service, version)
-end
+let complex t =
+  let open Registry.Complex in
+  let req = Capability.Request.create_no_args () in
+  let module Foo = Api.Reader.Foo in
+  let module Bar = Api.Reader.Bar in
+  Capability.call_for_caps t method_id req @@ fun result ->
+  let echo_service = Results.foo_get_pipelined result |> Foo.echo_get_pipelined in
+  let version = Results.bar_get_pipelined result |> Bar.version_get_pipelined in
+  (echo_service, version)
 
 module Version = struct
   module Version = Api.Client.Version
+
+  type t = Version.t Capability.t
 
   let read t =
     let open Version.Read in

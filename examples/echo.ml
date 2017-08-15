@@ -1,9 +1,11 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
 
+type t = Api.Service.Echo.t Capability.t
+
 (* This was supposed to be a simple ping service, but I wanted to test out-of-order
    replies, so it has become a bit messy... *)
-let service () =
+let local () =
   let module Echo = Api.Service.Echo in
   Echo.local @@ object
     inherit Echo.service
@@ -36,20 +38,16 @@ let service () =
       Service.return_empty ()
   end
 
-module Client = struct
-  module Echo = Api.Client.Echo
+module Echo = Api.Client.Echo
 
-  type t = Echo.t Capability.t
+let ping t ?(slow=false) msg =
+  let open Echo.Ping in
+  let req, p = Capability.Request.create Params.init_pointer in
+  Params.slow_set p slow;
+  Params.msg_set p msg;
+  Capability.call_for_value_exn t method_id req >|= Results.reply_get
 
-  let ping t ?(slow=false) msg =
-    let open Echo.Ping in
-    let req, p = Capability.Request.create Params.init_pointer in
-    Params.slow_set p slow;
-    Params.msg_set p msg;
-    Capability.call_for_value_exn t method_id req >|= Results.reply_get
-
-  let unblock t =
-    let open Echo.Unblock in
-    let req = Capability.Request.create_no_args () in
-    Capability.call_for_unit_exn t method_id req
-end
+let unblock t =
+  let open Echo.Unblock in
+  let req = Capability.Request.create_no_args () in
+  Capability.call_for_unit_exn t method_id req

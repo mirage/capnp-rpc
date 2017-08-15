@@ -71,77 +71,77 @@ let run_lwt fn () =
   Alcotest.(check int) "Check log for warnings" 0 (warnings_at_end - warnings_at_start)
 
 let test_simple switch =
-  let cs = run_server ~switch ~service:(Echo.service ()) () in
+  let cs = run_server ~switch ~service:(Echo.local ()) () in
   let service = get_bootstrap cs in
-  Echo.Client.ping service "ping" >>= fun reply ->
+  Echo.ping service "ping" >>= fun reply ->
   Alcotest.(check string) "Ping response" "got:0:ping" reply;
   Capability.dec_ref service;
   Lwt.return ()
 
 let test_parallel switch =
-  let cs = run_server ~switch ~service:(Echo.service ()) () in
+  let cs = run_server ~switch ~service:(Echo.local ()) () in
   let service = get_bootstrap cs in
-  let reply1 = Echo.Client.ping service ~slow:true "ping1" in
-  Echo.Client.ping service "ping2" >|= Alcotest.(check string) "Ping2 response" "got:1:ping2" >>= fun () ->
+  let reply1 = Echo.ping service ~slow:true "ping1" in
+  Echo.ping service "ping2" >|= Alcotest.(check string) "Ping2 response" "got:1:ping2" >>= fun () ->
   assert (Lwt.state reply1 = Lwt.Sleep);
-  Echo.Client.unblock service >>= fun () ->
+  Echo.unblock service >>= fun () ->
   reply1 >|= Alcotest.(check string) "Ping1 response" "got:0:ping1" >>= fun () ->
   Capability.dec_ref service;
   Lwt.return ()
 
 let test_registry switch =
-  let registry_impl = Registry.service () in
+  let registry_impl = Registry.local () in
   let cs = run_server ~switch ~service:registry_impl () in
   let registry = get_bootstrap cs in
-  let echo_service = Registry.Client.echo_service registry in
-  Registry.Client.unblock registry >>= fun () ->
-  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  let echo_service = Registry.echo_service registry in
+  Registry.unblock registry >>= fun () ->
+  Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
   Capability.dec_ref registry;
   Capability.dec_ref echo_service;
   Lwt.return ()
 
 let test_embargo switch =
-  let registry_impl = Registry.service () in
-  let local_echo = Echo.service () in
+  let registry_impl = Registry.local () in
+  let local_echo = Echo.local () in
   let cs = run_server ~switch ~service:registry_impl () in
   let registry = get_bootstrap cs in
-  Registry.Client.set_echo_service registry local_echo >>= fun () ->
+  Registry.set_echo_service registry local_echo >>= fun () ->
   Capability.dec_ref local_echo;
-  let echo_service = Registry.Client.echo_service registry in
-  let reply1 = Echo.Client.ping echo_service "ping" in
-  Registry.Client.unblock registry >>= fun () ->
+  let echo_service = Registry.echo_service registry in
+  let reply1 = Echo.ping echo_service "ping" in
+  Registry.unblock registry >>= fun () ->
   reply1 >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
   (* Flush, to ensure we resolve the echo_service's location. *)
-  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:1:ping" >>= fun () ->
+  Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:1:ping" >>= fun () ->
   (* Test local connection. *)
-  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:2:ping" >>= fun () ->
+  Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:2:ping" >>= fun () ->
   Capability.dec_ref echo_service;
   Capability.dec_ref registry;
   Lwt.return ()
 
 let test_resolve switch =
-  let registry_impl = Registry.service () in
-  let local_echo = Echo.service () in
+  let registry_impl = Registry.local () in
+  let local_echo = Echo.local () in
   let cs = run_server ~switch ~service:registry_impl () in
   let registry = get_bootstrap cs in
-  Registry.Client.set_echo_service registry local_echo >>= fun () ->
+  Registry.set_echo_service registry local_echo >>= fun () ->
   Capability.dec_ref local_echo;
-  let echo_service = Registry.Client.echo_service_promise registry in
-  let reply1 = Echo.Client.ping echo_service "ping" in
-  Registry.Client.unblock registry >>= fun () ->
+  let echo_service = Registry.echo_service_promise registry in
+  let reply1 = Echo.ping echo_service "ping" in
+  Registry.unblock registry >>= fun () ->
   reply1 >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
   (* Flush, to ensure we resolve the echo_service's location. *)
-  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:1:ping" >>= fun () ->
+  Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:1:ping" >>= fun () ->
   (* Test local connection. *)
-  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:2:ping" >>= fun () ->
+  Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:2:ping" >>= fun () ->
   Capability.dec_ref echo_service;
   Capability.dec_ref registry;
   Lwt.return ()
 
 let test_cancel switch =
-  let cs = run_server ~switch ~service:(Echo.service ()) () in
+  let cs = run_server ~switch ~service:(Echo.local ()) () in
   let service = get_bootstrap cs in
-  let reply1 = Echo.Client.ping service ~slow:true "ping1" in
+  let reply1 = Echo.ping service ~slow:true "ping1" in
   assert (Lwt.state reply1 = Lwt.Sleep);
   Lwt.cancel reply1;
   Lwt.try_bind
@@ -152,33 +152,33 @@ let test_cancel switch =
       | ex -> Lwt.fail ex
     )
   >>= fun () ->
-  Echo.Client.unblock service >|= fun () ->
+  Echo.unblock service >|= fun () ->
   Capability.dec_ref service
 
 let float = Alcotest.testable Fmt.float (=)
 
 let test_calculator switch =
   let open Calc in
-  let cs = run_server ~switch ~service:Calc.service () in
+  let cs = run_server ~switch ~service:Calc.local () in
   let c = get_bootstrap cs in
-  Client.evaluate c (Float 1.) |> Client.final_read >|= Alcotest.check float "Simple calc" 1. >>= fun () ->
-  let local_add = Calc.add in
-  let expr = Call (local_add, [Float 1.; Float 2.]) in
-  Client.evaluate c expr |> Client.final_read >|= Alcotest.check float "Complex with local fn" 3. >>= fun () ->
-  let remote_add = Calc.Client.getOperator c `Add in
-  Calc.Client.call remote_add [5.; 3.] >|= Alcotest.check float "Check fn" 8. >>= fun () ->
-  let expr = Call (remote_add, [Float 1.; Float 2.]) in
-  Client.evaluate c expr |> Client.final_read >|= Alcotest.check float "Complex with remote fn" 3. >>= fun () ->
+  Calc.evaluate c (Float 1.) |> Value.final_read >|= Alcotest.check float "Simple calc" 1. >>= fun () ->
+  let local_add = Calc.Fn.add in
+  let expr = Expr.(Call (local_add, [Float 1.; Float 2.])) in
+  Calc.evaluate c expr |> Value.final_read >|= Alcotest.check float "Complex with local fn" 3. >>= fun () ->
+  let remote_add = Calc.getOperator c `Add in
+  Calc.Fn.call remote_add [5.; 3.] >|= Alcotest.check float "Check fn" 8. >>= fun () ->
+  let expr = Expr.(Call (remote_add, [Float 1.; Float 2.])) in
+  Calc.evaluate c expr |> Value.final_read >|= Alcotest.check float "Complex with remote fn" 3. >>= fun () ->
   Capability.dec_ref remote_add;
   Capability.dec_ref c;
   Lwt.return ()
 
 let test_indexing switch =
-  let registry_impl = Registry.service () in
+  let registry_impl = Registry.local () in
   let cs = run_server ~switch ~service:registry_impl () in
   let registry = get_bootstrap cs in
-  let echo_service, version = Registry.Client.complex registry in
-  Echo.Client.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  let echo_service, version = Registry.complex registry in
+  Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
   Registry.Version.read version >|= Alcotest.(check string) "Version response" "0.1" >>= fun () ->
   Capability.dec_ref registry;
   Capability.dec_ref echo_service;
