@@ -8,21 +8,19 @@ end
 
 type t = [`Registry_d9975f668b337b6d] Capability.t
 
-val service : unit -> t
-(** [service ()] is a new local registry. *)
+val set_echo_service : t -> Echo.t -> unit Lwt.t
 
-module Client : sig
-  val set_echo_service : t -> Echo.t -> unit Lwt.t
+val echo_service : t -> Echo.t
+(** Waits until unblocked before returning. *)
 
-  val echo_service : t -> Echo.t
-  (** Waits until unblocked before returning. *)
+val echo_service_promise : t -> Echo.t
+(** Returns a promise immediately. Resolves promise when unblocked.
+    (should appear to work the same as [echo_service] to users) *)
 
-  val echo_service_promise : t -> Echo.t
-  (** Returns a promise immediately. Resolves promise when unblocked.
-      (should appear to work the same as [echo_service] to users) *)
+val unblock : t -> unit Lwt.t
 
-  val unblock : t -> unit Lwt.t
+val complex : t -> Echo.t * Version.t
+(** [complex t] returns two capabilities in a single, somewhat complex, message. *)
 
-  val complex : t -> Echo.t * Version.t
-  (** [complex t] returns two capabilities in a single, somewhat complex, message. *)
-end
+val local : unit -> t
+(** [local ()] is a new local registry. *)

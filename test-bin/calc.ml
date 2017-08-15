@@ -25,16 +25,16 @@ let reporter =
   { Logs.report = report }
 
 let serve addr : unit =
-  Lwt_main.run @@ Capnp_rpc_unix.serve ~offer:Examples.Calc.service addr
+  Lwt_main.run @@ Capnp_rpc_unix.serve ~offer:Examples.Calc.local addr
 
 let connect addr =
   Lwt_main.run begin
     Lwt_switch.with_switch @@ fun switch ->
     let calc = Capnp_rpc_unix.connect ~switch addr in
     Logs.info (fun f -> f "Evaluating expression...");
-    let remote_add = Calc.Client.getOperator calc `Add in
-    let result = Calc.Client.evaluate calc Calc.(Call (remote_add, [Float 40.0; Float 2.0])) in
-    Calc.Client.Value.read result >>= fun v ->
+    let remote_add = Calc.getOperator calc `Add in
+    let result = Calc.evaluate calc Calc.Expr.(Call (remote_add, [Float 40.0; Float 2.0])) in
+    Calc.Value.read result >>= fun v ->
     Fmt.pr "Result: %f@." v;
     Lwt.return_unit
   end
