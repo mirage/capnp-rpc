@@ -27,7 +27,7 @@ This library should be used with the [capnp-ocaml][] schema compiler, which gene
 
 ### Status
 
-The library been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
+The library has been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
 
 All level 1 features are implemented.
 
@@ -251,7 +251,7 @@ If you're building with jbuilder, here's a suitable `jbuild` file:
 (rule
  ((targets (echo_api.ml echo_api.mli))
   (deps (echo_api.capnp))
-  (action  (run capnpc -o ocaml ${<}))))
+  (action (run capnpc -o ocaml ${<}))))
 ```
 
 The service is now usable:
