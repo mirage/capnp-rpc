@@ -403,7 +403,8 @@ module Make (C : S.CORE_TYPES) = struct
       dispatch state
         ~unresolved:(fun u ->
             let f = Field_map.get i u.fields in
-            assert (f.ref_count > RC.one)
+            assert (f.ref_count > RC.one);
+            self#check_invariants
           )
         ~forwarding:(fun _ -> Debug.failf "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
 
@@ -424,7 +425,13 @@ module Make (C : S.CORE_TYPES) = struct
       dispatch state
         ~unresolved:(fun u ->
             RC.check ~pp:self#pp u.rc;
-            Field_map.iter (fun i f -> RC.check f.ref_count ~pp:(self#field_pp i)) u.fields
+            Field_map.iter (fun i f -> RC.check f.ref_count ~pp:(self#field_pp i)) u.fields;
+            match blocker with
+            | Some x when x#blocker = None ->
+              Debug.invariant_broken (fun f ->
+                  Fmt.pf f "%t is blocked on %t, but that isn't blocked!" self#pp x#pp
+                )
+            | _ -> ()
           )
         ~forwarding:(fun x -> x#check_invariants)
 

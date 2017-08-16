@@ -1208,6 +1208,41 @@ let test_resolve_6 () =
   CS.flush c s;
   CS.check_finished c s
 
+let test_resolve_7 () =
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let promise, resolver = Local_struct_promise.make () in
+  let bs_promise = promise#cap 0 in               (* Local promise *)
+  let x1 = call_for_cap bs_promise "q1" [] in     (* Never resolves *)
+  let x2 = call_for_cap bs_promise "q2" [] in     (* Will resolve to null *)
+  let q3 = call x1 "q3" [x2] in
+  let q4 = call bs "q4" [x2] in
+  (* Resolving [bs_promise] to [bs] sends q1, q3 and q2 over the network.
+     [x2] is marked as blocked on [bs_promise], but [bs_promise] is no longer blocked.
+     Must not misinterpret this as [x2] being sender-hosted (not blocked on anything)! *)
+  resolve_ok resolver "reply" [bs];
+  Logs.info (fun f -> f "bs=%t" bs#pp);
+  S.handle_msg s ~expect:"call:q4";
+  let to_x2, a4 = service#pop1 "q4" in
+  dec_ref to_x2;
+  CS.flush c s;
+  let a1 = service#pop0 "q1" in
+  let a2 = service#pop0 "q2" in
+  resolve_ok a2 "reply" [Core_types.null];
+  CS.dump c s;
+  CS.flush c s;
+  (* Clean up *)
+  resolve_ok a1 "a1" [];
+  resolve_ok a4 "a4" [];
+  dec_ref x1;
+  dec_ref x2;
+  dec_ref q3;
+  dec_ref q4;
+  dec_ref bs_promise;
+  dec_ref promise;
+  CS.flush c s;
+  CS.check_finished c s
+
 (* Returning an already-broken capability. *)
 let test_broken_return () =
   let err = Exception.v "Broken" in
@@ -1522,6 +1557,7 @@ let tests = [
   "Resolve 4", `Quick, test_resolve_4;
   "Resolve 5", `Quick, test_resolve_5;
   "Resolve 6", `Quick, test_resolve_6;
+  "Resolve 7", `Quick, test_resolve_7;
   "Ref-counts", `Quick, test_ref_counts;
   "Auto-release", `Quick, test_auto_release;
   "Unimplemented", `Quick, test_unimplemented;
