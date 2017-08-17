@@ -1,10 +1,11 @@
 open Astring
 open Lwt.Infix
-open Capnp_rpc_lwt
 
 (* Slightly rude to set signal handlers in a library, but SIGPIPE makes no sense
    in a modern application. *)
 let () = Sys.(set_signal sigpipe Signal_ignore)
+
+module Networking = Capnp_rpc_lwt.Networking (Capnp_rpc_lwt.Two_party_network)
 
 module Unix_flow = struct
   type buffer = Cstruct.t
@@ -113,7 +114,7 @@ end
 module Connect_address = Listen_address (* (for now) *)
 
 let serve ?(backlog=5) ?offer addr =
-  let vat = Vat.create ?bootstrap:offer () in
+  let vat = Networking.Vat.create ?bootstrap:offer () in
   let `Unix path = addr in
   begin match Unix.lstat path with
     | { Unix.st_kind = Unix.S_SOCK; _ } -> Unix.unlink path
@@ -130,7 +131,7 @@ let serve ?(backlog=5) ?offer addr =
     Logs.info (fun f -> f "New connection on %S" path);
     let switch = Lwt_switch.create () in
     let ep = endpoint_of_socket ~switch client in
-    let _ : CapTP.t = Vat.connect vat ep in
+    let _ : Networking.CapTP.t = Networking.Vat.connect vat ep in
     loop ()
   in
   loop ()
@@ -144,8 +145,8 @@ let connect ?switch ?offer (`Unix path) =
   Logs.info (fun f -> f "Connecting to %S..." path);
   let socket = Unix.(socket PF_UNIX SOCK_STREAM 0) in
   Unix.connect socket (Unix.ADDR_UNIX path);
-  let vat = Vat.create ~switch ?bootstrap:offer () in
+  let vat = Networking.Vat.create ~switch ?bootstrap:offer () in
   let ep = endpoint_of_socket ~switch (Lwt_unix.of_unix_file_descr socket) in
-  let conn = Vat.connect vat ep in
-  CapTP.bootstrap conn
+  let conn = Networking.Vat.connect vat ep in
+  Networking.CapTP.bootstrap conn
 

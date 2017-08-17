@@ -4,6 +4,9 @@ open Capnp_rpc_lwt
 
 module Test_utils = Testbed.Test_utils
 
+module Networking = Capnp_rpc_lwt.Networking (Capnp_rpc_lwt.Two_party_network)
+module CapTP = Networking.CapTP
+
 type cs = {
   client : CapTP.t;
   server : CapTP.t;

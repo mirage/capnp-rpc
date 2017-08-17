@@ -161,8 +161,9 @@ module Msg = struct
 
 end
 
-module Core_types = struct
-  include Capnp_rpc.Core_types(Msg)
+module Core_types = Capnp_rpc.Core_types(Msg)
+
+module Network_types = struct
   type sturdy_ref
   type provision_id
   type recipient_id
@@ -172,19 +173,13 @@ end
 
 module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)
 
-module EP = struct
-  module Core_types = Core_types
-
-  module Table = struct
-    module QuestionId = Capnp_rpc.Id.Make ( )
-    module AnswerId = QuestionId
-    module ImportId = Capnp_rpc.Id.Make ( )
-    module ExportId = ImportId
-  end
-
-  module Out = Capnp_rpc.Message_types.Make(Core_types)(Table)
-  module In = Capnp_rpc.Message_types.Make(Core_types)(Table)
+module Table_types = struct
+  module QuestionId = Capnp_rpc.Id.Make ( )
+  module AnswerId = QuestionId
+  module ImportId = Capnp_rpc.Id.Make ( )
+  module ExportId = ImportId
 end
+module EP = Capnp_rpc.Message_types.Endpoint(Core_types)(Network_types)(Table_types)
 
 module Endpoint = struct
   module Conn = Capnp_rpc.CapTP.Make(EP)
