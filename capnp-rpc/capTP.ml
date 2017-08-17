@@ -819,7 +819,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | Some (`Import import) -> Import.message_target import
       | Some (`QuestionCap (question, i)) -> Question.message_target question i
       | None ->
-        let settled = cap#blocker = None in
+        let problem = cap#problem in
+        (* Exceptions are considered unsettled because we need to resolve them to
+           an error later (due to a protocol limitation). *)
+        let settled = problem = None && cap#blocker = None in
         let ex =
           match Hashtbl.find t.exported_caps cap with
           | id ->
@@ -831,7 +834,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             let ex = Exports.alloc t.exports (Export.v ~service:cap) in
             let id = Export.id ex in
             Hashtbl.add t.exported_caps cap id;
-            begin match cap#problem, broken_caps with
+            begin match problem, broken_caps with
             | Some problem, Some broken_caps -> Queue.add (ex, problem) broken_caps
             | Some _, _ -> failwith "Cap is broken, but [broken_caps] not provided!"
             | None, _ when settled -> ()
@@ -1631,14 +1634,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
         dec_ref new_target
       | Some im ->
         (* Check we're not resolving a settled import. *)
-        begin match new_target with
-          | Ok _ when im.Import.settled ->
+        if im.Import.settled then (
             let new_target = import_new_target ~embargo_path:None in
             let msg = Fmt.strf "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
             dec_ref new_target;
             failwith msg
-          | _ -> ()
-        end;
+          );
         let get_import id =
           let i = Imports.find_exn t.imports id in
           Import.inc_ref i;
