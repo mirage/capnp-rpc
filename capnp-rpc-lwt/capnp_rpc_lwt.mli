@@ -32,7 +32,7 @@ module Capability : sig
       You can invoke methods on a capability even while it is still only a
       promise. *)
 
-  type 'a t
+  type +'a t
   (** An ['a t] is a capability reference to a service of type ['a]. *)
 
   val problem : 'a t -> Capnp_rpc.Exception.t option
@@ -176,12 +176,13 @@ end
 module S = S
 
 module Endpoint = Endpoint
-
-module Networking (N : S.NETWORK) : S.VAT_NETWORK
-  with module Network = N and
-       type 'a capability = 'a Capability.t
-
 module Two_party_network = Two_party_network
+module Auth = Auth
+
+module Networking (N : S.NETWORK) (Flow : Mirage_flow_lwt.S) : S.VAT_NETWORK
+  with module Network = N and
+       type flow = Flow.flow and
+       type 'a capability = 'a Capability.t
 
 (**/**)
 

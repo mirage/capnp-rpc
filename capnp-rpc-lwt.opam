@@ -18,6 +18,11 @@ depends: [
   "logs"
   "asetmap"
   "mirage-flow-lwt"
+  "tls"
+  "mirage-kv-lwt"
+  "mirage-clock"
+  "base64"
+  "uri"
   "jbuilder" {build & >= "1.0+beta10" }
   "alcotest" {test}
 ]

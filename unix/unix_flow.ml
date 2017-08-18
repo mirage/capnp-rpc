@@ -20,11 +20,13 @@ let opt_cancel = function
   | Some x -> Lwt.cancel x
 
 let close t =
-  assert (not t.closed);
-  t.closed <- true;
-  opt_cancel t.current_read;
-  opt_cancel t.current_write;
-  Lwt_unix.close t.fd
+  if t.closed then Lwt.return_unit
+  else (
+    t.closed <- true;
+    opt_cancel t.current_read;
+    opt_cancel t.current_write;
+    Lwt_unix.close t.fd
+  )
 
 let pp_error f = function
   | `Exception ex -> Fmt.exn f ex
@@ -83,3 +85,7 @@ let connect ?switch fd =
   let t = { fd; closed = false; current_read = None; current_write = None } in
   Lwt_switch.add_hook switch (fun () -> close t);
   t
+
+let socketpair ?switch () =
+  let a, b = Lwt_unix.(socketpair PF_UNIX SOCK_STREAM 0) in
+  connect ?switch a, connect ?switch b

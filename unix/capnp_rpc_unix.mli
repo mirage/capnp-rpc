@@ -2,49 +2,65 @@
 
 open Capnp_rpc_lwt
 
+module Unix_flow = Unix_flow
+
 include Capnp_rpc_lwt.S.VAT_NETWORK
   with type Network.Address.t = [
       | `Unix of string
-    ]
+      | `TCP of string * int
+    ] and
+  type flow = Unix_flow.flow and
+  type 'a capability = 'a Capability.t
 
 module Vat_config : sig
   type t = {
+    backlog : int;
+    secret_key : Auth.Secret_key.t option;
     listen_address : Network.Address.t;
     public_address : Network.Address.t;
   }
 
   val v :
+    ?backlog:int ->
     ?public_address:Network.Address.t ->
+    secret_key:Auth.Secret_key.t option ->
     Network.Address.t -> t
-  (** [v listen_address] is the configuration for a server vat that listens on address [listen_address].
+  (** [v ~secret_key listen_address] is the configuration for a server vat that
+      listens on address [listen_address] and proves its identity to clients using [secret_key].
+      [backlog] is passed to [Unix.listen].
+      If [secret_key] is [None] then no authentication or encryption is performed.
       The vat will suggest that others connect to it at [public_address] (or [listen_address] if
-      no public address is given. *)
- 
-  val cmd : t Cmdliner.Term.t
-  (** [cmd] evalutes to a configuration populated from the command-line options. *)
-end
-
-module Connect_address : sig
-  type t = [
-    | `Unix of string
-  ]
-
-  val conv : t Cmdliner.Arg.conv
-  (** A cmdliner argument converter for [t]. *)
+      no public address is given). *)
 
   val pp : t Fmt.t
+
+  val equal : t -> t -> bool
+
+  val cmd : t Cmdliner.Term.t
+  (** [cmd] evalutes to a configuration populated from the command-line options. *)
+
+  val secret_key : Auth.Secret_key.t option Cmdliner.Term.t
+  (** [secret_key] evaluates to a secret key specified on the command line, or to [None] if the
+      user requested not to use any crypto.
+      This is normally not needed - {!cmd} includes this automatically. *)
 end
 
-val endpoint_of_socket : switch:Lwt_switch.t -> Lwt_unix.file_descr -> Capnp_rpc_lwt.Endpoint.t
-(** [endpoint_of_socket ~switch fd] is an endpoint that sends and receives on [fd].
-    When [switch] is turned off, [fd] is closed. *)
+val sturdy_ref : unit -> 'a Sturdy_ref.t Cmdliner.Arg.conv
+(** A cmdliner argument converter for parsing "capnp://" URIs. *)
 
-val serve : ?backlog:int -> ?offer:'a Capability.t -> Vat_config.t -> 'b Lwt.t
-(** [serve ~offer address] listens for new connections on [address] and handles them.
-    Clients can get access to the bootstrap object [offer].
-    [backlog] is passed to [Unix.listen]. *)
+val serve :
+  ?offer:'a Capability.t ->
+  Vat_config.t ->
+  Vat.t Lwt.t
+(** [serve ~offer vat_config] is a new vat that is listening for new connections
+    as specified by [vat_config]. After connecting to it, clients can get
+    access to the bootstrap service [offer]. *)
 
-val connect : ?switch:Lwt_switch.t -> ?offer:'a Capability.t -> Connect_address.t -> 'b Capability.t
+val connect :
+  ?switch:Lwt_switch.t ->
+  ?offer:'a Capability.t ->
+  'b Sturdy_ref.t ->
+  'b Capability.t Lwt.t
 (** [connect addr] connects to the server at [addr] and returns its bootstrap object.
     If [offer] is given, the client will also offer this service to the remote vat.
     If [switch] is given then turning it off will disconnect,

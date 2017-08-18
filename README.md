@@ -1,6 +1,6 @@
 ## OCaml Cap'n Proto RPC library
 
-Status: RPC Level 1 with two-party networking is complete.
+Status: RPC Level 1 with two-party networking is complete, with encryption and authentication using TLS.
 
 Copyright 2017 Docker, Inc.
 See [LICENSE.md](LICENSE.md) for details.
@@ -31,10 +31,10 @@ The library has been only lightly used in real systems, but has unit tests and A
 
 All level 1 features are implemented.
 
-The library does not currently provide support for establishing new encrypted network connections.
-Instead, the user of the library is responsible for creating a secure channel to the target service and then giving it to the library.
-For example, a channel could be a local Unix-domain socket (created with `socketpair`) or a TCP connection with a TLS wrapper.
-See `test-bin/calc.ml` for an example program that can provide or consume a service over a Unix domain socket.
+For two-party networking, you can provide any bi-directional byte stream (satisfying the Mirage flow signature)
+to the library to create a connection.
+You can also define your own network types.
+The default network provided supports TCP and Unix-domain sockets, both with or without TLS.
 
 Level 3 support is not implemented yet, so if host Alice has connections to hosts Bob and Carol and passes an object hosted at Bob to Carol, the resulting messages between Carol and Bob will be routed via Alice.
 
@@ -229,6 +229,10 @@ With the boilerplate out of the way, we can now write a `main.ml` to test it:
 open Lwt.Infix
 
 let () =
+  Logs.set_level (Some Logs.Warning);
+  Logs.set_reporter (Logs_fmt.reporter ())
+
+let () =
   Lwt_main.run begin
     let service = Echo.local in
     Echo.ping service "foo" >>= fun reply ->
@@ -346,6 +350,10 @@ In `main.ml`, we can now wrap a regular OCaml function as the callback:
 open Lwt.Infix
 open Capnp_rpc_lwt
 
+let () =
+  Logs.set_level (Some Logs.Warning);
+  Logs.set_reporter (Logs_fmt.reporter ())
+
 let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
 
@@ -385,11 +393,15 @@ However, we can use the same code with the echo client and service in separate p
 ### Networking
 
 Let's put a network connection between the client and the server.
-Here's the new `main.ml`:
+Here's the new `main.ml` (the top half is the same as before):
 
 ```ocaml
 open Lwt.Infix
 open Capnp_rpc_lwt
+
+let () =
+  Logs.set_level (Some Logs.Warning);
+  Logs.set_reporter (Logs_fmt.reporter ())
 
 let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
@@ -400,24 +412,77 @@ let run_client service =
   Capability.dec_ref callback;
   fst (Lwt.wait ())
 
-let socket_path = `Unix "/tmp/demo.socket"
+let secret_key = None
+let listen_address = `Unix "/tmp/demo.socket"
+
+let server_config = Capnp_rpc_unix.Vat_config.v ~secret_key listen_address
 
 let () =
-  let server_thread = Capnp_rpc_unix.serve ~offer:Echo.local socket_path in
-  let service = Capnp_rpc_unix.connect socket_path in
-  Lwt_main.run @@ Lwt.pick [
-    server_thread;
-    run_client service;
-  ]
+  Lwt_main.run begin
+    Capnp_rpc_unix.serve server_config ~offer:Echo.local >>= fun server_vat ->
+    let sr = Capnp_rpc_unix.Vat.bootstrap_ref server_vat in
+    Fmt.pr "Connecting to server at %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
+    Capnp_rpc_unix.connect sr >>= fun proxy_to_service ->
+    run_client proxy_to_service
+  end
+```
+
+`listen_address` tells the server where to listen for incoming connections.
+You can use `` `Unix path`` for a Unix-domain socket at `path`, or
+`` `TCP (host, port)`` to accept connections over TCP.
+
+For TCP, you might want to listen on one address but advertise a different one, e.g.
+
+```ocaml
+let listen_address = `TCP ("0.0.0.0", 7000)	(* Listen on all interfaces *)
+let public_address = `TCP ("192.168.1.3", 7000)	(* Tell clients to connect here *)
+
+let server_config = Capnp_rpc_unix.Vat_config.v ~secret_key ~public_address listen_address
 ```
 
 `Capnp_rpc_unix.serve` creates the named socket in the filesystem and waits for incoming connections.
 Each client can access its "bootstrap" service, `Echo.local`.
 
+`sr` is a "sturdy ref" (you can think of it as a URL) that specifies how and where clients should connect
+to get a live reference (a `Capability.t`) to the bootstrap service.
+
 `Capnp_rpc_unix.connect` connects to the server socket and returns (a promise for) its bootstrap service.
 
 For a real system you'd put the client and server parts in separate binaries.
 See the `test-bin/calc.ml` example file for how to do that.
+
+```
+$ ./_build/default/main.exe
+Connecting to server at capnp://insecure@/tmp/demo.socket
+Callback got "foo"
+Callback got "foo"
+Callback got "foo"
+```
+
+The "capnp://" address displayed says "insecure@" because we disabled encryption and authentication.
+
+### Encryption and authentication
+
+To enable encryption, use `let secret_key = Some (Auth.Secret_key.generate ())`:
+
+```
+$ ./_build/default/main.exe
+Connecting to server at capnp://sha-256:Fj8Tv2nNfpIMROr-HVPaXVUnr6WhePXLNwm3jKTdiVA@/tmp/demo.socket
+Callback got "foo"
+Callback got "foo"
+Callback got "foo"
+```
+
+The `sha-256:Fj8...@` part is the expected fingerprint of the server's public key.
+The client checks that the server's key matches when it connects.
+
+For a real system you'll also want to save the key so that the server's identity doesn't change when it is restarted.
+The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to do that
+(`test-bin/calc.ml` shows how to use it).
+
+In the future it will also be possible to include a token in the URL granting clients access to private services,
+not just the public bootstrap service.
+This is why the formatter used to display the sturdy ref is called `pp_with_secrets`, even though nothing in the URI is secret currently.
 
 ### Pipelining
 
@@ -528,13 +593,29 @@ If you have trouble building, you can build it with Docker from a known-good sta
 
 Running `make test` will run through the tests in `test-lwt/test.ml`, which run some in-process examples.
 
-The calculator example can also be run across two Unix processes:
+The calculator example can also be run across two Unix processes.
 
-1. Start the server:
-   `./_build/default/test-bin/calc.bc serve unix:/tmp/calc.socket`
+Start the server with:
 
-2. In another terminal, run the client:
-   `./_build/default/test-bin/calc.bc connect unix:/tmp/calc.socket`
+```
+$ ./_build/default/test-bin/calc.bc serve \
+    --listen-address unix:/tmp/calc.socket \
+    --secret-key-file=key.pem
+Waiting for incoming connections at:
+capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket
+```
+
+Note that `key.pem` does not need to exist. A new key will be generated and saved if the file does not yet exist.
+
+In another terminal, run the client and connect to the address displayed by the server:
+
+```
+./_build/default/test-bin/calc.bc connect capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket
+```
+
+You can also use `--secret-key-type=none` if you prefer to run without encryption
+(e.g. for interoperability with another Cap'n Proto implementation that doesn't support TLS).
+In that case, the client URL would be `capnp://insecure@/tmp/calc.socket`.
 
 #### Fuzzing
 

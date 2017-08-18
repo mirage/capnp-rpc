@@ -30,7 +30,8 @@ let reporter =
 
 let serve vat_config =
   Lwt_main.run begin
-    Capnp_rpc_unix.serve vat_config ~offer:Examples.Calc.local >>= fun _vat ->
+    Capnp_rpc_unix.serve vat_config ~offer:Examples.Calc.local >>= fun vat ->
+    Fmt.pr "Waiting for incoming connections at:@.%a@." Capnp_rpc_unix.Vat.pp_bootstrap_uri vat;
     fst @@ Lwt.wait ()
   end
 
@@ -38,8 +39,7 @@ let serve vat_config =
 
 let connect addr =
   Lwt_main.run begin
-    Lwt_switch.with_switch @@ fun switch ->
-    let calc = Capnp_rpc_unix.connect ~switch addr in
+    Capnp_rpc_unix.connect addr >>= fun calc ->
     Logs.info (fun f -> f "Evaluating expression...");
     let remote_add = Calc.getOperator calc `Add in
     let result = Calc.evaluate calc Calc.Expr.(Call (remote_add, [Float 40.0; Float 2.0])) in
@@ -53,8 +53,8 @@ let connect addr =
 open Cmdliner
 
 let connect_addr =
-  let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server, e.g. unix:/run/my.socket" in
-  Arg.(required @@ pos 0 (some Capnp_rpc_unix.Connect_address.conv) None i)
+  let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server (capnp://...)" in
+  Arg.(required @@ pos 0 (some (Capnp_rpc_unix.sturdy_ref ())) None i)
 
 let serve_cmd =
   Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
@@ -77,4 +77,6 @@ let () =
   Fmt_tty.setup_std_outputs ();
   Logs.set_reporter reporter;
   Logs.set_level ~all:true (Some Logs.Info);
-  Term.eval_choice default_cmd cmds |> Term.exit
+  match Term.eval_choice ~catch:false default_cmd cmds with
+  | exception Failure msg -> Fmt.epr "%s@." msg; exit 1
+  | status -> Term.exit status
