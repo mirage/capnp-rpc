@@ -136,6 +136,13 @@ module Untyped = struct
 end
 
 module Service = Service
-module CapTP = CapTP_capnp
 module Endpoint = Endpoint
-module Vat = Vat
+
+module type NETWORK = Capnp_core.NETWORK
+
+module Networking (N : NETWORK) = struct
+  module Vat = Vat.Make (N)
+  module CapTP = Vat.CapTP
+end
+
+module Two_party_network = Two_party_network

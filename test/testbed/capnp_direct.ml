@@ -47,9 +47,9 @@ module String_content = struct
     incr ref_leaks
 end
 
-module Core_types = struct
-  include Capnp_rpc.Core_types(String_content)
+module Core_types = Capnp_rpc.Core_types(String_content)
 
+module Network_types = struct
   type sturdy_ref
   type provision_id
   type recipient_id
@@ -58,7 +58,8 @@ module Core_types = struct
 end
 
 module type ENDPOINT = Capnp_rpc.Message_types.ENDPOINT with
-  module Core_types = Core_types
+  module Core_types = Core_types and
+  module Network_types = Network_types
 
 module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)
 module Cap_proxy = Capnp_rpc.Cap_proxy.Make(Core_types)

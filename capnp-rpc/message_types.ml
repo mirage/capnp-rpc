@@ -23,16 +23,16 @@ module Flip (T : TABLE_TYPES) = struct
   module ExportId = T.ImportId
 end
 
-module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
+module Make (Core_types : S.CORE_TYPES) (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
   (** This module defines the information in the messages that goes over the wire in one direction.
       The types are from the point of view of the sender, as in the Cap'n Proto RPC specification. *)
 
-  open Network
-  open Network.Wire
+  open Core_types
+  open Core_types.Wire
 
   include T
 
-  type third_party_desc = third_party_cap_id * ExportId.t
+  type third_party_desc = Network.third_party_cap_id * ExportId.t
 
   type message_target = [
     | `ReceiverHosted of ImportId.t
@@ -59,7 +59,7 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
   type send_results_to = [
     | `Caller
     | `Yourself
-    | `ThirdParty of recipient_id
+    | `ThirdParty of Network.recipient_id
   ]
 
   type return = [
@@ -140,26 +140,29 @@ module Make (Network : S.NETWORK_TYPES) (T : TABLE_TYPES) = struct
 end
 
 module type ENDPOINT = sig
-  module Core_types : S.NETWORK_TYPES
+  module Core_types : S.CORE_TYPES
+  module Network_types : S.NETWORK_TYPES
   module Table : TABLE_TYPES
 
-  module Out : module type of Make(Core_types)(Table)
+  module Out : module type of Make(Core_types)(Network_types)(Table)
   (** The type of messages sent by this endpoint. *)
 
-  module In : module type of Make(Core_types)(Flip(Table))
+  module In : module type of Make(Core_types)(Network_types)(Flip(Table))
   (** The type of messages received by this endpoint. *)
 end
 
-module Endpoint (Core_types : S.NETWORK_TYPES) ( ) = struct
+module Table_types ( ) = struct
+  module QuestionId = Id.Make ( )
+  module AnswerId = Id.Make ( )
+  module ImportId = Id.Make ( )
+  module ExportId = Id.Make ( )
+end
+
+module Endpoint (Core_types : S.CORE_TYPES) (Network_types : S.NETWORK_TYPES) (Table : TABLE_TYPES) = struct
   module Core_types = Core_types
+  module Network_types = Network_types
+  module Table = Table
 
-  module Table = struct
-    module QuestionId = Id.Make ( )
-    module AnswerId = Id.Make ( )
-    module ImportId = Id.Make ( )
-    module ExportId = Id.Make ( )
-  end
-
-  module Out = Make(Core_types)(Table)
-  module In = Make(Core_types)(Flip(Table))
+  module Out = Make(Core_types)(Network_types)(Table)
+  module In = Make(Core_types)(Network_types)(Flip(Table))
 end

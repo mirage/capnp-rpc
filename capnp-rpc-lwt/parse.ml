@@ -1,12 +1,14 @@
-open Capnp_core
-
 module EmbargoId = Capnp_rpc.Message_types.EmbargoId
 module RO_array = Capnp_rpc.RO_array
 module Reader = Schema.Reader
 module Log = Capnp_rpc.Debug.Log
 
-module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
-  module Message_types = Capnp_rpc.Message_types.Make(Core_types)(T)
+(* A parser for the basic messages (excluding Unimplemented, which has a more complicated type). *)
+module Make_basic
+    (Core_types : Capnp_rpc.S.CORE_TYPES)
+    (Network : Capnp_core.NETWORK)
+    (T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
+  module Message_types = Capnp_rpc.Message_types.Make(Core_types)(Network.Types)(T)
   open Message_types
 
   let parse_xform x =
@@ -32,9 +34,10 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
     | CapDescriptor.ReceiverAnswer p -> parse_promised_answer p
     | CapDescriptor.ThirdPartyHosted tp ->
       let vine_id = ThirdPartyCapDescriptor.vine_id_get tp |> ImportId.of_uint32 in
+      let cap_id = ThirdPartyCapDescriptor.id_get tp in
       (* todo: for level 3, we should establish a direct connection rather than proxying
          through the vine *)
-      `ThirdPartyHosted (`TODO_3rd_party, vine_id)
+      `ThirdPartyHosted (Network.parse_third_party_cap_id cap_id, vine_id)
     | CapDescriptor.Undefined _ -> failwith "Unknown cap descriptor type"
 
   let parse_descs = RO_array.map parse_desc
@@ -160,15 +163,20 @@ module Make(T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
     | Unimplemented x  -> `Unimplemented x
 end
 
-module Parse_in = Make(Capnp_core.Endpoint_types.Table)
-module Parse_out = Make(Capnp_rpc.Message_types.Flip(Capnp_core.Endpoint_types.Table))
+module Make
+    (EP : Capnp_core.ENDPOINT)
+    (Network : Capnp_core.NETWORK with module Types = EP.Network_types)
+= struct
+  module Parse_in = Make_basic(EP.Core_types)(Network)(EP.Table)
+  module Parse_out = Make_basic(EP.Core_types)(Network)(Capnp_rpc.Message_types.Flip(EP.Table))
 
-let message msg =
-  match Parse_in.parse_msg msg with
-  | #Capnp_core.Endpoint_types.In.t as msg -> msg
-  | `Not_implemented -> `Not_implemented        (* We don't understand [msg] *)
-  | `Unimplemented x ->                         (* The remote peer didn't understand [x] *)
-    match Parse_out.parse_msg x with
-    | #Capnp_core.Endpoint_types.Out.t as msg -> `Unimplemented msg
-    | `Not_implemented -> failwith "Can't read copy of our own message in Unimplemented reply!"
-    | `Unimplemented _ -> failwith "Peer doesn't implement support for unimplemented message!"
+  let message msg =
+    match Parse_in.parse_msg msg with
+    | #EP.In.t as msg -> msg
+    | `Not_implemented -> `Not_implemented        (* We don't understand [msg] *)
+    | `Unimplemented x ->                         (* The remote peer didn't understand [x] *)
+      match Parse_out.parse_msg x with
+      | #EP.Out.t as msg -> `Unimplemented msg
+      | `Not_implemented -> failwith "Can't read copy of our own message in Unimplemented reply!"
+      | `Unimplemented _ -> failwith "Peer doesn't implement support for unimplemented message!"
+end

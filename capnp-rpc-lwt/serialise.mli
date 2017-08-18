@@ -1,1 +1,3 @@
-val message : Capnp_core.Endpoint_types.Out.t -> Rpc_schema.rw Schema.message_t
+module Make (EP : Capnp_core.ENDPOINT) : sig
+  val message : EP.Out.t -> Rpc_schema.rw Schema.message_t
+end

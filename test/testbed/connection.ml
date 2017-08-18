@@ -132,9 +132,11 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 end
 
 module Pair ( ) = struct
-  module ProtoC = Capnp_rpc.Message_types.Endpoint(Capnp_direct.Core_types) ( )
+  module Table_types = Capnp_rpc.Message_types.Table_types ( )
+  module ProtoC = Capnp_rpc.Message_types.Endpoint(Capnp_direct.Core_types)(Capnp_direct.Network_types)(Table_types)
   module ProtoS = struct
     module Core_types = Capnp_direct.Core_types
+    module Network_types = Capnp_direct.Network_types
     module Table = Capnp_rpc.Message_types.Flip(ProtoC.Table)
     module In = ProtoC.Out
     module Out = ProtoC.In

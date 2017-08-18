@@ -11,16 +11,16 @@ module Capnp_content = struct
       )
 end
 
-module Core_types = struct
-  include Capnp_rpc.Core_types(Capnp_content)
+module Core_types = Capnp_rpc.Core_types(Capnp_content)
 
-  type sturdy_ref
-  type provision_id
-  type recipient_id
-  type third_party_cap_id = [`TODO_3rd_party]
-  type join_key_part
-end
-
-module Endpoint_types = Capnp_rpc.Message_types.Endpoint(Core_types)( )
 module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)
 module Cap_proxy = Capnp_rpc.Cap_proxy.Make(Core_types)
+
+module type NETWORK = sig
+  module Types : Capnp_rpc.S.NETWORK_TYPES
+
+  val parse_third_party_cap_id : Schema.Reader.pointer_t -> Types.third_party_cap_id
+end
+
+module type ENDPOINT = Capnp_rpc.Message_types.ENDPOINT with
+  module Core_types = Core_types

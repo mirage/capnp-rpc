@@ -292,10 +292,6 @@ module type CORE_TYPES = sig
 end
 
 module type NETWORK_TYPES = sig
-  (**  Extends the core types with types related to networking. *)
-
-  include CORE_TYPES
-
   (* These depend on the particular network details. *)
   type sturdy_ref
   type provision_id
@@ -303,4 +299,3 @@ module type NETWORK_TYPES = sig
   type third_party_cap_id
   type join_key_part
 end
-
