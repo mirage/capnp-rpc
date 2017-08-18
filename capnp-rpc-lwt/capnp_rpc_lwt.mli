@@ -107,7 +107,7 @@ module Capability : sig
   type 'a resolver
   (** An ['a resolver] can be used to resolve a promise for an ['a]. It can only be used once. *)
 
-  val promise : unit -> 't t * 'a resolver
+  val promise : unit -> 'a t * 'a resolver
   (** [promise ()] returns a fresh local promise and a resolver for it.
       Any calls made on the promise will be queued until it is resolved. *)
 
