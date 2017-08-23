@@ -7,7 +7,7 @@ module Reader = Schema.Reader
 
 module Table_types = Capnp_rpc.Message_types.Table_types ( )
 
-module Make (Network : Capnp_core.NETWORK) = struct
+module Make (Network : S.NETWORK) = struct
   module Endpoint_types = Capnp_rpc.Message_types.Endpoint(Capnp_core.Core_types)(Network.Types)(Table_types)
   module Conn = Capnp_rpc.CapTP.Make(Endpoint_types)
   module Parse = Parse.Make(Endpoint_types)(Network)

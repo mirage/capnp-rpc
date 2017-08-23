@@ -138,11 +138,17 @@ end
 module Service = Service
 module Endpoint = Endpoint
 
-module type NETWORK = Capnp_core.NETWORK
+module S = S
 
-module Networking (N : NETWORK) = struct
-  module Vat = Vat.Make (N)
+module Networking (N : S.NETWORK) (F : Mirage_flow_lwt.S) = struct
+  type flow = F.flow
+  type 'a capability = 'a Capability.t
+
+  module Network = N
+  module Vat = Vat.Make (N) (F)
+  module Sturdy_ref = Vat.Sturdy_ref
   module CapTP = Vat.CapTP
 end
 
 module Two_party_network = Two_party_network
+module Auth = Auth

@@ -164,7 +164,6 @@ end
 module Core_types = Capnp_rpc.Core_types(Msg)
 
 module Network_types = struct
-  type sturdy_ref
   type provision_id
   type recipient_id
   type third_party_cap_id

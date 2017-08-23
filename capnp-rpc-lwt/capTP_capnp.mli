@@ -2,7 +2,7 @@
 
 open Capnp_core.Core_types
 
-module Make (N : Capnp_core.NETWORK) : sig
+module Make (N : S.NETWORK) : sig
   type t
   (** A Cap'n Proto RPC protocol handler. *)
 
