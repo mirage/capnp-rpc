@@ -572,6 +572,59 @@ it can call without using the network.
 For full details of the API, see the comments in `capnp-rpc-lwt/capnp_rpc_lwt.mli`.
 
 
+### Further reading
+
+* [Cap'n Proto schema file format][schema] shows how to build more complex structures, and the "Evolving Your Protocol" section explains how to change the schema without breaking backwards compatibility.
+* <https://discuss.ocaml.org/> is a good place to ask questions (tag them as "capnp").
+* [The capnp-ocaml site][capnp-ocaml] explains how to read and build more complex types using the OCaml interface.
+* [E Reference Mechanics][] gives some insight into how distributed promises work.
+
+### FAQ
+
+#### How can I return multiple results?
+
+Every Cap'n Proto method returns a struct, although the examples in this README only use a single field.
+You can return multiple fields by defining a method as e.g. `-> (foo :Foo, bar :Bar)`.
+For more complex types, it may be more convenient to define the structure elsewhere and then refer to it as
+`-> MyResults`.
+
+#### Can I create multiple instances of an interface dynamically?
+
+Yes. e.g. in the example above we can use `Callback.local fn` many times to create multiple loggers.
+Just remember to call `Capability.dec_ref` on them when you're finished so that they can be released
+promptly (but if the TCP connection is closed, all references on it will be freed anyway).
+
+#### Can I get debug output?
+
+First, always make sure logging is enabled so you can at least see warnings.
+The `main.ml` examples in this file enable some basic logging.
+
+If you turn up the log level to `Info` (or even `Debug`), you'll see lots of information about what is going on.
+Turning on colour in the logs will help too - see `test-bin/calc.ml` for an example.
+
+Many references will be displayed with their reference count (e.g. as `rc=3`).
+You can also print a capability for debugging with `Capability.pp`.
+
+`CapTP.dump` will dump out the state of an entire connection,
+which will show you what services you’re currently importing and exporting over the connection.
+
+If you override your service’s `pp` method, you can include extra information in the output too.
+Use `Capnp_rpc.Debug.OID` to generate and display a unique object identifier for logging.
+
+#### How can I debug reference counting problems?
+
+If a capability gets GC'd with a non-zero ref-count, you should get a warning.
+For testing, you can use `Gc.full_major` to force a check.
+
+If you try to use something after releasing it, you'll get an error.
+
+But the simple rule is: any time you create a local capability or extract a capability from a message,
+you must eventually call `Capability.dec_ref` on it.
+
+#### How can I release other resources when my service is released?
+
+Override the `release` method. It gets called when there are no more references to your service.
+
 ### Contributing
 
 ### Building
@@ -648,3 +701,4 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [Cap'n Proto]: https://capnproto.org/
 [Cap'n Proto RPC Protocol]: https://capnproto.org/rpc.html
 [E-Order]: http://erights.org/elib/concurrency/partial-order.html
+[E Reference Mechanics]: http://www.erights.org/elib/concurrency/refmech.html
