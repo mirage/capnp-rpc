@@ -1,6 +1,11 @@
 module type NETWORK = sig
   module Types : Capnp_rpc.S.NETWORK_TYPES
 
+  module Address : sig
+    type t
+    (** A network address at which a vat can be reached. *)
+  end
+
   val parse_third_party_cap_id : Schema.Reader.pointer_t -> Types.third_party_cap_id
 end
 

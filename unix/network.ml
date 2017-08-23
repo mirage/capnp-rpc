@@ -1,5 +1,3 @@
-(** A network where the is only one other addressable party. *)
-
 module Types = struct
   type provision_id
   type recipient_id
@@ -7,8 +5,10 @@ module Types = struct
   type join_key_part
 end
 
-module Address = struct
-  type t
-end
-
 let parse_third_party_cap_id _ = `Two_party_only
+
+module Address = struct
+  type t = [
+    | `Unix of string
+  ]
+end

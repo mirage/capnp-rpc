@@ -2,15 +2,26 @@
 
 open Capnp_rpc_lwt
 
-module Listen_address : sig
-  type t = [
-    | `Unix of string
-  ]
+include Capnp_rpc_lwt.S.VAT_NETWORK
+  with type Network.Address.t = [
+      | `Unix of string
+    ]
 
-  val conv : t Cmdliner.Arg.conv
-  (** A cmdliner argument converter for [t]. *)
+module Vat_config : sig
+  type t = {
+    listen_address : Network.Address.t;
+    public_address : Network.Address.t;
+  }
 
-  val pp : t Fmt.t
+  val v :
+    ?public_address:Network.Address.t ->
+    Network.Address.t -> t
+  (** [v listen_address] is the configuration for a server vat that listens on address [listen_address].
+      The vat will suggest that others connect to it at [public_address] (or [listen_address] if
+      no public address is given. *)
+ 
+  val cmd : t Cmdliner.Term.t
+  (** [cmd] evalutes to a configuration populated from the command-line options. *)
 end
 
 module Connect_address : sig
@@ -28,7 +39,7 @@ val endpoint_of_socket : switch:Lwt_switch.t -> Lwt_unix.file_descr -> Capnp_rpc
 (** [endpoint_of_socket ~switch fd] is an endpoint that sends and receives on [fd].
     When [switch] is turned off, [fd] is closed. *)
 
-val serve : ?backlog:int -> ?offer:'a Capability.t -> Listen_address.t -> 'b Lwt.t
+val serve : ?backlog:int -> ?offer:'a Capability.t -> Vat_config.t -> 'b Lwt.t
 (** [serve ~offer address] listens for new connections on [address] and handles them.
     Clients can get access to the bootstrap object [offer].
     [backlog] is passed to [Unix.listen]. *)

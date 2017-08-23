@@ -2,6 +2,8 @@ open Lwt.Infix
 
 module Calc = Examples.Calc
 
+(* Verbose logging *)
+
 let pp_qid f = function
   | None -> ()
   | Some x ->
@@ -24,8 +26,15 @@ let reporter =
   in
   { Logs.report = report }
 
-let serve addr : unit =
-  Lwt_main.run @@ Capnp_rpc_unix.serve ~offer:Examples.Calc.local addr
+(* Run as server *)
+
+let serve vat_config =
+  Lwt_main.run begin
+    Capnp_rpc_unix.serve vat_config ~offer:Examples.Calc.local >>= fun _vat ->
+    fst @@ Lwt.wait ()
+  end
+
+(* Run as client *)
 
 let connect addr =
   Lwt_main.run begin
@@ -39,18 +48,16 @@ let connect addr =
     Lwt.return_unit
   end
 
+(* Command-line parsing *)
+
 open Cmdliner
 
 let connect_addr =
   let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server, e.g. unix:/run/my.socket" in
   Arg.(required @@ pos 0 (some Capnp_rpc_unix.Connect_address.conv) None i)
 
-let listen_addr =
-  let i = Arg.info [] ~docv:"ADDR" ~doc:"Address to listen on, e.g. unix:/run/my.socket" in
-  Arg.(required @@ pos 0 (some Capnp_rpc_unix.Listen_address.conv) None i)
-
 let serve_cmd =
-  Term.(const serve $ listen_addr),
+  Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
   let doc = "provide a Cap'n Proto calculator service" in
   Term.info "serve" ~doc
 

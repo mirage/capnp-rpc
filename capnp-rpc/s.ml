@@ -293,7 +293,6 @@ end
 
 module type NETWORK_TYPES = sig
   (* These depend on the particular network details. *)
-  type sturdy_ref
   type provision_id
   type recipient_id
   type third_party_cap_id
