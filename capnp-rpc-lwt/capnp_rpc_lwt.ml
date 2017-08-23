@@ -138,9 +138,12 @@ end
 module Service = Service
 module Endpoint = Endpoint
 
-module type NETWORK = Capnp_core.NETWORK
+module S = S
 
-module Networking (N : NETWORK) = struct
+module Networking (N : S.NETWORK) = struct
+  type 'a capability = 'a Capability.t
+
+  module Network = N
   module Vat = Vat.Make (N)
   module CapTP = Vat.CapTP
 end

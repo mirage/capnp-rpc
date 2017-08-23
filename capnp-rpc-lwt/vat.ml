@@ -1,7 +1,7 @@
 open Capnp_core
 open Lwt.Infix
 
-module Make (Network : Capnp_core.NETWORK) = struct
+module Make (Network : S.NETWORK) = struct
 
   module CapTP = CapTP_capnp.Make (Network)
 

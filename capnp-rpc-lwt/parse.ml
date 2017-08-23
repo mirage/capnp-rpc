@@ -6,7 +6,7 @@ module Log = Capnp_rpc.Debug.Log
 (* A parser for the basic messages (excluding Unimplemented, which has a more complicated type). *)
 module Make_basic
     (Core_types : Capnp_rpc.S.CORE_TYPES)
-    (Network : Capnp_core.NETWORK)
+    (Network : S.NETWORK)
     (T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
   module Message_types = Capnp_rpc.Message_types.Make(Core_types)(Network.Types)(T)
   open Message_types
@@ -165,7 +165,7 @@ end
 
 module Make
     (EP : Capnp_core.ENDPOINT)
-    (Network : Capnp_core.NETWORK with module Types = EP.Network_types)
+    (Network : S.NETWORK with module Types = EP.Network_types)
 = struct
   module Parse_in = Make_basic(EP.Core_types)(Network)(EP.Table)
   module Parse_out = Make_basic(EP.Core_types)(Network)(Capnp_rpc.Message_types.Flip(EP.Table))
