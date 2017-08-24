@@ -17,3 +17,5 @@ module Address = struct
 end
 
 let parse_third_party_cap_id _ = `Two_party_only
+
+let connect _ = assert false

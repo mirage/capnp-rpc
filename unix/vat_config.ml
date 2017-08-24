@@ -4,7 +4,7 @@ module Auth = Capnp_rpc_lwt.Auth
 module Log = Capnp_rpc.Debug.Log
 
 module Listen_address = struct
-  include Network.Address
+  include Network.Socket_address
 
   let abs_path p =
     if Filename.is_relative p then
@@ -39,8 +39,8 @@ end
 type t = {
   backlog : int;
   secret_key : Auth.Secret_key.t option;
-  listen_address : Network.Address.t;
-  public_address : Network.Address.t;
+  listen_address : Network.Socket_address.t;
+  public_address : Network.Socket_address.t;
 }
 
 let v ?(backlog=5) ?public_address ~secret_key listen_address =
@@ -114,13 +114,13 @@ let pp f {backlog; secret_key; listen_address; public_address} =
   Fmt.pf f "{backlog=%d; fingerprint=%a; listen_address=%a; public_address=%a}"
     backlog
     pp_fingerprint secret_key
-    Network.Address.pp listen_address
-    Network.Address.pp public_address
+    Network.Socket_address.pp listen_address
+    Network.Socket_address.pp public_address
 
 let equal {backlog; secret_key; listen_address; public_address} b =
   backlog = b.backlog &&
-  Network.Address.equal listen_address b.listen_address &&
-  Network.Address.equal public_address b.public_address &&
+  Network.Socket_address.equal listen_address b.listen_address &&
+  Network.Socket_address.equal public_address b.public_address &&
   match secret_key, b.secret_key with
   | None, None -> true
   | Some a, Some b -> Auth.Secret_key.equal a b

@@ -138,3 +138,30 @@ module Secret_key = struct
     X509.Encoding.Pem.Private_key.to_pem_cstruct1 (`RSA t.priv) |> Cstruct.to_string
 end
 
+module Tls_wrapper (Underlying : Mirage_flow_lwt.S) = struct
+  open Lwt.Infix
+
+  module Flow = Tls_mirage.Make(Underlying)
+
+  let plain_endpoint ~switch flow =
+    Endpoint.of_flow ~switch (module Underlying) flow
+
+  let connect_as_server ~switch flow secret_key =
+    match secret_key with
+    | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
+    | Some key ->
+      Log.info (fun f -> f "Doing TLS server-side handshake...");
+      Flow.server_of_flow (Secret_key.tls_config key) flow >|= function
+      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
+      | Ok flow -> Ok (Endpoint.of_flow ~switch (module Flow) flow)
+
+  let connect_as_client ~switch flow auth =
+    match Digest.authenticator auth with
+    | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
+    | Some authenticator ->
+      let tls_config = Tls.Config.client ~authenticator () in
+      Log.info (fun f -> f "Doing TLS client-side handshake...");
+      Flow.client_of_flow tls_config flow >|= function
+      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
+      | Ok flow -> Ok (Endpoint.of_flow ~switch (module Flow) flow)
+end

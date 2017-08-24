@@ -14,24 +14,21 @@ module Make (N : S.NETWORK) = struct
 
   type 'a t = {
     address : N.Address.t;
-    auth : Auth.Digest.t;
     service : service;
   }
 
-  let v ~auth ~address ~service = {auth; address; service}
+  let v ~address ~service = {address; service}
 
-  let equal {address; auth; service} b =
+  let equal {address; service} b =
     N.Address.equal address b.address &&
-    Auth.Digest.equal auth b.auth &&
     service = b.service
 
   let address t = t.address
-  let auth t = t.auth
   let service t = t.service
   let cast t = (t :> _ t)
 
-  let to_uri_with_secrets {address; auth; service = `Bootstrap} =
-    N.Address.to_uri address |> Auth.Digest.add_to_uri auth
+  let to_uri_with_secrets {address; service = `Bootstrap} =
+    N.Address.to_uri address
 
   let pp_with_secrets f t = Uri.pp_hum f (to_uri_with_secrets t)
 
@@ -40,9 +37,8 @@ module Make (N : S.NETWORK) = struct
 
   let parse_capnp_uri uri =
     N.Address.parse_uri uri >>= fun address ->
-    Auth.Digest.from_uri uri >>= fun auth ->
     match Uri.query uri with
-    | [] -> Ok (v ~auth ~address ~service:`Bootstrap)
+    | [] -> Ok (v ~address ~service:`Bootstrap)
     | _ -> error "Unexpected query in %a" Uri.pp_hum uri
 
   let of_uri uri =

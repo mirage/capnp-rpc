@@ -67,3 +67,15 @@ module Secret_key : sig
 
   val equal : t -> t -> bool
 end
+
+module Tls_wrapper (Underlying : Mirage_flow_lwt.S) : sig
+  (** Make an [Endpoint] from an [Underlying.flow], using TLS if appropriate. *)
+
+  val connect_as_server :
+    switch:Lwt_switch.t -> Underlying.flow -> Secret_key.t option ->
+    (Endpoint.t, [> `Msg of string]) result Lwt.t
+
+  val connect_as_client :
+    switch:Lwt_switch.t -> Underlying.flow -> Digest.t ->
+    (Endpoint.t, [> `Msg of string]) result Lwt.t
+end
