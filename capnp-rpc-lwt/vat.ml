@@ -8,7 +8,7 @@ let error fmt =
   Error (`Msg msg)
 
 module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
-  module Flow = Tls_mirage.Make(Underlying)
+  module Tls_wrapper = Auth.Tls_wrapper(Underlying)
 
   module Sturdy_ref = Sturdy_ref.Make (Network)
   module CapTP = CapTP_capnp.Make (Network)
@@ -68,21 +68,12 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     Endpoint.of_flow ~switch (module Underlying) flow
 
   let connect_as_server ~switch t flow =
-    match t.secret_key with
-    | None -> Lwt.return @@ Ok (connect t @@ plain_endpoint ~switch flow)
-    | Some key ->
-      Log.info (fun f -> f "Doing TLS server-side handshake...");
-      Flow.server_of_flow (Auth.Secret_key.tls_config key) flow >|= function
-      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
-      | Ok flow -> Ok (connect t @@ Endpoint.of_flow ~switch (module Flow) flow)
+    Tls_wrapper.connect_as_server ~switch flow t.secret_key >|= function
+    | Ok ep -> Ok (connect t ep)
+    | Error _ as e -> e
 
   let connect_as_client ~switch t auth flow =
-    match Auth.Digest.authenticator auth with
-    | None -> Lwt.return @@ Ok (connect t @@ plain_endpoint ~switch flow)
-    | Some authenticator ->
-      let tls_config = Tls.Config.client ~authenticator () in
-      Log.info (fun f -> f "Doing TLS client-side handshake...");
-      Flow.client_of_flow tls_config flow >|= function
-      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
-      | Ok flow -> Ok (connect t @@ Endpoint.of_flow ~switch (module Flow) flow)
+    Tls_wrapper.connect_as_client ~switch flow auth >|= function
+    | Ok ep -> Ok (connect t ep)
+    | Error _ as e -> e
 end
