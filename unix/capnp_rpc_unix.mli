@@ -4,27 +4,24 @@ open Capnp_rpc_lwt
 
 module Unix_flow = Unix_flow
 
-include Capnp_rpc_lwt.S.VAT_NETWORK
-  with type Network.Address.t = [
-      | `Unix of string
-      | `TCP of string * int
-    ] and
+include Capnp_rpc_lwt.S.VAT_NETWORK with
   type flow = Unix_flow.flow and
-  type 'a capability = 'a Capability.t
+  type 'a capability = 'a Capability.t and
+  module Network = Network
 
 module Vat_config : sig
   type t = {
     backlog : int;
     secret_key : Auth.Secret_key.t option;
-    listen_address : Network.Address.t;
-    public_address : Network.Address.t;
+    listen_address : Network.Socket_address.t;
+    public_address : Network.Socket_address.t;
   }
 
   val v :
     ?backlog:int ->
-    ?public_address:Network.Address.t ->
+    ?public_address:Network.Socket_address.t ->
     secret_key:Auth.Secret_key.t option ->
-    Network.Address.t -> t
+    Network.Socket_address.t -> t
   (** [v ~secret_key listen_address] is the configuration for a server vat that
       listens on address [listen_address] and proves its identity to clients using [secret_key].
       [backlog] is passed to [Unix.listen].

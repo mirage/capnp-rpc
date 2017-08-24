@@ -8,22 +8,18 @@ let error fmt =
   Error (`Msg msg)
 
 module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
-  module Tls_wrapper = Auth.Tls_wrapper(Underlying)
-
   module Sturdy_ref = Sturdy_ref.Make (Network)
   module CapTP = CapTP_capnp.Make (Network)
 
   type t = {
-    secret_key : Auth.Secret_key.t option;
     switch : Lwt_switch.t option;
     address : Network.Address.t option;
     mutable bootstrap : Core_types.cap option;
     mutable connections : CapTP.t list; (* todo: should be a map, once we have Vat IDs *)
   }
 
-  let create ?switch ?secret_key ?bootstrap ?address () =
+  let create ?switch ?bootstrap ?address () =
     let t = {
-      secret_key;
       switch;
       address;
       bootstrap;
@@ -47,17 +43,13 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     t.connections <- conn :: t.connections;
     conn
 
-  let public_fingerprint t =
-    match t.secret_key with
-    | None -> Auth.Digest.insecure
-    | Some key -> Auth.Secret_key.digest key
+  let public_address t = t.address
 
   let bootstrap_ref t =
     match t.address with
     | None -> failwith "bootstrap_ref: vat was not configured with an address"
     | Some address ->
-      let auth = public_fingerprint t in
-      Sturdy_ref.v ~auth ~address ~service:`Bootstrap
+      Sturdy_ref.v ~address ~service:`Bootstrap
 
   let pp_bootstrap_uri f t =
     if t.bootstrap = None then Fmt.string f "(vat has no bootstrap service)"
@@ -67,13 +59,19 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   let plain_endpoint ~switch flow =
     Endpoint.of_flow ~switch (module Underlying) flow
 
-  let connect_as_server ~switch t flow =
-    Tls_wrapper.connect_as_server ~switch flow t.secret_key >|= function
-    | Ok ep -> Ok (connect t ep)
+  let live t sr =
+    let addr = Sturdy_ref.address sr in
+    (* todo: check if already connected to vat *)
+    Network.connect addr >|= function
     | Error _ as e -> e
+    | Ok ep -> Ok (CapTP.bootstrap @@ connect t ep)
 
-  let connect_as_client ~switch t auth flow =
-    Tls_wrapper.connect_as_client ~switch flow auth >|= function
-    | Ok ep -> Ok (connect t ep)
-    | Error _ as e -> e
+  let pp_vat_id f = function
+    | None -> Fmt.string f "Client-only vat"
+    | Some addr -> Fmt.pf f "Vat at %a" Network.Address.pp addr
+
+  let dump f t =
+    Fmt.pf f "@[<v2>%a@,%a@]"
+      pp_vat_id t.address
+      (Fmt.Dump.list CapTP.dump) t.connections
 end

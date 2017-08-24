@@ -8,9 +8,7 @@ module type NETWORK = sig
     (** A network address at which a vat can be reached. *)
 
     val parse_uri : Uri.t -> (t, [> `Msg of string]) result
-    (** [parse_uri uri] extracts from a URI the network address.
-        It may use the scheme, host, port and path fields.
-        It may not use the user, password or query fields. *)
+    (** [parse_uri uri] extracts from a URI the network address. *)
 
     val to_uri : t -> Uri.t
 
@@ -18,6 +16,8 @@ module type NETWORK = sig
 
     val pp : t Fmt.t
   end
+
+  val connect : Address.t -> (Endpoint.t, [> `Msg of string]) result Lwt.t
 
   val parse_third_party_cap_id : Schema.Reader.pointer_t -> Types.third_party_cap_id
 end
@@ -55,14 +55,11 @@ module type VAT_NETWORK = sig
     type +'a t
     (** A persistent capability reference that can be restored after contact to the target vat is interrupted. *)
 
-    val v : auth:Auth.Digest.t -> address:Network.Address.t -> service:service -> 'a t
+    val v : address:Network.Address.t -> service:service -> 'a t
     (** Create a new sturdy ref. *)
 
     val address : 'a t -> Network.Address.t
-    (** Where to connect to access this service's vat. *)
-
-    val auth : 'a t -> Auth.Digest.t
-    (** How to check that the server is genuine. *)
+    (** Where and how to connect to access this service's vat. *)
 
     val service : 'a t -> service
     (** Which service within the vat to select. *)
@@ -124,13 +121,11 @@ module type VAT_NETWORK = sig
 
     val create :
       ?switch:Lwt_switch.t ->
-      ?secret_key:Auth.Secret_key.t ->
       ?bootstrap:'a capability ->
       ?address:Network.Address.t ->
       unit -> t
-    (** [create ~switch ~secret_key ~bootstrap ~address ()] is a new vat that offers [bootstrap] to its peers.
-        [secret_key] is used to prove the vat's identity to peers. If [None], TLS cannot be used.
-        The vat will suggest other parties connect to it using [address].
+    (** [create ~switch ~bootstrap ~address ()] is a new vat that offers [bootstrap] to its peers.
+        The vat will suggest that other parties connect to it using [address].
         The vat takes ownership of [bootstrap], and will release it when the switch is turned off.
         Turning off the switch will also disconnect any active connections. *)
 
@@ -138,9 +133,9 @@ module type VAT_NETWORK = sig
     (** [connect t endpoint] runs the CapTP protocol over [endpoint], which is a
         connection to another vat. *)
 
-    val public_fingerprint : t -> Auth.Digest.t
-    (** [public_fingerprint t] is the digest that peers should use when connecting
-        to this vat to authenticate it. *)
+    val public_address : t -> Network.Address.t option
+    (** [public_address t] is the address that peers should use when connecting
+        to this vat to locate and authenticate it. *)
 
     val bootstrap_ref : t -> 'a Sturdy_ref.t
     (** [bootstrap_ref t] is a sturdy ref that can be used to connect to the
@@ -151,22 +146,9 @@ module type VAT_NETWORK = sig
     (** [pp_bootstrap_uri] formats [bootstrap_ref] as a URI that clients can use
         (or formats a message explaining why there isn't one). *)
 
-    val connect_as_client :
-      switch:Lwt_switch.t ->
-      t ->
-      Auth.Digest.t ->
-      flow ->
-      (CapTP.t, [> `Msg of string ]) result Lwt.t
-    (** [connect_as_client ~switch t auth flow] performs a TLS client handshake and
-        authentication check on [flow] (if [auth] requires it) and returns the
-        resulting connection. *)
+    val live : t -> 'a Sturdy_ref.t -> ('a capability, [> `Msg of string]) result Lwt.t
+    (** [live t sr] creates and returns a live reference to the off-line capability [sr]. *)
 
-    val connect_as_server :
-      switch:Lwt_switch.t ->
-      t ->
-      flow ->
-      (CapTP.t, [> `Msg of string ]) result Lwt.t
-    (** [connect_as_server ~switch t flow] performs a TLS server handshake on [flow]
-        (if encryption is on) and returns the resulting connection. *)
+    val dump : t Fmt.t
   end
 end
