@@ -421,8 +421,9 @@ let () =
   Lwt_main.run begin
     Capnp_rpc_unix.serve server_config ~offer:Echo.local >>= fun server_vat ->
     let sr = Capnp_rpc_unix.Vat.bootstrap_ref server_vat in
+    let client_vat = Capnp_rpc_unix.client_only_vat () in
     Fmt.pr "Connecting to server at %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
-    Capnp_rpc_unix.connect sr >>= fun proxy_to_service ->
+    Capnp_rpc_unix.Vat.connect_exn client_vat sr >>= fun proxy_to_service ->
     run_client proxy_to_service
   end
 ```
@@ -446,7 +447,8 @@ Each client can access its "bootstrap" service, `Echo.local`.
 `sr` is a "sturdy ref" (you can think of it as a URL) that specifies how and where clients should connect
 to get a live reference (a `Capability.t`) to the bootstrap service.
 
-`Capnp_rpc_unix.connect` connects to the server socket and returns (a promise for) its bootstrap service.
+`Vat.connect_exn client_vat sr` returns a capability to the service at address `sr`,
+by connecting to the server socket and requesting its bootstrap service.
 
 For a real system you'd put the client and server parts in separate binaries.
 See the `test-bin/calc.ml` example file for how to do that.

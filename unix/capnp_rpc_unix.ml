@@ -33,7 +33,7 @@ let handle_connection ~secret_key vat client =
   Network.accept_connection ~switch ~secret_key raw_flow >|= function
   | Error (`Msg msg) -> Log.warn (fun f -> f "Rejecting new connection: %s" msg)
   | Ok ep ->
-    let _ : CapTP.t = Vat.connect vat ep in
+    let _ : CapTP.t = Vat.add_connection vat ep in
     ()
 
 let addr_of_host host =
@@ -87,13 +87,5 @@ let serve ?offer {Vat_config.backlog; secret_key; listen_address; public_address
   Lwt.async loop;
   Lwt.return vat
 
-let connect ?switch ?offer sr =
-  let switch =
-    match switch with
-    | None -> Lwt_switch.create ()
-    | Some x -> x
-  in
-  let vat = Vat.create ~switch ?bootstrap:offer () in
-  Vat.live vat sr >|= function
-  | Ok x -> x
-  | Error (`Msg msg) -> failwith msg
+let client_only_vat ?switch ?offer () =
+  Vat.create ?switch ?bootstrap:offer ()

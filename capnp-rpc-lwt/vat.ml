@@ -36,7 +36,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
       );
     t
 
-  let connect t endpoint =
+  let add_connection t endpoint =
     let switch = Lwt_switch.create () in
     Lwt_switch.add_hook t.switch (fun () -> Lwt_switch.turn_off switch);
     let conn = CapTP.connect ~switch ?offer:t.bootstrap endpoint in
@@ -59,12 +59,17 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   let plain_endpoint ~switch flow =
     Endpoint.of_flow ~switch (module Underlying) flow
 
-  let live t sr =
+  let connect t sr =
     let addr = Sturdy_ref.address sr in
     (* todo: check if already connected to vat *)
     Network.connect addr >|= function
     | Error _ as e -> e
-    | Ok ep -> Ok (CapTP.bootstrap @@ connect t ep)
+    | Ok ep -> Ok (CapTP.bootstrap @@ add_connection t ep)
+
+  let connect_exn t sr =
+    connect t sr >>= function
+    | Ok x -> Lwt.return x
+    | Error (`Msg msg) -> Lwt.fail_with msg
 
   let pp_vat_id f = function
     | None -> Fmt.string f "Client-only vat"

@@ -129,9 +129,9 @@ module type VAT_NETWORK = sig
         The vat takes ownership of [bootstrap], and will release it when the switch is turned off.
         Turning off the switch will also disconnect any active connections. *)
 
-    val connect : t -> Endpoint.t -> CapTP.t
-    (** [connect t endpoint] runs the CapTP protocol over [endpoint], which is a
-        connection to another vat. *)
+    val add_connection : t -> Endpoint.t -> CapTP.t
+    (** [add_connection t endpoint] runs the CapTP protocol over [endpoint],
+        which is a connection to another vat. *)
 
     val public_address : t -> Network.Address.t option
     (** [public_address t] is the address that peers should use when connecting
@@ -146,8 +146,11 @@ module type VAT_NETWORK = sig
     (** [pp_bootstrap_uri] formats [bootstrap_ref] as a URI that clients can use
         (or formats a message explaining why there isn't one). *)
 
-    val live : t -> 'a Sturdy_ref.t -> ('a capability, [> `Msg of string]) result Lwt.t
-    (** [live t sr] creates and returns a live reference to the off-line capability [sr]. *)
+    val connect : t -> 'a Sturdy_ref.t -> ('a capability, [> `Msg of string]) result Lwt.t
+    (** [connect t sr] creates and returns a live reference to the off-line capability [sr]. *)
+
+    val connect_exn : t -> 'a Sturdy_ref.t -> 'a capability Lwt.t
+    (** [connect_exn] is a wrapper for [connect] that returns a failed Lwt thread on error. *)
 
     val dump : t Fmt.t
   end

@@ -32,10 +32,10 @@ let get_bootstrap ~switch cs =
   let server_socket, client_socket = Unix_flow.socketpair ~switch () in
   let _server =
     Tls_wrapper.connect_as_server ~switch server_socket cs.server_key >|*=
-    Vat.connect cs.server
+    Vat.add_connection cs.server
   in
   Tls_wrapper.connect_as_client ~switch client_socket auth >|*= fun ep ->
-  let conn = Vat.connect cs.client ep in
+  let conn = Vat.add_connection cs.client ep in
   CapTP.bootstrap conn
 
 module Utils = struct

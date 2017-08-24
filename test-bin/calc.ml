@@ -39,7 +39,8 @@ let serve vat_config =
 
 let connect addr =
   Lwt_main.run begin
-    Capnp_rpc_unix.connect addr >>= fun calc ->
+    let vat = Capnp_rpc_unix.client_only_vat () in
+    Capnp_rpc_unix.Vat.connect_exn vat addr >>= fun calc ->
     Logs.info (fun f -> f "Evaluating expression...");
     let remote_add = Calc.getOperator calc `Add in
     let result = Calc.evaluate calc Calc.Expr.(Call (remote_add, [Float 40.0; Float 2.0])) in
