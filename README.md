@@ -574,6 +574,7 @@ For full details of the API, see the comments in `capnp-rpc-lwt/capnp_rpc_lwt.ml
 
 ### Further reading
 
+* [`capnp_rpc_lwt.mli`](capnp-rpc-lwt/capnp_rpc_lwt.mli) and [`s.ml`](capnp-rpc-lwt/s.ml) describe the OCaml API.
 * [Cap'n Proto schema file format][schema] shows how to build more complex structures, and the "Evolving Your Protocol" section explains how to change the schema without breaking backwards compatibility.
 * <https://discuss.ocaml.org/> is a good place to ask questions (tag them as "capnp").
 * [The capnp-ocaml site][capnp-ocaml] explains how to read and build more complex types using the OCaml interface.
