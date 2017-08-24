@@ -625,6 +625,59 @@ you must eventually call `Capability.dec_ref` on it.
 
 Override the `release` method. It gets called when there are no more references to your service.
 
+#### Is there an interactive version I can use for debugging?
+
+[The Python bindings][pycapnp] provide a good interactive environment.
+For example, start the test service above and leave it running:
+
+```
+$ ./_build/default/main.exe
+Connecting to server at capnp://insecure@127.0.0.1:7000
+[...]
+```
+
+Note that you must run without encryption for this.
+
+Run `python` from the directory containing your `echo_api.capnp` file and do:
+
+```python
+import capnp
+import echo_api_capnp
+client = capnp.TwoPartyClient('127.0.0.1:7000')
+echo = client.bootstrap().cast_as(echo_api_capnp.Echo)
+```
+
+Importing a module named `foo_capnp` will load the Cap'n Proto schema file `foo.capnp`.
+
+To call the `ping` method:
+
+```python
+echo.ping("From Python").wait()
+```
+    <echo_api_capnp:Echo.ping$Results reader (reply = "echo:From Python")>
+
+To call the heartbeat method, with results going to the server's own logger:
+
+```python
+echo.heartbeat("From Python", echo.getLogger().callback).wait()
+```
+    Service logger: "From Python"
+
+To call the heartbeat method, with results going to a Python callback:
+
+```python
+class CallbackImpl(echo_api_capnp.Callback.Server):
+    def log(self, msg, _context): print("Python callback got %s" % msg)
+
+echo.heartbeat("From Python", CallbackImpl())
+capnp.wait_forever()
+```
+    Python callback got From Python
+    Python callback got From Python
+    Python callback got From Python
+
+Note that calling `wait_forever` prevents further use of the session, however.
+
 ### Contributing
 
 ### Building
@@ -702,3 +755,4 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [Cap'n Proto RPC Protocol]: https://capnproto.org/rpc.html
 [E-Order]: http://erights.org/elib/concurrency/partial-order.html
 [E Reference Mechanics]: http://www.erights.org/elib/concurrency/refmech.html
+[pycapnp]: http://jparyani.github.io/pycapnp/
