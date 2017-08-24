@@ -53,12 +53,8 @@ val serve :
     as specified by [vat_config]. After connecting to it, clients can get
     access to the bootstrap service [offer]. *)
 
-val connect :
+val client_only_vat :
   ?switch:Lwt_switch.t ->
   ?offer:'a Capability.t ->
-  'b Sturdy_ref.t ->
-  'b Capability.t Lwt.t
-(** [connect addr] connects to the server at [addr] and returns its bootstrap object.
-    If [offer] is given, the client will also offer this service to the remote vat.
-    If [switch] is given then turning it off will disconnect,
-    and disconnecting will turn off the switch. *)
+  unit -> Vat.t
+(** [client_only_vat ()] is a new vat that does not listen for incoming connections. *)
