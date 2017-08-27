@@ -10,12 +10,7 @@ include Capnp_rpc_lwt.S.VAT_NETWORK with
   module Network = Network
 
 module Vat_config : sig
-  type t = {
-    backlog : int;
-    secret_key : Auth.Secret_key.t option;
-    listen_address : Network.Socket_address.t;
-    public_address : Network.Socket_address.t;
-  }
+  type t
 
   val v :
     ?backlog:int ->
