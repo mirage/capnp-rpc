@@ -38,34 +38,19 @@ end
 
 type t = {
   backlog : int;
-  secret_key : Auth.Secret_key.t option;
+  secret_key : Auth.Secret_key.t Lazy.t;
+  serve_tls : bool;
   listen_address : Network.Socket_address.t;
   public_address : Network.Socket_address.t;
 }
 
-let v ?(backlog=5) ?public_address ~secret_key listen_address =
-  let public_address =
-    match public_address with
-    | Some x -> x
-    | None -> listen_address
-  in
-  { backlog; secret_key; listen_address; public_address }
+let secret_key t = Lazy.force t.secret_key
 
 let secret_key_file =
   let open Cmdliner in
   let i = Arg.info ["secret-key-file"] ~docv:"PATH"
-      ~doc:"File in which to store secret key." in
-  Arg.(value @@ opt (some string) None i)
-
-let secret_key_type =
-  let open Cmdliner in
-  let options = [
-    "none", `Disable_crypto;
-    "RSA", `RSA;
-  ] in
-  let i = Arg.info ["secret-key-type"] ~docv:"ALG"
-      ~doc:(Fmt.strf "Type of crypto to use (%s)." (Arg.doc_alts_enum options)) in
-  Arg.(value @@ opt (enum options) `RSA i)
+      ~doc:"File in which to store secret key (or \"\" for an ephemeral key)." in
+  Arg.(required @@ opt (some string) None i)
 
 let read_whole_file path =
   let ic = open_in_bin path in
@@ -75,67 +60,74 @@ let read_whole_file path =
   data
 
 let write_whole_file path data =
-  let oc = open_out_bin path in
+  let oc = open_out_gen [Open_wronly; Open_creat; Open_excl; Open_binary] 0o700 path in
   output_string oc data;
   close_out oc
 
 let init_secret_key_file key_file =
   if Sys.file_exists key_file then (
     Log.info (fun f -> f "Restoring saved secret key from existing file %S" key_file);
-    let secret_key = Auth.Secret_key.of_pem_data (read_whole_file key_file) in
-    `Ok (Some secret_key)
+    Auth.Secret_key.of_pem_data (read_whole_file key_file)
   ) else (
     Log.info (fun f -> f "Generating new secret key to store in %S" key_file);
     let secret_key = Auth.Secret_key.generate () in
     write_whole_file key_file (Auth.Secret_key.to_pem_data secret_key);
-    `Ok (Some secret_key)
+    secret_key
   )
 
-let get_secret_key ty file =
-  match ty, file with
-  | `Disable_crypto, None -> `Ok None
-  | `RSA, Some key_file -> init_secret_key_file key_file
-  | `RSA, None -> `Error (false, "Missing --secret-key-file=PATH option.\n\n\
-                                  You can specify a file that doesn't exist yet to generate a new key, \
-                                  give the path to an existing PEM-encoded RSA private key file, \
-                                  or use --secret-key-type=none to disable security."
-                         )
-  | `Disable_crypto, Some _ -> `Error (false, "Can't use --secret-key-file with key type \"none\"")
+let create ?(backlog=5) ?public_address ~secret_key ?(serve_tls=true) listen_address =
+  let public_address =
+    match public_address with
+    | Some x -> x
+    | None -> listen_address
+  in
+  let secret_key = lazy (
+    match secret_key with
+    | `File path -> init_secret_key_file path
+    | `PEM data -> Auth.Secret_key.of_pem_data data
+    | `Ephemeral -> Auth.Secret_key.generate ()
+  ) in
+  { backlog; secret_key; serve_tls; listen_address; public_address }
 
-let secret_key = Cmdliner.Term.(ret (pure get_secret_key $ secret_key_type $ secret_key_file))
+let secret_key_term =
+  let get = function
+    | "" -> `Ephemeral
+    | path -> `File path
+  in
+  Cmdliner.Term.(pure get $ secret_key_file)
 
 open Cmdliner
 
-let pp_fingerprint =
-  Fmt.(option ~none:(unit "crypto disabled"))
-    (Auth.Secret_key.pp_fingerprint `SHA256)
-
-let pp f {backlog; secret_key; listen_address; public_address} =
-  Fmt.pf f "{backlog=%d; fingerprint=%a; listen_address=%a; public_address=%a}"
+let pp f {backlog; secret_key; serve_tls; listen_address; public_address} =
+  Fmt.pf f "{backlog=%d; fingerprint=%a; serve_tls=%b; listen_address=%a; public_address=%a}"
     backlog
-    pp_fingerprint secret_key
+    (Auth.Secret_key.pp_fingerprint `SHA256) (Lazy.force secret_key)
+    serve_tls
     Network.Socket_address.pp listen_address
     Network.Socket_address.pp public_address
 
-let equal {backlog; secret_key; listen_address; public_address} b =
+let equal {backlog; secret_key; serve_tls; listen_address; public_address} b =
   backlog = b.backlog &&
+  serve_tls = serve_tls &&
   Network.Socket_address.equal listen_address b.listen_address &&
   Network.Socket_address.equal public_address b.public_address &&
-  match secret_key, b.secret_key with
-  | None, None -> true
-  | Some a, Some b -> Auth.Secret_key.equal a b
-  | _ -> false
+  Auth.Secret_key.equal (Lazy.force secret_key) (Lazy.force b.secret_key)
 
 let public_address =
-  let i = Arg.info ["public-address"] ~docv:"ADDR" ~doc:"Address to tell others to connect on" in
+  let i = Arg.info ["public-address"] ~docv:"ADDR" ~doc:"Address to tell others to connect on." in
   Arg.(value @@ opt (some Listen_address.addr_conv) None i)
 
+let disable_tls =
+  let i = Arg.info ["disable-tls"] ~doc:"Do not use TLS for incoming connections." in
+  Arg.(value @@ flag i)
+
 let cmd =
-  let make secret_key listen_address public_address =
+  let make secret_key disable_tls listen_address public_address =
     let public_address =
       match public_address with
       | None -> listen_address
       | Some x -> x
     in
-    { backlog = 5; secret_key; listen_address; public_address } in
-  Term.(pure make $ secret_key $ Listen_address.cmd $ public_address)
+    create ~secret_key ~serve_tls:(not disable_tls) ~public_address listen_address
+  in
+  Term.(pure make $ secret_key_term $ disable_tls $ Listen_address.cmd $ public_address)

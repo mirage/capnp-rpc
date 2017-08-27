@@ -46,11 +46,14 @@ let addr_of_host host =
     else
       addr.Unix.h_addr_list.(0)
 
-let serve ?offer {Vat_config.backlog; secret_key; listen_address; public_address} =
+let serve ?offer {Vat_config.backlog; secret_key; serve_tls; listen_address; public_address} =
   let auth =
-    match secret_key with
-    | None -> Capnp_rpc_lwt.Auth.Digest.insecure
-    | Some key -> Capnp_rpc_lwt.Auth.Secret_key.digest key
+    if serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (Lazy.force secret_key)
+    else Capnp_rpc_lwt.Auth.Digest.insecure
+  in
+  let secret_key =
+    if serve_tls then Some (Lazy.force secret_key)
+    else None
   in
   let vat = Vat.create ?bootstrap:offer ~address:(public_address, auth) () in
   let socket =
@@ -66,6 +69,7 @@ let serve ?offer {Vat_config.backlog; secret_key; listen_address; public_address
       socket
     | `TCP (host, port) ->
       let socket = Unix.(socket PF_INET SOCK_STREAM 0) in
+      Unix.setsockopt socket Unix.SO_REUSEADDR true;
       Unix.bind socket (Unix.ADDR_INET (addr_of_host host, port));
       socket
   in

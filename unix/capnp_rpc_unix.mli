@@ -10,36 +10,40 @@ include Capnp_rpc_lwt.S.VAT_NETWORK with
   module Network = Network
 
 module Vat_config : sig
-  type t = {
-    backlog : int;
-    secret_key : Auth.Secret_key.t option;
-    listen_address : Network.Socket_address.t;
-    public_address : Network.Socket_address.t;
-  }
+  type t
 
-  val v :
+  val create :
     ?backlog:int ->
     ?public_address:Network.Socket_address.t ->
-    secret_key:Auth.Secret_key.t option ->
+    secret_key:[< `File of string | `PEM of string | `Ephemeral] ->
+    ?serve_tls:bool ->
     Network.Socket_address.t -> t
-  (** [v ~secret_key listen_address] is the configuration for a server vat that
-      listens on address [listen_address] and proves its identity to clients using [secret_key].
+  (** [create ~secret_key listen_address] is the configuration for a server vat that
+      listens on address [listen_address].
+      [secret_key] may be one of:
+      - [`File path]: a PEM-encoded RSA private key is read from [path]. If [path] doesn't yet
+        exist, a new key is created and stored there.
+      - [`PEM data]: the given PEM-encoded data is used as the key.
+      - [`Ephemeral]: a new key is generated (if needed) and not saved anywhere.
+      If [serve_tls] is [false] then the vat accepts unencrypted incoming connections.
+      If [true] (the default), the vat performs a server TLS handshake, using
+      [secret_key] to prove its identity to clients.
       [backlog] is passed to [Unix.listen].
-      If [secret_key] is [None] then no authentication or encryption is performed.
       The vat will suggest that others connect to it at [public_address] (or [listen_address] if
       no public address is given). *)
 
+  val secret_key : t -> Auth.Secret_key.t
+  (** [secret_key t] returns the vat's secret yet, generating it if this is the first time
+      it has been used. *)
+
   val pp : t Fmt.t
+  (** This is probably only useful for the unit-tests. *)
 
   val equal : t -> t -> bool
+  (** This is probably only useful for the unit-tests. *)
 
   val cmd : t Cmdliner.Term.t
   (** [cmd] evalutes to a configuration populated from the command-line options. *)
-
-  val secret_key : Auth.Secret_key.t option Cmdliner.Term.t
-  (** [secret_key] evaluates to a secret key specified on the command line, or to [None] if the
-      user requested not to use any crypto.
-      This is normally not needed - {!cmd} includes this automatically. *)
 end
 
 val sturdy_ref : unit -> 'a Sturdy_ref.t Cmdliner.Arg.conv

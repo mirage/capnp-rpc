@@ -243,21 +243,20 @@ let config_result = cmd_result vat_config
 
 let test_options () =
   let term = (Capnp_rpc_unix.Vat_config.cmd, Cmdliner.Term.info "main") in
-  let expected = `Ok { Capnp_rpc_unix.Vat_config.
-                       backlog = 5;
-                       secret_key = None;
-                       listen_address = `Unix "/run/socket";
-                       public_address = `Unix "/run/socket";
-                     } in
-  Cmdliner.Term.eval ~argv:[| "main"; "--secret-key-type=none"; "--listen-address"; "unix:/run/socket" |] term
-  |> Alcotest.check config_result "No key" expected;
-  let expected = `Ok { Capnp_rpc_unix.Vat_config.
-                       backlog = 5;
-                       secret_key = None;
-                       listen_address = `TCP ("0.0.0.0", 7000);
-                       public_address = `TCP ("1.2.3.4", 7001);
-                     } in
-  Cmdliner.Term.eval ~argv:[| "main"; "--secret-key-type=none";
+  let config = Cmdliner.Term.eval
+      ~argv:[| "main"; "--secret-key-file=key.pem"; "--listen-address"; "unix:/run/socket" |] term in
+  let expected = `Ok (Capnp_rpc_unix.Vat_config.create
+                        ~secret_key:(`File "key.pem")
+                        (`Unix "/run/socket")
+                     ) in
+  Alcotest.check config_result "Unix, same address" expected config;
+  let expected = `Ok (Capnp_rpc_unix.Vat_config.create
+                       ~secret_key:(`File "key.pem")
+                       ~public_address:(`TCP ("1.2.3.4", 7001))
+                       (`TCP ("0.0.0.0", 7000))
+                     ) in
+  Cmdliner.Term.eval ~argv:[| "main";
+                              "--secret-key-file=key.pem";
                               "--public-address"; "tcp:1.2.3.4:7001";
                               "--listen-address"; "tcp:0.0.0.0:7000" |] term
   |> Alcotest.check config_result "Using TCP" expected

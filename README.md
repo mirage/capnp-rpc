@@ -412,10 +412,10 @@ let run_client service =
   Capability.dec_ref callback;
   fst (Lwt.wait ())
 
-let secret_key = None
-let listen_address = `Unix "/tmp/demo.socket"
+let secret_key = `Ephemeral
+let listen_address = `TCP ("127.0.0.1", 7000)
 
-let server_config = Capnp_rpc_unix.Vat_config.v ~secret_key listen_address
+let server_config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address
 
 let () =
   Lwt_main.run begin
@@ -438,10 +438,10 @@ For TCP, you might want to listen on one address but advertise a different one, 
 let listen_address = `TCP ("0.0.0.0", 7000)	(* Listen on all interfaces *)
 let public_address = `TCP ("192.168.1.3", 7000)	(* Tell clients to connect here *)
 
-let server_config = Capnp_rpc_unix.Vat_config.v ~secret_key ~public_address listen_address
+let server_config = Capnp_rpc_unix.Vat_config.create ~secret_key ~public_address listen_address
 ```
 
-`Capnp_rpc_unix.serve` creates the named socket in the filesystem and waits for incoming connections.
+`Capnp_rpc_unix.serve` creates the server vat, waiting for incoming connections.
 Each client can access its "bootstrap" service, `Echo.local`.
 
 `sr` is a "sturdy ref" (you can think of it as a URL) that specifies how and where clients should connect
@@ -455,36 +455,42 @@ See the `test-bin/calc.ml` example file for how to do that.
 
 ```
 $ ./_build/default/main.exe
-Connecting to server at capnp://insecure@/tmp/demo.socket
+Connecting to server at capnp://sha-256:bV56NovGZPGZfHZjJczG7mdtUcCX-mCbKFbaN-jAZa8@127.0.0.1:7000
 Callback got "foo"
 Callback got "foo"
 Callback got "foo"
 ```
-
-The "capnp://" address displayed says "insecure@" because we disabled encryption and authentication.
 
 ### Encryption and authentication
 
-To enable encryption, use `let secret_key = Some (Auth.Secret_key.generate ())`:
-
-```
-$ ./_build/default/main.exe
-Connecting to server at capnp://sha-256:Fj8Tv2nNfpIMROr-HVPaXVUnr6WhePXLNwm3jKTdiVA@/tmp/demo.socket
-Callback got "foo"
-Callback got "foo"
-Callback got "foo"
-```
-
-The `sha-256:Fj8...@` part is the expected fingerprint of the server's public key.
+The `sha-256:bV56N...@` part is the expected fingerprint of the server's public key.
 The client checks that the server's key matches when it connects.
 
-For a real system you'll also want to save the key so that the server's identity doesn't change when it is restarted.
-The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to do that
-(`test-bin/calc.ml` shows how to use it).
+The ``let secret_key = `Ephemeral`` line causes a new server key to be generated each time the program runs,
+so if you run it again you'll see a different fingerprint.
+For a real system you'll want to save the key so that the server's identity doesn't change when it is restarted.
+You can use ``let secret_key = `File "secret-key.pem"`` for that.
+Then the `secret-key.pem` will be created automatically the first time you start the service,
+and reused on future runs.
+
+The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable configuration
+based on command-line arguments provided by the user (`test-bin/calc.ml` shows how to do that).
 
 In the future it will also be possible to include a token in the URL granting clients access to private services,
 not just the public bootstrap service.
 This is why the formatter used to display the sturdy ref is called `pp_with_secrets`, even though nothing in the URI is secret currently.
+
+It is also possible to disable the use of encryption using `Vat_config.create ~serve_tls:false ...`:
+
+```
+$ ./_build/default/main.exe
+Connecting to server at capnp://insecure@127.0.0.1:7000
+Callback got "foo"
+Callback got "foo"
+Callback got "foo"
+```
+
+That might be useful if you need to interoperate with a client that doesn't support TLS.
 
 ### Pipelining
 
