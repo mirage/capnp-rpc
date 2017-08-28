@@ -7,6 +7,8 @@ module Unix_flow = Unix_flow
 include Capnp_rpc_lwt.S.VAT_NETWORK with
   type flow = Unix_flow.flow and
   type 'a capability = 'a Capability.t and
+  type restorer = Restorer.t and
+  type Sturdy_ref.service_id = Restorer.Id.t and
   module Network = Network
 
 module Vat_config : sig
@@ -36,6 +38,15 @@ module Vat_config : sig
   (** [secret_key t] returns the vat's secret yet, generating it if this is the first time
       it has been used. *)
 
+  val hashed_secret : t -> string
+  (** [hashed_secret t] is the SHA256 digest of the secret key file.
+      This is useful as an input to {!Restorer.Id.derived}. *)
+
+  val derived_id : ?name:string -> t -> Restorer.Id.t
+  (** [derived_id t] is a secret service ID derived from the vat's secret key
+      (using {!Restorer.Id.derived}). It won't change (unless the vat's key
+      changes). [name] defaults to ["main"]. *)
+
   val pp : t Fmt.t
   (** This is probably only useful for the unit-tests. *)
 
@@ -50,15 +61,15 @@ val sturdy_ref : unit -> 'a Sturdy_ref.t Cmdliner.Arg.conv
 (** A cmdliner argument converter for parsing "capnp://" URIs. *)
 
 val serve :
-  ?offer:'a Capability.t ->
+  ?restore:Restorer.t ->
   Vat_config.t ->
   Vat.t Lwt.t
-(** [serve ~offer vat_config] is a new vat that is listening for new connections
-    as specified by [vat_config]. After connecting to it, clients can get
-    access to the bootstrap service [offer]. *)
+(** [serve ~restore vat_config] is a new vat that is listening for new connections
+    as specified by [vat_config]. After connecting to it, clients can get access
+    to services using [restore]. *)
 
 val client_only_vat :
   ?switch:Lwt_switch.t ->
-  ?offer:'a Capability.t ->
+  ?restore:Restorer.t ->
   unit -> Vat.t
 (** [client_only_vat ()] is a new vat that does not listen for incoming connections. *)

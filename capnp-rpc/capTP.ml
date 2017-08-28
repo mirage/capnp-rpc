@@ -696,11 +696,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `ThirdPartyHosted _third_party_desc -> Fmt.pf f "ThirdPartyHosted"
     | `Local local -> Fmt.pf f "local:%t" local#pp
 
+  type restorer = ((Core_types.cap, Exception.t) result -> unit) -> string -> unit
+
   type t = {
     mutable queue_send : (EP.Out.t -> unit);    (* (mutable for shutdown) *)
     tags : Logs.Tag.set;
     embargoes : (EmbargoId.t * Cap_proxy.resolver_cap) Embargoes.t;
-    mutable bootstrap : Core_types.cap option; (* (mutable for shutdown) *)
+    restore : restorer;
 
     questions : Question.t Questions.t;
     answers : Answer.t Answers.t;
@@ -733,15 +735,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
       n_exports = Exports.active t.exports;
     }
 
-  let create ?bootstrap ~tags ~queue_send =
-    begin match bootstrap with
-      | None -> ()
-      | Some x -> Core_types.inc_ref x
-    end;
+  let default_restore k _object_id =
+    k @@ Error (Exception.v "This vat has no restorer")
+
+  let create ?(restore=default_restore) ~tags ~queue_send =
     {
       queue_send = (queue_send :> EP.Out.t -> unit);
       tags;
-      bootstrap = (bootstrap :> Core_types.cap option);
+      restore = restore;
       questions = Questions.make ();
       answers = Answers.make ();
       imports = Imports.make ();
@@ -1078,13 +1079,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Log.info (fun f -> f ~tags:t.tags "Sending disembargo %a" EP.Out.pp_disembargo_request request);
     t.queue_send (`Disembargo_request request)
 
-  let bootstrap t =
+  let bootstrap t object_id =
     let result = make_remote_promise t in
     let question = Send.bootstrap t (result :> Core_types.struct_resolver) in
     result#set_question question;
     let qid = Question.id question in
     Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
-    t.queue_send (`Bootstrap qid);
+    t.queue_send (`Bootstrap (qid, object_id));
     let service = result#cap Wire.Path.root in
     dec_ref result;
     service
@@ -1173,7 +1174,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Wire.Request.t -> In.desc RO_array.t -> results_to:In.send_results_to ->
       unit
 
-    val bootstrap : t -> In.QuestionId.t -> unit
+    val bootstrap : t -> In.QuestionId.t -> string -> unit
     val return : t -> In.AnswerId.t -> In.return -> release_param_caps:bool -> unit
     val finish : t -> In.QuestionId.t -> release_result_caps:bool -> unit
     val release : t -> In.ImportId.t -> ref_count:int -> unit
@@ -1401,20 +1402,20 @@ module Make (EP : Message_types.ENDPOINT) = struct
                      pp_message_target_cap target Core_types.Request_payload.pp msg);
         send_call t target answer_resolver msg
 
-    let bootstrap t id =
+    let bootstrap t id object_id =
       let promise, answer_resolver = Local_struct_promise.make () in
       let answer = Answer.create id ~answer:promise in
       Answers.set t.answers id answer;
+      object_id |> t.restore @@ fun service ->
       let results =
-        match t.bootstrap with
-          | Some service ->
+        match service with
+          | Error ex -> Error (`Exception ex)
+          | Ok service ->
             let msg =
               Wire.Response.bootstrap ()
               |> Core_types.Response_payload.with_caps (RO_array.of_list [with_inc_ref service])
             in
             Ok msg
-          | None ->
-            Error (Error.exn "No bootstrap service available")
       in
       Core_types.resolve_payload answer_resolver results;
       Send.return t answer results
@@ -1676,7 +1677,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `SenderPromise id
       | `ThirdPartyHosted (_, id) -> Input.release t id ~ref_count:1
       end
-    | `Bootstrap qid ->
+    | `Bootstrap (qid, _) ->
       (* If the peer didn't understand our question, pretend it returned an exception. *)
       Input.return t qid ~release_param_caps:true
         (Error.exn ~ty:`Unimplemented "Bootstrap message not implemented by peer")
@@ -1691,10 +1692,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let disconnect t ex =
     if t.disconnected = None then (
       t.disconnected <- Some ex;
-      begin match t.bootstrap with
-        | None -> ()
-        | Some b -> t.bootstrap <- None; dec_ref b
-      end;
       t.queue_send <- ignore;
       Exports.drop_all t.exports (fun _ -> Export.lost_connection);
       Hashtbl.clear t.exported_caps;
@@ -1711,7 +1708,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     | `Abort ex                       -> disconnect t ex
     | `Call (aid, target,
              msg, descs, results_to)  -> Input.call t aid target msg descs ~results_to
-    | `Bootstrap x                    -> Input.bootstrap t x
+    | `Bootstrap (qid, oid)           -> Input.bootstrap t qid oid
     | `Return (aid, ret, release)     -> Input.return t aid ret ~release_param_caps:release
     | `Finish (aid, release)          -> Input.finish t aid ~release_result_caps:release
     | `Release (id, count)            -> Input.release t id ~ref_count:count

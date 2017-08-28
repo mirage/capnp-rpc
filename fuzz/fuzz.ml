@@ -209,9 +209,9 @@ module Endpoint = struct
   let check t =
     Conn.check t.conn
 
-  let create ?bootstrap ~tags ~dump ~local_id ~remote_id xmit_queue recv_queue =
+  let create ~restore ~tags ~dump ~local_id ~remote_id xmit_queue recv_queue =
     let queue_send x = Queue.add x xmit_queue in
-    let conn = Conn.create ?bootstrap ~tags ~queue_send in
+    let conn = Conn.create ~restore ~tags ~queue_send in
     {
       local_id;
       remote_id;
@@ -561,7 +561,7 @@ module Vat = struct
   let add_actions v conn ~target =
     DynArray.add v.actions (fun () ->
         Logs.info (fun f -> f ~tags:(tags v) "Expecting bootstrap reply to be target %a" Direct.pp target);
-        let cr = make_cap_ref ~target @@ Endpoint.bootstrap conn in
+        let cr = make_cap_ref ~target @@ Endpoint.bootstrap conn "" in
         code (fun f -> Fmt.pf f "let %a = %a.bootstrap %a in"
                  pp_var cr
                  Endpoint.pp_conn_mod conn
@@ -571,6 +571,12 @@ module Vat = struct
     DynArray.add v.actions (fun () ->
         Endpoint.maybe_handle_msg conn
       )
+
+  (* TODO: return a random object or error at some future time *)
+  let restore t k object_id =
+    match object_id, t.bootstrap with
+    | "", Some (cap, _) -> k @@ Ok (cap :> Core_types.cap)
+    | _ -> k @@ Error (Capnp_rpc.Exception.v "Bad object_id for restore")
 
   let free_all t =
     WrapArray.free t.caps;
@@ -654,7 +660,7 @@ let make_connection v1 v2 =
       ~remote_id:remote.id
       ~tags:v1_tags
       xmit_queue recv_queue
-      ~bootstrap:(bootstrap local)
+      ~restore:(Vat.restore local)
   in
   let c = create_endpoint ~local:v1 ~remote:v2 q1 q2 in
   let s = create_endpoint ~local:v2 ~remote:v1 q2 q1 in

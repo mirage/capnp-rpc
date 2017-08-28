@@ -1372,8 +1372,7 @@ module Level0 = struct
     let to_server = Queue.create () in
     let c = { from_server; to_server } in
     let s = S.create ~tags:Test_utils.server_tags from_server to_server ~bootstrap in
-    dec_ref bootstrap;
-    send c @@ `Bootstrap (qid_of_int 0);
+    send c @@ `Bootstrap (qid_of_int 0, "");
     S.handle_msg s ~expect:"bootstrap";
     send c @@ `Finish (qid_of_int 0, false);
     S.handle_msg s ~expect:"finish";
@@ -1396,7 +1395,7 @@ module Level0 = struct
   let expect_bs t =
     let bs_request = Queue.pop t.from_server in
     match bs_request with
-    | `Bootstrap qid -> qid
+    | `Bootstrap (qid, "") -> qid
     | _ -> Alcotest.fail (Fmt.strf "Expecting bootstrap, got %s" (Testbed.Connection.summary_of_msg bs_request))
 
   let expect_call t expected =

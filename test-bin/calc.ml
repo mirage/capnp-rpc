@@ -30,8 +30,11 @@ let reporter =
 
 let serve vat_config =
   Lwt_main.run begin
-    Capnp_rpc_unix.serve vat_config ~offer:Examples.Calc.local >>= fun vat ->
-    Fmt.pr "Waiting for incoming connections at:@.%a@." Capnp_rpc_unix.Vat.pp_bootstrap_uri vat;
+    let service_id = Capnp_rpc_lwt.Restorer.Id.public "calculator" in
+    let restore = Capnp_rpc_lwt.Restorer.single service_id Examples.Calc.local in
+    Capnp_rpc_unix.serve vat_config ~restore >>= fun vat ->
+    let sr = Capnp_rpc_unix.Vat.sturdy_ref vat service_id in
+    Fmt.pr "Waiting for incoming connections at:@.%a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
     fst @@ Lwt.wait ()
   end
 

@@ -3,10 +3,11 @@ open Lwt.Infix
 module Log = Capnp_rpc.Debug.Log
 module Unix_flow = Unix_flow
 
-let () = Nocrypto_entropy_lwt.initialize () |> ignore
+let () = Nocrypto_entropy_unix.initialize ()
 
 type flow = Unix_flow.flow
 type 'a capability = 'a Capnp_rpc_lwt.Capability.t
+type restorer = Capnp_rpc_lwt.Restorer.t
 
 module Vat_network = Capnp_rpc_lwt.Networking (Network) (Unix_flow)
 module CapTP = Vat_network.CapTP
@@ -46,16 +47,16 @@ let addr_of_host host =
     else
       addr.Unix.h_addr_list.(0)
 
-let serve ?offer {Vat_config.backlog; secret_key; serve_tls; listen_address; public_address} =
+let serve ?restore {Vat_config.backlog; secret_key; serve_tls; listen_address; public_address} =
   let auth =
-    if serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (Lazy.force secret_key)
+    if serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (fst @@ Lazy.force secret_key)
     else Capnp_rpc_lwt.Auth.Digest.insecure
   in
   let secret_key =
-    if serve_tls then Some (Lazy.force secret_key)
+    if serve_tls then Some (fst @@ Lazy.force secret_key)
     else None
   in
-  let vat = Vat.create ?bootstrap:offer ~address:(public_address, auth) () in
+  let vat = Vat.create ?restore ~address:(public_address, auth) () in
   let socket =
     match listen_address with
     | `Unix path ->
@@ -91,5 +92,5 @@ let serve ?offer {Vat_config.backlog; secret_key; serve_tls; listen_address; pub
   Lwt.async loop;
   Lwt.return vat
 
-let client_only_vat ?switch ?offer () =
-  Vat.create ?switch ?bootstrap:offer ()
+let client_only_vat ?switch ?restore () =
+  Vat.create ?switch ?restore ()

@@ -36,7 +36,7 @@ let get_bootstrap ~switch cs =
   in
   Tls_wrapper.connect_as_client ~switch client_socket auth >|*= fun ep ->
   let conn = Vat.add_connection cs.client ep in
-  CapTP.bootstrap conn
+  CapTP.bootstrap conn (Restorer.Id.public "")
 
 module Utils = struct
   [@@@ocaml.warning "-32"]
@@ -56,9 +56,11 @@ let make_vats ?server_key ~switch ~service () =
     | None -> Capnp_rpc_lwt.Auth.Digest.insecure
   in
   let address = (`Unix "/tmp/socket", auth) in
+  let restore = Restorer.(single (Id.public "")) service in
+  Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);
   {
     client = Vat.create ~switch ();
-    server = Vat.create ~switch ~bootstrap:service ~address ();
+    server = Vat.create ~switch ~restore ~address ();
     server_key;
   }
 
@@ -274,16 +276,18 @@ let test_sturdy_ref () =
     let sr2 = Sturdy_ref.of_uri uri |> expect_ok in
     Alcotest.(check sturdy_ref) msg sr sr2
   in
-  let sr = Sturdy_ref.v ~address:(`Unix "/sock", Auth.Digest.insecure) ~service:`Bootstrap in
-  check "Insecure Unix" "capnp://insecure@/sock" sr;
-  let sr = Sturdy_ref.v ~address:(`TCP ("localhost", 7000), Auth.Digest.insecure) ~service:`Bootstrap in
+  let public_bootstrap = Restorer.Id.public "" in
+  let public_main = Restorer.Id.public "main" in
+  let sr = Sturdy_ref.v ~address:(`Unix "/sock", Auth.Digest.insecure) ~service:public_bootstrap in
+  check "Insecure Unix" "capnp://insecure@/sock/" sr;
+  let sr = Sturdy_ref.v ~address:(`TCP ("localhost", 7000), Auth.Digest.insecure) ~service:public_bootstrap in
   check "Insecure TCP" "capnp://insecure@localhost:7000" sr;
   let test_uri = Uri.of_string "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/" in
   let auth = Auth.Digest.from_uri test_uri |> expect_ok in
-  let sr = Sturdy_ref.v ~address:(`TCP ("localhost", 7000), auth) ~service:`Bootstrap in
-  check "Secure TCP" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@localhost:7000" sr;
-  let sr = Sturdy_ref.v ~address:(`Unix "/sock", auth) ~service:`Bootstrap in
-  check "Secure Unix" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/sock" sr
+  let sr = Sturdy_ref.v ~address:(`TCP ("localhost", 7000), auth) ~service:public_main in
+  check "Secure TCP" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@localhost:7000/bWFpbg" sr;
+  let sr = Sturdy_ref.v ~address:(`Unix "/sock", auth) ~service:public_main in
+  check "Secure Unix" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/sock/bWFpbg" sr
 
 let rpc_tests = [
   "Simple",     `Quick, run_lwt (test_simple ~server_key:None);

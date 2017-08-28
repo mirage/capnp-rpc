@@ -89,7 +89,7 @@ module Make (Core_types : S.CORE_TYPES) (Network : S.NETWORK_TYPES) (T : TABLE_T
 
   type t = [
     | `Abort of Exception.t
-    | `Bootstrap of QuestionId.t
+    | `Bootstrap of QuestionId.t * string
     | `Call of QuestionId.t * message_target * Request.t * desc RO_array.t * send_results_to
     | `Finish of (QuestionId.t * bool)      (* bool is release-caps *)
     | `Release of ImportId.t * int
@@ -102,7 +102,7 @@ module Make (Core_types : S.CORE_TYPES) (Network : S.NETWORK_TYPES) (T : TABLE_T
 
   let with_qid_tag tags : t -> _ = function
     | `Finish (qid, _)
-    | `Bootstrap qid
+    | `Bootstrap (qid, _)
     | `Call (qid, _, _, _, _)
     | `Disembargo_request (`Loopback (`ReceiverAnswer (qid, _), _))
     | `Disembargo_reply (`ReceiverAnswer (qid, _), _) ->

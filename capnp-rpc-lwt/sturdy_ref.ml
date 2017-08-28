@@ -8,13 +8,11 @@ let ( >>= ) x f =
   | Error _ as e -> e
 
 module Make (N : S.NETWORK) = struct
-  type service = [
-    | `Bootstrap
-  ]
+  type service_id = string
 
   type 'a t = {
     address : N.Address.t;
-    service : service;
+    service : service_id;
   }
 
   let v ~address ~service = {address; service}
@@ -27,8 +25,8 @@ module Make (N : S.NETWORK) = struct
   let service t = t.service
   let cast t = (t :> _ t)
 
-  let to_uri_with_secrets {address; service = `Bootstrap} =
-    N.Address.to_uri address
+  let to_uri_with_secrets {address; service} =
+    N.Address.to_uri address service
 
   let pp_with_secrets f t = Uri.pp_hum f (to_uri_with_secrets t)
 
@@ -36,10 +34,8 @@ module Make (N : S.NETWORK) = struct
     Fmt.pf f "<SturdyRef at %a>" N.Address.pp t.address
 
   let parse_capnp_uri uri =
-    N.Address.parse_uri uri >>= fun address ->
-    match Uri.query uri with
-    | [] -> Ok (v ~address ~service:`Bootstrap)
-    | _ -> error "Unexpected query in %a" Uri.pp_hum uri
+    N.Address.parse_uri uri >>= fun (address, service) ->
+    Ok (v ~address ~service)
 
   let of_uri uri =
     match Uri.scheme uri with

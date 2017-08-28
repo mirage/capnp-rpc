@@ -1,11 +1,38 @@
-## OCaml Cap'n Proto RPC library
-
-Status: RPC Level 1 with two-party networking is complete, with encryption and authentication using TLS.
+# OCaml Cap'n Proto RPC library
 
 Copyright 2017 Docker, Inc.
 See [LICENSE.md](LICENSE.md) for details.
 
-### Overview
+## Contents
+
+<!-- vim-markdown-toc GFM -->
+* [Overview](#overview)
+* [Status](#status)
+* [Installing](#installing)
+* [Structure of the library](#structure-of-the-library)
+* [Conceptual model](#conceptual-model)
+* [Tutorial](#tutorial)
+	* [Passing capabilities](#passing-capabilities)
+	* [Networking](#networking)
+		* [The server side](#the-server-side)
+		* [The client side](#the-client-side)
+	* [Pipelining](#pipelining)
+	* [Further reading](#further-reading)
+* [FAQ](#faq)
+	* [How can I return multiple results?](#how-can-i-return-multiple-results)
+	* [Can I create multiple instances of an interface dynamically?](#can-i-create-multiple-instances-of-an-interface-dynamically)
+	* [Can I get debug output?](#can-i-get-debug-output)
+	* [How can I debug reference counting problems?](#how-can-i-debug-reference-counting-problems)
+	* [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
+	* [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
+* [Contributing](#contributing)
+	* [Building](#building)
+	* [Testing](#testing)
+	* [Fuzzing](#fuzzing)
+
+<!-- vim-markdown-toc -->
+
+## Overview
 
 [Cap'n Proto][] is a capability-based RPC system with bindings for many languages.
 Some key features:
@@ -25,11 +52,11 @@ Some key features:
 This library should be used with the [capnp-ocaml][] schema compiler, which generates bindings from schema files.
 
 
-### Status
+## Status
+
+RPC Level 1 with two-party networking is complete, with encryption and authentication using TLS.
 
 The library has been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
-
-All level 1 features are implemented.
 
 For two-party networking, you can provide any bi-directional byte stream (satisfying the Mirage flow signature)
 to the library to create a connection.
@@ -39,13 +66,13 @@ The default network provided supports TCP and Unix-domain sockets, both with or 
 Level 3 support is not implemented yet, so if host Alice has connections to hosts Bob and Carol and passes an object hosted at Bob to Carol, the resulting messages between Carol and Bob will be routed via Alice.
 
 
-### Installing
+## Installing
 
 To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
 
     opam depext -i capnp-rpc-unix
 
-### Structure of the library
+## Structure of the library
 
 The code is split into three libraries:
 
@@ -60,7 +87,7 @@ The code is split into three libraries:
 
 Users of the library will normally want to use `capnp-rpc-lwt` and, in most cases, `capnp-rpc-unix`.
 
-### Conceptual model
+## Conceptual model
 
 An RPC system contains multiple communicating actors (just ordinary OCaml objects).
 An actor can hold *capabilities* to other objects.
@@ -116,7 +143,7 @@ You can also export an object that you received from a third-party, and the rece
 Ideally, the receiver should be able to establish a direct connection to the third-party, but
 this isn't yet implemented and instead the RPC system will forward messages and responses in this case.
 
-### Creating your own services
+## Tutorial
 
 Start by writing a [Cap'n Proto schema file][schema].
 For example, here is a very simple echo service:
@@ -415,18 +442,60 @@ let run_client service =
 let secret_key = `Ephemeral
 let listen_address = `TCP ("127.0.0.1", 7000)
 
-let server_config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address
+let start_server () =
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
+  let service_id = Capnp_rpc_unix.Vat_config.derived_id config in
+  let restore = Restorer.single service_id Echo.local in
+  Capnp_rpc_unix.serve config ~restore >|= fun vat ->
+  Capnp_rpc_unix.Vat.sturdy_ref vat service_id
 
 let () =
   Lwt_main.run begin
-    Capnp_rpc_unix.serve server_config ~offer:Echo.local >>= fun server_vat ->
-    let sr = Capnp_rpc_unix.Vat.bootstrap_ref server_vat in
+    start_server () >>= fun sr ->
     let client_vat = Capnp_rpc_unix.client_only_vat () in
-    Fmt.pr "Connecting to server at %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
+    Fmt.pr "Connecting to echo service at: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
     Capnp_rpc_unix.Vat.connect_exn client_vat sr >>= fun proxy_to_service ->
     run_client proxy_to_service
   end
 ```
+
+Running this will give something like:
+
+```
+$ ./_build/default/main.exe
+Connecting to echo service at: capnp://sha-256:3Tj5y5Q2qpqN3Sbh0GRPxgORZw98_NtrU2nLI0-Tn6g@127.0.0.1:7000/eBIndzZyoVDxaJdZ8uh_xBx5V1lfXWTJCDX-qEkgNZ4
+Callback got "foo"
+Callback got "foo"
+Callback got "foo"
+```
+
+The example runs the client and server in a single process, but
+for a real system you'd run these as separate processes.
+See the `test-bin/calc.ml` example file for how to do that.
+
+Once the server vat is running, we get a "sturdy ref" for the echo service, which is displayed as a "capnp://" URL.
+The URL contains several pieces of information:
+
+- The `sha-256:3Tj5y5Q2qpqN3Sbh0GRPxgORZw98_NtrU2nLI0-Tn6g` part is the fingerprint of the server's public key.
+  When the client connects, it uses this to verify that it is connected to the right server (not an imposter).
+  Therefore, a Cap'n Proto vat does not need to be certified by a CA (and cannot be compromised by a rogue CA).
+
+- `127.0.0.1:7000` is the address to which clients will try to connect to reach the server vat.
+
+- `eBIndzZyoVDxaJdZ8uh_xBx5V1lfXWTJCDX-qEkgNZ4` is the (base64-encoded) service ID.
+  This is a secret that both identifies the service to use within the vat, and also grants access to it.
+
+#### The server side
+
+The ``let secret_key = `Ephemeral`` line causes a new server key to be generated each time the program runs,
+so if you run it again you'll see a different capnp URL.
+For a real system you'll want to save the key so that the server's identity doesn't change when it is restarted.
+You can use ``let secret_key = `File "secret-key.pem"`` for that.
+Then the file `secret-key.pem` will be created automatically the first time you start the service,
+and reused on future runs.
+
+It is also possible to disable the use of encryption using `Vat_config.create ~serve_tls:false ...`.
+That might be useful if you need to interoperate with a client that doesn't support TLS.
 
 `listen_address` tells the server where to listen for incoming connections.
 You can use `` `Unix path`` for a Unix-domain socket at `path`, or
@@ -438,59 +507,33 @@ For TCP, you might want to listen on one address but advertise a different one, 
 let listen_address = `TCP ("0.0.0.0", 7000)	(* Listen on all interfaces *)
 let public_address = `TCP ("192.168.1.3", 7000)	(* Tell clients to connect here *)
 
-let server_config = Capnp_rpc_unix.Vat_config.create ~secret_key ~public_address listen_address
+let start_server () =
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~public_address listen_address in
 ```
-
-`Capnp_rpc_unix.serve` creates the server vat, waiting for incoming connections.
-Each client can access its "bootstrap" service, `Echo.local`.
-
-`sr` is a "sturdy ref" (you can think of it as a URL) that specifies how and where clients should connect
-to get a live reference (a `Capability.t`) to the bootstrap service.
-
-`Vat.connect_exn client_vat sr` returns a capability to the service at address `sr`,
-by connecting to the server socket and requesting its bootstrap service.
-
-For a real system you'd put the client and server parts in separate binaries.
-See the `test-bin/calc.ml` example file for how to do that.
-
-```
-$ ./_build/default/main.exe
-Connecting to server at capnp://sha-256:bV56NovGZPGZfHZjJczG7mdtUcCX-mCbKFbaN-jAZa8@127.0.0.1:7000
-Callback got "foo"
-Callback got "foo"
-Callback got "foo"
-```
-
-### Encryption and authentication
-
-The `sha-256:bV56N...@` part is the expected fingerprint of the server's public key.
-The client checks that the server's key matches when it connects.
-
-The ``let secret_key = `Ephemeral`` line causes a new server key to be generated each time the program runs,
-so if you run it again you'll see a different fingerprint.
-For a real system you'll want to save the key so that the server's identity doesn't change when it is restarted.
-You can use ``let secret_key = `File "secret-key.pem"`` for that.
-Then the `secret-key.pem` will be created automatically the first time you start the service,
-and reused on future runs.
 
 The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable configuration
 based on command-line arguments provided by the user (`test-bin/calc.ml` shows how to do that).
 
-In the future it will also be possible to include a token in the URL granting clients access to private services,
-not just the public bootstrap service.
-This is why the formatter used to display the sturdy ref is called `pp_with_secrets`, even though nothing in the URI is secret currently.
+In `start_server`:
 
-It is also possible to disable the use of encryption using `Vat_config.create ~serve_tls:false ...`:
+- `let service_id = Capnp_rpc_unix.Vat_config.derived_id config` creates the secret ID that
+  grants access to the service. `derived_id` generates the ID deterministically from the secret key.
+  This means that the ID will be stable as long as the server's key doesn't change.
 
-```
-$ ./_build/default/main.exe
-Connecting to server at capnp://insecure@127.0.0.1:7000
-Callback got "foo"
-Callback got "foo"
-Callback got "foo"
-```
+- `let restore = Restorer.single service_id Echo.local` configures a simple "restorer" that
+  answers requests for `service_id` with our `Echo.local` service.
 
-That might be useful if you need to interoperate with a client that doesn't support TLS.
+- `Capnp_rpc_unix.serve config ~restore` creates the service vat using the
+  previous configuration items and starts it listening for incoming connections.
+
+- `Capnp_rpc_unix.Vat.sturdy_ref vat service_id` returns a sturdy ref ("capnp://" URL) for
+  the given service within the vat.
+
+#### The client side
+
+After starting the server and getting the sturdy ref, we create a client vat and connect to the sturdy ref.
+The result, `proxy_to_service`, is a proxy to the remote service via the network
+that can be used in exactly the same way as the direct reference we used before.
 
 ### Pipelining
 
@@ -588,22 +631,22 @@ For full details of the API, see the comments in `capnp-rpc-lwt/capnp_rpc_lwt.ml
 * [The capnp-ocaml site][capnp-ocaml] explains how to read and build more complex types using the OCaml interface.
 * [E Reference Mechanics][] gives some insight into how distributed promises work.
 
-### FAQ
+## FAQ
 
-#### How can I return multiple results?
+### How can I return multiple results?
 
 Every Cap'n Proto method returns a struct, although the examples in this README only use a single field.
 You can return multiple fields by defining a method as e.g. `-> (foo :Foo, bar :Bar)`.
 For more complex types, it may be more convenient to define the structure elsewhere and then refer to it as
 `-> MyResults`.
 
-#### Can I create multiple instances of an interface dynamically?
+### Can I create multiple instances of an interface dynamically?
 
 Yes. e.g. in the example above we can use `Callback.local fn` many times to create multiple loggers.
 Just remember to call `Capability.dec_ref` on them when you're finished so that they can be released
 promptly (but if the TCP connection is closed, all references on it will be freed anyway).
 
-#### Can I get debug output?
+### Can I get debug output?
 
 First, always make sure logging is enabled so you can at least see warnings.
 The `main.ml` examples in this file enable some basic logging.
@@ -620,7 +663,7 @@ which will show you what services you’re currently importing and exporting ove
 If you override your service’s `pp` method, you can include extra information in the output too.
 Use `Capnp_rpc.Debug.OID` to generate and display a unique object identifier for logging.
 
-#### How can I debug reference counting problems?
+### How can I debug reference counting problems?
 
 If a capability gets GC'd with a non-zero ref-count, you should get a warning.
 For testing, you can use `Gc.full_major` to force a check.
@@ -630,11 +673,11 @@ If you try to use something after releasing it, you'll get an error.
 But the simple rule is: any time you create a local capability or extract a capability from a message,
 you must eventually call `Capability.dec_ref` on it.
 
-#### How can I release other resources when my service is released?
+### How can I release other resources when my service is released?
 
 Override the `release` method. It gets called when there are no more references to your service.
 
-#### Is there an interactive version I can use for debugging?
+### Is there an interactive version I can use for debugging?
 
 [The Python bindings][pycapnp] provide a good interactive environment.
 For example, start the test service above and leave it running:
@@ -645,7 +688,12 @@ Connecting to server at capnp://insecure@127.0.0.1:7000
 [...]
 ```
 
-Note that you must run without encryption for this.
+Note that you must run without encryption for this, and use a non-secret ID:
+
+```ocaml
+let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key listen_address in
+let service_id = Restorer.Id.public "" in
+```
 
 Run `python` from the directory containing your `echo_api.capnp` file and do:
 
@@ -687,7 +735,7 @@ capnp.wait_forever()
 
 Note that calling `wait_forever` prevents further use of the session, however.
 
-### Contributing
+## Contributing
 
 ### Building
 
@@ -704,7 +752,7 @@ To build:
 
 If you have trouble building, you can build it with Docker from a known-good state using `docker build .`.
 
-#### Testing
+### Testing
 
 Running `make test` will run through the tests in `test-lwt/test.ml`, which run some in-process examples.
 
@@ -732,7 +780,7 @@ You can also use `--secret-key-type=none` if you prefer to run without encryptio
 (e.g. for interoperability with another Cap'n Proto implementation that doesn't support TLS).
 In that case, the client URL would be `capnp://insecure@/tmp/calc.socket`.
 
-#### Fuzzing
+### Fuzzing
 
 Running `make fuzz` will run the AFL fuzz tester. You will need to use a version of the OCaml compiler with AFL support (e.g. `opam sw 4.04.0+afl`).
 
