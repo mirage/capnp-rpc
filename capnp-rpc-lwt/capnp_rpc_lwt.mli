@@ -35,6 +35,10 @@ module Capability : sig
   type +'a t
   (** An ['a t] is a capability reference to a service of type ['a]. *)
 
+  val broken : Capnp_rpc.Exception.t -> 'a t
+  (** [broken ex] is a broken capability, with problem [ex].
+      Any attempt to call methods on it will fail with [ex]. *)
+
   val problem : 'a t -> Capnp_rpc.Exception.t option
   (** [problem t] is [Some ex] if [t] is broken, or [None] if it is still
       believed to be healthy. Once a capability is broken, it will never
