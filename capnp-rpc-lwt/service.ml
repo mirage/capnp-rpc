@@ -30,7 +30,9 @@ let local (s:#generic) =
 
     method! pp f = Fmt.pf f "%t(%t)" s#pp super#pp_refcount
 
-    method! private release = s#release
+    method! private release =
+      super#release;
+      s#release
 
     method call results msg =
       let open Schema.Reader in
