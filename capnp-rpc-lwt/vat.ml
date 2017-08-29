@@ -1,4 +1,3 @@
-open Capnp_core
 open Lwt.Infix
 
 module Log = Capnp_rpc.Debug.Log
@@ -14,22 +13,18 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   type t = {
     switch : Lwt_switch.t option;
     address : Network.Address.t option;
-    mutable bootstrap : Core_types.cap option;
+    restore : Restorer.t;
     mutable connections : CapTP.t list; (* todo: should be a map, once we have Vat IDs *)
   }
 
-  let create ?switch ?bootstrap ?address () =
+  let create ?switch ?(restore=Restorer.none) ?address () =
     let t = {
       switch;
       address;
-      bootstrap;
+      restore;
       connections = [];
     } in
     Lwt_switch.add_hook switch (fun () ->
-        begin match t.bootstrap with
-          | Some x -> Core_types.dec_ref x; t.bootstrap <- None
-          | None -> ()
-        end;
         let ex = Capnp_rpc.Exception.v ~ty:`Disconnected "Vat shut down" in
         Lwt_list.iter_p (fun c -> CapTP.disconnect c ex) t.connections >|= fun () ->
         t.connections <- []
@@ -39,32 +34,28 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   let add_connection t endpoint =
     let switch = Lwt_switch.create () in
     Lwt_switch.add_hook t.switch (fun () -> Lwt_switch.turn_off switch);
-    let conn = CapTP.connect ~switch ?offer:t.bootstrap endpoint in
+    let conn = CapTP.connect ~switch ~restore:t.restore endpoint in
     t.connections <- conn :: t.connections;
     conn
 
   let public_address t = t.address
 
-  let bootstrap_ref t =
+  let sturdy_ref t service =
     match t.address with
-    | None -> failwith "bootstrap_ref: vat was not configured with an address"
+    | None -> failwith "sturdy_ref: vat was not configured with an address"
     | Some address ->
-      Sturdy_ref.v ~address ~service:`Bootstrap
-
-  let pp_bootstrap_uri f t =
-    if t.bootstrap = None then Fmt.string f "(vat has no bootstrap service)"
-    else if t.address = None then Fmt.string f "(vat has no public address)"
-    else Sturdy_ref.pp_with_secrets f (bootstrap_ref t)
+      Sturdy_ref.v ~address ~service
 
   let plain_endpoint ~switch flow =
     Endpoint.of_flow ~switch (module Underlying) flow
 
   let connect t sr =
     let addr = Sturdy_ref.address sr in
+    let service = Sturdy_ref.service sr in
     (* todo: check if already connected to vat *)
     Network.connect addr >|= function
     | Error _ as e -> e
-    | Ok ep -> Ok (CapTP.bootstrap @@ add_connection t ep)
+    | Ok ep -> Ok (CapTP.bootstrap (add_connection t ep) service)
 
   let connect_exn t sr =
     connect t sr >>= function

@@ -59,6 +59,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 
   type t = {
     conn : Conn.t;
+    bootstrap : EP.Core_types.cap option;
     recv_queue : [EP.In.t | `Unimplemented of EP.Out.t] Queue.t;
   }
 
@@ -73,12 +74,24 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 
   module EP = EP
 
-  let create ?bootstrap ~tags xmit_queue recv_queue =
+  let restore_single = function
+    | None -> None
+    | Some bootstrap -> Some (fun k -> function
+        | "" -> k @@ Ok bootstrap
+        | _ -> k @@ Error (Capnp_rpc.Exception.v "Only a main interface is available")
+      )
+
+  let create ?bootstrap ~tags
+    (xmit_queue:[EP.Out.t | `Unimplemented of EP.In.t] Queue.t)
+    (recv_queue:[EP.In.t | `Unimplemented of EP.Out.t] Queue.t) =
     let queue_send x = Queue.add (x :> [EP.Out.t | `Unimplemented of EP.In.t]) xmit_queue in
-    let conn = Conn.create ?bootstrap ~tags ~queue_send in
+    let bootstrap = (bootstrap :> EP.Core_types.cap option) in
+    let restore = restore_single bootstrap in
+    let conn = Conn.create ?restore ~tags ~queue_send in
     {
       conn;
       recv_queue;
+      bootstrap;
     }
 
   let pop_msg ?expect t =
@@ -114,7 +127,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
     if Queue.length t.recv_queue > 0 then (maybe_handle_msg t; true)
     else false
 
-  let bootstrap t = Conn.bootstrap t.conn
+  let bootstrap t = Conn.bootstrap t.conn ""
 
   let stats t = Conn.stats t.conn
 
@@ -123,12 +136,16 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   let check_invariants t =
     Conn.check t.conn
 
+  let disconnect t reason =
+    Conn.disconnect t.conn reason;
+    match t.bootstrap with
+    | None -> ()
+    | Some cap -> EP.Core_types.dec_ref cap
+
   let check_finished t ~name =
     Alcotest.(check stats_t) (name ^ " finished") Stats.zero @@ stats t;
     Conn.check t.conn;
-    Conn.disconnect t.conn finished
-
-  let disconnect t = Conn.disconnect t.conn
+    disconnect t finished
 end
 
 module Pair ( ) = struct
@@ -150,11 +167,6 @@ module Pair ( ) = struct
     let q2 = Queue.create () in
     let c = C.create ~tags:client_tags q1 q2 ?bootstrap:client_bs in
     let s = S.create ~tags:server_tags q2 q1 ~bootstrap in
-    Capnp_direct.Core_types.dec_ref bootstrap; (* [s] took a reference *)
-    begin match client_bs with
-      | None -> ()
-      | Some x -> Capnp_direct.Core_types.dec_ref x;
-    end;
     c, s
 
   let rec flush c s =

@@ -140,9 +140,12 @@ module Endpoint = Endpoint
 
 module S = S
 
+module Restorer = Restorer
+
 module Networking (N : S.NETWORK) (F : Mirage_flow_lwt.S) = struct
   type flow = F.flow
   type 'a capability = 'a Capability.t
+  type restorer = Restorer.t
 
   module Network = N
   module Vat = Vat.Make (N) (F)

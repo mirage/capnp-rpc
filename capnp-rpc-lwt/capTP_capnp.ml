@@ -104,10 +104,11 @@ module Make (Network : S.NETWORK) = struct
     in
     loop ()
 
-  let connect ?offer ?(tags=Logs.Tag.empty) ~switch endpoint =
+  let connect ~restore ?(tags=Logs.Tag.empty) ~switch endpoint =
     let xmit_queue = Queue.create () in
     let queue_send msg = queue_send ~switch ~xmit_queue endpoint (Serialise.message msg) in
-    let conn = Conn.create ?bootstrap:offer ~tags ~queue_send in
+    let restore = Restorer.fn restore in
+    let conn = Conn.create ~restore ~tags ~queue_send in
     Lwt_switch.add_hook (Some switch) (fun () ->
         Conn.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "CapTP switch turned off");
         Lwt.return_unit

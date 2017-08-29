@@ -179,10 +179,49 @@ module Endpoint = Endpoint
 module Two_party_network = Two_party_network
 module Auth = Auth
 
+module Restorer : sig
+  module Id : sig
+    type t
+    (** The object ID passed in the Cap'n Proto Bootstrap message. *)
+
+    val generate : unit -> t
+    (** [generate ()] is a fresh unguessable service ID.
+        Note: you must initialise `Nocrypto`'s entropy before calling this
+        (you will get a runtime error if you forget). *)
+
+    val derived : secret:string -> string -> t
+    (** [derived ~secret name] is a service ID based on [secret] and [name].
+        It is calculated as [SHA256.hmac secret name].
+        [secret] could be the hash of a private key file, for example. *)
+
+    val public : string -> t
+    (** [public name] is the service ID [name].
+        This may be useful for interoperability with non-secure clients that expect
+        to use a plain-text service ID (e.g. "calculator"). It could also be
+        useful if [name] is some unguessable token you have generated yourself. *)
+  end
+
+  type t
+  (** A restorer looks up live capabilities from service IDs. *)
+
+  val none : t
+  (** [none] is a restorer that rejects everything. *)
+
+  val single : Id.t -> 'a Capability.t -> t
+  (** [single id cap] is a restorer that responds to [id] with [cap] and
+      rejects everything else. *)
+
+  val restore : t -> Id.t -> ('a Capability.t, Capnp_rpc.Exception.t) result Lwt.t
+  (** [restore t id] restores [id] using [t].
+      You don't normally need to call this directly, as the Vat will do it automatically. *)
+end
+
 module Networking (N : S.NETWORK) (Flow : Mirage_flow_lwt.S) : S.VAT_NETWORK
   with module Network = N and
        type flow = Flow.flow and
-       type 'a capability = 'a Capability.t
+       type 'a capability = 'a Capability.t and
+       type restorer = Restorer.t and
+       type Sturdy_ref.service_id = Restorer.Id.t
 
 (**/**)
 

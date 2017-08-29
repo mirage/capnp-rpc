@@ -1,6 +1,6 @@
-FROM ocaml/opam@sha256:374934a4a512f1adf96f0a2858ef68d27719af96b7d0c28e5206f207edd98b6d
-#FROM ocaml/opam:debian-9_ocaml-4.04.0
-RUN cd opam-repository && git fetch && git reset --hard d991b129d7e5834a73ee8d45e700955ecbc2e444 && opam update
+FROM ocaml/opam@sha256:5e8ebc171a90fb62209e67dcaeedafd02018bc43ebc1e3074a5d03f9789f0ca1
+#FROM ocaml/opam:debian-9_ocaml-4.05.0
+RUN cd opam-repository && git fetch && git reset --hard 3cad9b6baa95451f294008d0b791c2b0d54b0968 && opam update
 ADD *.opam /home/opam/capnp-rpc/
 WORKDIR /home/opam/capnp-rpc/
 RUN opam pin add -ny capnp-rpc . && \
