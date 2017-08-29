@@ -19,6 +19,7 @@ module Capability = struct
   let dec_ref = Core_types.dec_ref
   let pp f x = x#pp f
 
+  let broken ex = Core_types.broken_cap ex
   let problem x = x#problem
 
   let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) (req : 'a Request.t) =

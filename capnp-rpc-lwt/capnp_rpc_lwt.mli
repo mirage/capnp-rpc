@@ -35,6 +35,10 @@ module Capability : sig
   type +'a t
   (** An ['a t] is a capability reference to a service of type ['a]. *)
 
+  val broken : Capnp_rpc.Exception.t -> 'a t
+  (** [broken ex] is a broken capability, with problem [ex].
+      Any attempt to call methods on it will fail with [ex]. *)
+
   val problem : 'a t -> Capnp_rpc.Exception.t option
   (** [problem t] is [Some ex] if [t] is broken, or [None] if it is still
       believed to be healthy. Once a capability is broken, it will never
@@ -210,6 +214,26 @@ module Restorer : sig
   val single : Id.t -> 'a Capability.t -> t
   (** [single id cap] is a restorer that responds to [id] with [cap] and
       rejects everything else. *)
+
+  module Table : sig
+    type t
+    (** A restorer that keeps a hashtable mapping IDs to capabilities in memory. *)
+
+    val create : unit -> t
+    (** [create ()] is a new in-memory table. *)
+
+    val add : t -> Id.t -> 'a Capability.t -> unit
+    (** [add t id cap] adds a mapping to [t].
+        It takes ownership of [cap] (it will call [Capability.dec_ref cap] on [clear]). *)
+
+    val remove : t -> Id.t -> unit
+    (** [remove t id] removes [id] from [t], decrementing the capability's ref count. *)
+
+    val clear : t -> unit
+    (** [clear t] clears the table, dropping all references. *)
+  end
+
+  val of_table : Table.t -> t
 
   val restore : t -> Id.t -> ('a Capability.t, Capnp_rpc.Exception.t) result Lwt.t
   (** [restore t id] restores [id] using [t].

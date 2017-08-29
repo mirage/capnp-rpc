@@ -289,6 +289,44 @@ let test_sturdy_ref () =
   let sr = Sturdy_ref.v ~address:(`Unix "/sock", auth) ~service:public_main in
   check "Secure Unix" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/sock/bWFpbg" sr
 
+let cap = Alcotest.testable Capability.pp (=)
+
+let expect_non_exn = function
+  | Ok x -> x
+  | Error ex -> Alcotest.failf "%a" Capnp_rpc.Exception.pp ex
+
+let except = Alcotest.testable Capnp_rpc.Exception.pp (=)
+
+let test_restorer _switch =
+  let table = Restorer.Table.create () in
+  let echo_id = Restorer.Id.public "echo" in
+  let registry_id = Restorer.Id.public "registry" in
+  let broken_id = Restorer.Id.public "broken" in
+  let unknown_id = Restorer.Id.public "unknown" in
+  Restorer.Table.add table echo_id @@ Echo.local ();
+  Restorer.Table.add table registry_id @@ Registry.local ();
+  Restorer.Table.add table broken_id @@ Capability.broken (Capnp_rpc.Exception.v "broken");
+  let r = Restorer.of_table table in
+  Restorer.restore r echo_id >|= expect_non_exn >>= fun a1 ->
+  Echo.ping a1 "ping" >>= fun reply ->
+  Alcotest.(check string) "Ping response" "got:0:ping" reply;
+  Restorer.restore r echo_id >|= expect_non_exn >>= fun a2 ->
+  Alcotest.check cap "Same cap" a1 a2;
+  Restorer.restore r registry_id >|= expect_non_exn >>= fun r1 ->
+  assert (a1 <> r1);
+  Restorer.restore r broken_id >|= expect_non_exn >>= fun x ->
+  let expected = Some (Capnp_rpc.Exception.v "broken") in
+  Alcotest.(check (option except)) "Broken response" expected (Capability.problem x);
+  Restorer.restore r unknown_id >>= fun x ->
+  let expected = Error (Capnp_rpc.Exception.v "Unknown persistent service ID") in
+  Alcotest.(check (result reject except)) "Missing mapping" expected x;
+  Capability.dec_ref a1;
+  Capability.dec_ref a2;
+  Capability.dec_ref r1;
+  Restorer.Table.remove table echo_id;
+  Restorer.Table.clear table;
+  Lwt.return ()
+
 let rpc_tests = [
   "Simple",     `Quick, run_lwt (test_simple ~server_key:None);
   "Crypto",     `Quick, run_lwt (test_simple ~server_key:(Some server_key));
@@ -302,6 +340,7 @@ let rpc_tests = [
   "Indexing",   `Quick, run_lwt test_indexing;
   "Options",    `Quick, test_options;
   "Sturdy ref", `Quick, test_sturdy_ref;
+  "Restorer",   `Quick, run_lwt test_restorer;
 ]
 
 let () =
