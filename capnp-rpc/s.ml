@@ -175,6 +175,12 @@ module type CORE_TYPES = sig
         If [c] is a far-ref, [fn x] will be called when it breaks.
         If [c] is forwarding to another cap, it will forward this call. *)
 
+    method when_released : (unit -> unit) -> unit
+    (** [c#when_released fn] will call [fn ()] when [c]'s ref-count drops to zero.
+        This is used for caches, to remove entries when they become invalid.
+        For promises, [fn] will be transferred to the resolution if resolved.
+        For broken caps, this method does nothing (exceptions are never released). *)
+
     method problem : Exception.t option
     (** [c#problem] is the exception for a broken reference, or [None] if it is not known to be broken. *)
 
@@ -256,6 +262,7 @@ module type CORE_TYPES = sig
     method shortest : cap
     method private release : unit
     method when_more_resolved : (cap -> unit) -> unit
+    method when_released : (unit -> unit) -> unit
     method problem : Exception.t option
   end
   (** A convenience base class for creating local services.

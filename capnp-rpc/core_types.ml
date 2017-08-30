@@ -28,6 +28,7 @@ module Make(Wire : S.WIRE) = struct
     method call : struct_resolver -> Request.t -> unit   (* Takes ownership of message *)
     method shortest : cap
     method when_more_resolved : (cap -> unit) -> unit
+    method when_released : (unit -> unit) -> unit
     method problem : Exception.t option
   end
   and struct_resolver = object
@@ -108,6 +109,7 @@ module Make(Wire : S.WIRE) = struct
     method shortest = self
     method blocker = None
     method when_more_resolved _ = ()
+    method when_released _ = ()
     method check_invariants = ()
     method sealed_dispatch _ = None
     method problem = Some ex
@@ -276,12 +278,15 @@ module Make(Wire : S.WIRE) = struct
   class virtual service = object (self : #cap)
     inherit ref_counted
 
+    val on_release = Queue.create ()
+
     method virtual call : struct_resolver -> Request.t -> unit
-    method private release = ()
+    method private release = Queue.iter (fun f -> f ()) on_release
     method pp f = Fmt.string f "<service>"
     method shortest = (self :> cap)
     method blocker = None
     method when_more_resolved _ = ()
+    method when_released fn = Queue.add fn on_release
     method problem = None
   end
 

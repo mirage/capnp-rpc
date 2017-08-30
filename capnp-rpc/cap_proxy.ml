@@ -17,6 +17,7 @@ module Make(C : S.CORE_TYPES) = struct
 
   type unresolved = {
     queue : pending Queue.t;
+    on_release : (unit -> unit) Queue.t;
     mutable rc : RC.t;
   }
 
@@ -28,7 +29,7 @@ module Make(C : S.CORE_TYPES) = struct
 
   class local_promise =
     object (self : #cap)
-      val mutable state = Unresolved {rc = RC.one; queue = Queue.create ()}
+      val mutable state = Unresolved {rc = RC.one; queue = Queue.create (); on_release = Queue.create ()}
 
       val id = Debug.OID.next ()
 
@@ -36,7 +37,7 @@ module Make(C : S.CORE_TYPES) = struct
 
       method call results msg =
         match state with
-        | Unresolved {queue; rc = _} -> Queue.add (Call (results, msg)) queue
+        | Unresolved {queue; _} -> Queue.add (Call (results, msg)) queue
         | Resolved cap -> cap#call results msg
 
       method update_rc d =
@@ -45,16 +46,22 @@ module Make(C : S.CORE_TYPES) = struct
           u.rc <- RC.sum u.rc d ~pp:(fun f -> self#pp f);
           if RC.is_zero u.rc then (
             state <- Resolved released;
-            self#release_while_unresolved
+            self#release_while_unresolved;
+            Queue.iter (fun f -> f ()) u.on_release
           )
         | Resolved x -> x#update_rc d
+
+      method when_released fn =
+        match state with
+        | Unresolved u -> Queue.add fn u.on_release
+        | Resolved x -> x#when_released fn
 
       method resolve (cap:cap) =
         match state with
         | Unresolved u when RC.is_zero u.rc ->
           Log.debug (fun f -> f "Ignoring resolution of unused promise %t to %t" self#pp cap#pp);
           C.dec_ref cap
-        | Unresolved {queue; rc} ->
+        | Unresolved {queue; rc; on_release} ->
           let pp f = self#pp f in
           RC.check ~pp rc;
           let cap =
@@ -78,6 +85,7 @@ module Make(C : S.CORE_TYPES) = struct
             | Call (result, msg) -> cap#call result msg
           in
           Queue.iter forward queue;
+          Queue.iter (fun f -> cap#when_released f) on_release
         | Resolved _ -> failwith "Already resolved!"
 
       method break ex =
