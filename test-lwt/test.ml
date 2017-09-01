@@ -14,7 +14,9 @@ module Exception = Capnp_rpc.Exception
 type cs = {
   client : Vat.t;
   server : Vat.t;
-  server_key : Auth.Secret_key.t option;
+  client_key : Auth.Secret_key.t;
+  server_key : Auth.Secret_key.t;
+  serve_tls : bool;
 }
 
 let ( >|*= ) x f =
@@ -32,10 +34,11 @@ let get_bootstrap ~switch cs =
   let _address, auth = Vat.public_address cs.server |> expect_some "No public address!" in
   let server_socket, client_socket = Unix_flow.socketpair ~switch () in
   let _server =
-    Tls_wrapper.connect_as_server ~switch server_socket cs.server_key >|*=
+    let server_key = if cs.serve_tls then Some cs.server_key else None in
+    Tls_wrapper.connect_as_server ~switch server_socket server_key >|*=
     Vat.add_connection cs.server
   in
-  Tls_wrapper.connect_as_client ~switch client_socket auth >|*= fun ep ->
+  Tls_wrapper.connect_as_client ~switch client_socket (lazy cs.client_key) auth >|*= fun ep ->
   let conn = Vat.add_connection cs.client ep in
   CapTP.bootstrap conn (Restorer.Id.public "")
 
@@ -50,19 +53,20 @@ end
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
 
-let make_vats ?server_key ~switch ~service () =
+let make_vats ?(serve_tls=false) ~switch ~service () =
   let auth =
-    match server_key with
-    | Some key -> Capnp_rpc_lwt.Auth.Secret_key.digest key
-    | None -> Capnp_rpc_lwt.Auth.Digest.insecure
+    if serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest server_key
+    else Capnp_rpc_lwt.Auth.Digest.insecure
   in
   let address = (`Unix "/tmp/socket", auth) in
   let restore = Restorer.(single (Id.public "")) service in
   Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);
   {
-    client = Vat.create ~switch ();
-    server = Vat.create ~switch ~restore ~address ();
+    client = Vat.create ~switch ~secret_key:(lazy client_key) ();
+    server = Vat.create ~switch ~secret_key:(lazy server_key) ~restore ~address ();
+    client_key;
     server_key;
+    serve_tls;
   }
 
 (* Generic Lwt running for Alcotest. *)
@@ -97,8 +101,8 @@ let run_lwt fn () =
   let warnings_at_end = Logs.(err_count () + warn_count ()) in
   Alcotest.(check int) "Check log for warnings" 0 (warnings_at_end - warnings_at_start)
 
-let test_simple switch ~server_key =
-  let cs = make_vats ~switch ?server_key ~service:(Echo.local ()) () in
+let test_simple switch ~serve_tls =
+  let cs = make_vats ~switch ~serve_tls ~service:(Echo.local ()) () in
   get_bootstrap ~switch cs >>= fun service ->
   Echo.ping service "ping" >>= fun reply ->
   Alcotest.(check string) "Ping response" "got:0:ping" reply;
@@ -106,8 +110,8 @@ let test_simple switch ~server_key =
   Lwt.return ()
 
 let test_bad_crypto switch =
-  let cs = make_vats ~switch ~server_key:server_key ~service:(Echo.local ()) () in
-  let cs = {cs with server_key = Some client_key} in (* (bad config) *)
+  let cs = make_vats ~switch ~serve_tls:true ~service:(Echo.local ()) () in
+  let cs = {cs with server_key = client_key; client_key = server_key} in (* (bad config) *)
   Lwt.try_bind
     (fun () -> get_bootstrap ~switch cs)
     (fun _ -> Alcotest.fail "Wrong TLS key should have been rejected")
@@ -441,8 +445,8 @@ let test_broken4 () =
   Alcotest.check (Alcotest.option except) "Released, not called" None !problem
 
 let rpc_tests = [
-  "Simple",     `Quick, run_lwt (test_simple ~server_key:None);
-  "Crypto",     `Quick, run_lwt (test_simple ~server_key:(Some server_key));
+  "Simple",     `Quick, run_lwt (test_simple ~serve_tls:false);
+  "Crypto",     `Quick, run_lwt (test_simple ~serve_tls:true);
   "Bad crypto", `Quick, run_lwt test_bad_crypto;
   "Parallel",   `Quick, run_lwt test_parallel;
   "Embargo",    `Quick, run_lwt test_embargo;

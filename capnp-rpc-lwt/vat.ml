@@ -12,14 +12,16 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
 
   type t = {
     switch : Lwt_switch.t option;
+    secret_key : Auth.Secret_key.t Lazy.t;
     address : Network.Address.t option;
     restore : Restorer.t;
     mutable connections : CapTP.t list; (* todo: should be a map, once we have Vat IDs *)
   }
 
-  let create ?switch ?(restore=Restorer.none) ?address () =
+  let create ?switch ?(restore=Restorer.none) ?address ~secret_key () =
     let t = {
       switch;
+      secret_key;
       address;
       restore;
       connections = [];
@@ -53,7 +55,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     let addr = Sturdy_ref.address sr in
     let service = Sturdy_ref.service sr in
     (* todo: check if already connected to vat *)
-    Network.connect addr >|= function
+    Network.connect ~secret_key:t.secret_key addr >|= function
     | Error _ as e -> e
     | Ok ep -> Ok (CapTP.bootstrap (add_connection t ep) service)
 

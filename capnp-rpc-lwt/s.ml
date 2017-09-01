@@ -18,7 +18,10 @@ module type NETWORK = sig
     val pp : t Fmt.t
   end
 
-  val connect : Address.t -> (Endpoint.t, [> `Msg of string]) result Lwt.t
+  val connect :
+    secret_key:Auth.Secret_key.t Lazy.t ->
+    Address.t ->
+    (Endpoint.t, [> `Msg of string]) result Lwt.t
 
   val parse_third_party_cap_id : Schema.Reader.pointer_t -> Types.third_party_cap_id
 end
@@ -126,9 +129,11 @@ module type VAT_NETWORK = sig
       ?switch:Lwt_switch.t ->
       ?restore:restorer ->
       ?address:Network.Address.t ->
+      secret_key:Auth.Secret_key.t Lazy.t ->
       unit -> t
-    (** [create ~switch ~restore ~address ()] is a new vat that uses [restore] to restore
-        sturdy refs hosted at this vat to live capabilities for peers.
+    (** [create ~switch ~restore ~address ~secret_key ()] is a new vat that
+        uses [restore] to restore sturdy refs hosted at this vat to live
+        capabilities for peers.
         The vat will suggest that other parties connect to it using [address].
         Turning off the switch will disconnect any active connections. *)
 

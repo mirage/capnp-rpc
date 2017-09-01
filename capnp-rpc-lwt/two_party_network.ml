@@ -18,4 +18,4 @@ end
 
 let parse_third_party_cap_id _ = `Two_party_only
 
-let connect _ = assert false
+let connect ~secret_key:_ _ = assert false

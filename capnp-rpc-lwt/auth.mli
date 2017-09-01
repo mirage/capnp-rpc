@@ -13,7 +13,8 @@
     get away with creating a new key each time. However, it might be quicker
     to save and reload the key anyway. *)
 
-type hash = [`SHA1 | `SHA224 | `SHA256 | `SHA384 | `SHA512]
+type hash = [`SHA256]
+(** Supported hashes. *)
 
 module Digest : sig
   type t
@@ -59,8 +60,8 @@ module Secret_key : sig
   val to_pem_data : t -> string
   (** [to_pem_data t] returns [t] as a PEM-encoded private key. *)
 
-  val tls_config : t -> Tls.Config.server
-  (** [tls_config t] is the TLS configuration to use for a server with secret key [t]. *)
+  val certificates : t -> Tls.Config.own_cert
+  (** [certificates t] is the TLS certificate chain to use for a vat with secret key [t]. *)
 
   val pp_fingerprint : hash -> t Fmt.t
   (** [pp_fingerprint hash] formats the hash of [t]'s public key. *)
@@ -76,6 +77,9 @@ module Tls_wrapper (Underlying : Mirage_flow_lwt.S) : sig
     (Endpoint.t, [> `Msg of string]) result Lwt.t
 
   val connect_as_client :
-    switch:Lwt_switch.t -> Underlying.flow -> Digest.t ->
+    switch:Lwt_switch.t -> Underlying.flow -> Secret_key.t Lazy.t -> Digest.t ->
     (Endpoint.t, [> `Msg of string]) result Lwt.t
+  (** [connect_as_client ~switch underlying key digest] is an endpoint using flow [underlying].
+      If [digest] requires TLS, it performs a TLS handshake. It uses [key] as its private key
+      and checks that the server is the one required by [auth]. *)
 end
