@@ -47,6 +47,10 @@ module Vat_config : sig
       (using {!Restorer.Id.derived}). It won't change (unless the vat's key
       changes). [name] defaults to ["main"]. *)
 
+  val sturdy_ref : t -> Restorer.Id.t -> 'a Sturdy_ref.t
+  (** [sturdy_ref t id] is a sturdy ref for [id] at the vat that would be
+      created by [t]. *)
+
   val pp : t Fmt.t
   (** This is probably only useful for the unit-tests. *)
 
@@ -55,6 +59,43 @@ module Vat_config : sig
 
   val cmd : t Cmdliner.Term.t
   (** [cmd] evalutes to a configuration populated from the command-line options. *)
+end
+
+module File_store : sig
+  (** An on-disk store for saved services. *)
+
+  type 'a t
+  (** A store of values of type ['a]. *)
+
+  val create :
+    dir:string ->
+    hash:Auth.hash ->
+    Vat_config.t ->
+    'a t
+  (** [create ~dir ~hash config] is a store for Cap'n Proto structs.
+      Each saved item gets a random service ID and is stored inside [dir]
+      in a file named [hash id].
+      [config] is used for [Vat_config.sturdy_ref], to include the vat's
+      address and fingerprint in the generated sturdy refs. *)
+
+  val hash : 'a t -> Auth.hash
+  (** [hash t] is the hash passed to [create]. *)
+
+  val save : 'a t -> 'a StructStorage.reader_t -> 'a Sturdy_ref.t
+  (** [save t data] is a reference to a new persistent service.
+      [data] is stored to disk. It will be used later to restore
+      the service. *)
+
+  val load : 'a t -> digest:string -> 'a StructStorage.reader_t option
+  (** [load t ~digest] is the data passed to [save] when the service
+      whose ID hashes to digest was saved, or [None] if the digest
+      is not known. *)
+
+  val update : 'a t -> digest:string -> 'a StructStorage.reader_t -> unit
+  (** [update t ~digest data] overwrites the saved data for [digest] with [data]. *)
+
+  val remove : 'a t -> digest:string -> unit
+  (** [remove t ~digest] removes the stored data for [digest]. *)
 end
 
 val sturdy_ref : unit -> 'a Sturdy_ref.t Cmdliner.Arg.conv

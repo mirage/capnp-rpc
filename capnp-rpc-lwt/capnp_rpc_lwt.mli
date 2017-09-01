@@ -203,7 +203,33 @@ module Restorer : sig
         This may be useful for interoperability with non-secure clients that expect
         to use a plain-text service ID (e.g. "calculator"). It could also be
         useful if [name] is some unguessable token you have generated yourself. *)
+
+    val digest : Auth.hash -> t -> string
+    (** [digest h id] is the digest [h id].
+
+        Since [id] is normally a secret token, we must be careful not to allow
+        timing attacks (taking a slightly different amount of time to return an
+        error depending on how much of the ID the caller guessed correctly).
+        Taking a secure hash of the value first is one way to avoid this, since
+        revealing the hash isn't helpful to the attacker. *)
   end
+
+  (** {2 Resolutions} *)
+
+  type resolution
+  (** Internally, this is just [('a Capability.t, Capnp_rpc.Exception.t) result] but the
+      types work out better having it abstract. *)
+
+  val grant : 'a Capability.t -> resolution
+  (** [grant x] is [Ok x]. *)
+
+  val reject : Capnp_rpc.Exception.t -> resolution
+  (** [reject x] is [Error x]. *)
+
+  val unknown_service_id : resolution
+  (** [unknown_service_id] is a standard rejection message. *)
+
+  (** {2 Restorers} *)
 
   type t
   (** A restorer looks up live capabilities from service IDs. *)
@@ -220,17 +246,27 @@ module Restorer : sig
     (** A restorer that keeps a hashtable mapping IDs to capabilities in memory. *)
 
     val create : unit -> t
-    (** [create ()] is a new in-memory table. *)
+    (** [create ()] is a new in-memory-only table. *)
+
+    val of_loader : hash:Auth.hash -> (string -> resolution Lwt.t) -> t
+    (** [of_loader ~hash fn] is a new caching table that uses [fn (hash id)] to
+        restore services that aren't in the cache.
+        Note that [hash] is purely a local security measure - remote peers only
+        see [id].
+        The result is cached until its ref-count reaches zero, so the table
+        will never allow two live capabilities for a single [Id.t] at once. It
+        will also not call [fn id] twice in parallel for the same ID. *)
 
     val add : t -> Id.t -> 'a Capability.t -> unit
     (** [add t id cap] adds a mapping to [t].
         It takes ownership of [cap] (it will call [Capability.dec_ref cap] on [clear]). *)
 
     val remove : t -> Id.t -> unit
-    (** [remove t id] removes [id] from [t], decrementing the capability's ref count. *)
+    (** [remove t id] removes [id] from [t].
+        It decrements the capability's ref count if it was added manually with [add]. *)
 
     val clear : t -> unit
-    (** [clear t] clears the table, dropping all references. *)
+    (** [clear t] removes all entries from the table. *)
   end
 
   val of_table : Table.t -> t

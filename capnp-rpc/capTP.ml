@@ -1090,82 +1090,113 @@ module Make (EP : Message_types.ENDPOINT) = struct
     dec_ref result;
     service
 
-  (* Forwards messages to [init] until resolved.
-     Forces [release] when resolved or released. *)
-  class switchable ~(release:unit Lazy.t) init =
-    let released = Core_types.broken_cap (Exception.v "(released)") in
-    let pp_state f = function
-      | `Unsettled (x, _) -> Fmt.pf f "(unsettled) -> %t" x#pp
-      | `Set x -> Fmt.pf f "(set) -> %t" x#pp
-    in
-    let target = function
-      | `Unsettled (x, _)
-      | `Set x -> x
-    in
-    object (self : #Core_types.cap)
-      inherit Core_types.ref_counted as super
-
-      val id = Debug.OID.next ()
-
-      val mutable state =
-        `Unsettled (init, Queue.create ())
-
-      method call msg caps =
-        (target state)#call msg caps
-
-      method resolve cap =
-        self#check_refcount;
-        match state with
-        | `Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
-        | `Unsettled (old, q) ->
-          state <- `Set cap;
-          Queue.iter (fun f -> f (with_inc_ref cap)) q;
-          dec_ref old;
-          Lazy.force release
-
-      method break ex =
-        self#resolve (Core_types.broken_cap ex)
-
-      method private release =
-        dec_ref (target state);
-        Lazy.force release;
-        state <- `Set released
-
-      method shortest =
-        match state with
-        | `Unsettled _ -> (self :> Core_types.cap)     (* Can't shorten, as we may change later *)
-        | `Set x -> x#shortest
-
-      method blocker =
-        match state with
-        | `Unsettled _ -> Some (self :> Core_types.base_ref)
-        | `Set x -> x#blocker
-
-      method problem =
-        match state with
-        | `Unsettled _ -> None
-        | `Set x -> x#problem
-
-      method when_more_resolved fn =
-        match state with
-        | `Unsettled (_, q) -> Queue.add fn q
-        | `Set x -> x#when_more_resolved fn
-
-      (* When trying to find the target for export, it's OK to expose our current
-         target, even though [shortest] shouldn't.
-         In particular, we need this to deal with disembargo requests. *)
-      method! sealed_dispatch : type a. a S.brand -> a option = function
-        | CapTP -> (target state)#shortest#sealed_dispatch CapTP
-        | x -> super#sealed_dispatch x
-
-      method! check_invariants =
-        super#check_invariants;
-        match state with
-        | `Unsettled (x, _) | `Set x -> x#check_invariants
-
-      method pp f =
-        Fmt.pf f "switchable(%a, %t) %a" Debug.OID.pp id super#pp_refcount pp_state state
+  module Switchable = struct
+    class type handler = object
+      method pp : Format.formatter -> unit
+      method sealed_dispatch : 'a. 'a S.brand -> 'a option
+      method call : Core_types.struct_resolver -> Wire.Request.t -> unit
     end
+
+    type unset = {
+      handler : handler; (* Will forward calls here until set *)
+      on_set : (Core_types.cap -> unit) Queue.t;
+      on_release : (unit -> unit) Queue.t;
+    }
+
+    type state =
+      | Unset of unset
+      | Set of Core_types.cap
+
+    (* Forwards messages to [init] until resolved.
+       Forces [release] when resolved or released. *)
+    let make ~(release:unit Lazy.t) init =
+      let released = Core_types.broken_cap (Exception.v "(released)") in
+      let pp_state f = function
+        | Unset x -> Fmt.pf f "(unsettled) -> %t" x.handler#pp
+        | Set x -> Fmt.pf f "(set) -> %t" x#pp
+      in
+      let target = function
+        | Unset x -> x.handler
+        | Set x -> (x :> handler)
+      in
+      object (self : #Core_types.cap)
+        inherit Core_types.ref_counted as super
+
+        val id = Debug.OID.next ()
+
+        val mutable state =
+          Unset { handler = init; on_set = Queue.create (); on_release = Queue.create () }
+
+        method call msg caps =
+          (target state)#call msg caps
+
+        method resolve cap =
+          self#check_refcount;
+          match state with
+          | Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
+          | Unset {handler = _; on_set; on_release} ->
+            state <- Set cap;
+            Queue.iter (fun f -> f (with_inc_ref cap)) on_set;
+            Queue.iter (fun f -> cap#when_released f) on_release;
+            Lazy.force release
+
+        method break ex =
+          self#resolve (Core_types.broken_cap ex)
+
+        method private release =
+          Lazy.force release;
+          let old_state = state in
+          state <- Set released;
+          match old_state with
+          | Unset u -> Queue.iter (fun f -> f ()) u.on_release
+          | Set x -> dec_ref x
+
+        method shortest =
+          match state with
+          | Unset _ -> (self :> Core_types.cap)     (* Can't shorten, as we may change later *)
+          | Set x -> x#shortest
+
+        method blocker =
+          match state with
+          | Unset _ -> Some (self :> Core_types.base_ref)
+          | Set x -> x#blocker
+
+        method problem =
+          match state with
+          | Unset _ -> None
+          | Set x -> x#problem
+
+        method when_more_resolved fn =
+          match state with
+          | Unset x -> Queue.add fn x.on_set
+          | Set x -> x#when_more_resolved fn
+
+        method when_released fn =
+          match state with
+          | Unset x -> Queue.add fn x.on_release
+          | Set x -> x#when_released fn
+
+        (* When trying to find the target for export, it's OK to expose our current
+           target, even though [shortest] shouldn't.
+           In particular, we need this to deal with disembargo requests. *)
+        method! sealed_dispatch : type a. a S.brand -> a option = function
+          | CapTP ->
+            begin match state with
+              | Unset x -> x.handler#sealed_dispatch CapTP
+              | Set x -> x#shortest#sealed_dispatch CapTP
+            end
+          | x -> super#sealed_dispatch x
+
+        method! check_invariants =
+          super#check_invariants;
+          match state with
+          | Unset _ -> ()
+          | Set x -> x#check_invariants
+
+        method pp f =
+          Fmt.pf f "switchable(%a, %t) %a" Debug.OID.pp id super#pp_refcount pp_state state
+      end
+  end
 
   module Input : sig
     open EP.Core_types
@@ -1187,37 +1218,21 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let set_import_proxy t ~settled import =
       let message_target = `Import import in
       let cap =
-        object (self : #Core_types.cap)
-          inherit Core_types.ref_counted as super
-
+        object (_ : Switchable.handler)
           val id = Debug.OID.next ()
 
           method call results msg =
-            self#check_refcount;
             send_call t message_target results msg
 
           method pp f =
             if settled then
-              Fmt.pf f "far-ref(%a, %t) -> %a" Debug.OID.pp id self#pp_refcount pp_cap message_target
+              Fmt.pf f "far-ref(%a) -> %a" Debug.OID.pp id pp_cap message_target
             else
-              Fmt.pf f "remote-promise(%a, %t) -> %a" Debug.OID.pp id self#pp_refcount pp_cap message_target
+              Fmt.pf f "remote-promise(%a) -> %a" Debug.OID.pp id pp_cap message_target
 
-          method private release = ()
-
-          method shortest = self
-
-          method blocker =
-            if settled then None
-            else Some (self :> Core_types.base_ref)
-
-          method problem = None
-
-          method when_more_resolved _ =
-            assert settled      (* Otherwise, our switchable should have intercepted this *)
-
-          method! sealed_dispatch : type a. a S.brand -> a option = function
+          method sealed_dispatch : type a. a S.brand -> a option = function
             | CapTP -> Some (t, message_target)
-            | x -> super#sealed_dispatch x
+            | _ -> None
         end
       in
       let release = lazy (
@@ -1225,7 +1240,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         Import.dec_ref import |> apply_import_actions t;
       ) in
       (* Imports can resolve to another cap (if unsettled) or break. *)
-      let switchable = new switchable ~release cap in
+      let switchable = Switchable.make ~release cap in
       Import.init_proxy import switchable;
       switchable
 

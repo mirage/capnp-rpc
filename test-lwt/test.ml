@@ -9,6 +9,7 @@ module Vat = Capnp_rpc_unix.Vat
 module CapTP = Capnp_rpc_unix.CapTP
 module Unix_flow = Capnp_rpc_unix.Unix_flow
 module Tls_wrapper = Capnp_rpc_lwt.Auth.Tls_wrapper(Unix_flow)
+module Exception = Capnp_rpc.Exception
 
 type cs = {
   client : Vat.t;
@@ -293,11 +294,11 @@ let cap = Alcotest.testable Capability.pp (=)
 
 let expect_non_exn = function
   | Ok x -> x
-  | Error ex -> Alcotest.failf "%a" Capnp_rpc.Exception.pp ex
+  | Error ex -> Alcotest.failf "expect_non_exn: %a" Capnp_rpc.Exception.pp ex
 
 let except = Alcotest.testable Capnp_rpc.Exception.pp (=)
 
-let test_restorer _switch =
+let test_table_restorer _switch =
   let table = Restorer.Table.create () in
   let echo_id = Restorer.Id.public "echo" in
   let registry_id = Restorer.Id.public "registry" in
@@ -327,6 +328,72 @@ let test_restorer _switch =
   Restorer.Table.clear table;
   Lwt.return ()
 
+let test_fn_restorer _switch =
+  let cap = Alcotest.testable Capability.pp (=) in
+  let a = Restorer.Id.public "a" in
+  let b = Restorer.Id.public "b" in
+  let c = Restorer.Id.public "c" in
+  let current_c = ref (Restorer.reject (Exception.v "Broken C")) in
+  let delay = Lwt_condition.create () in
+  let hash = `SHA256 in
+  let digest = Restorer.Id.digest hash in
+  let load id =
+    if id = digest a then Lwt.return @@ Restorer.grant @@ Echo.local ()
+    else if id = digest b then Lwt_condition.wait delay >|= fun () -> Restorer.grant @@ Echo.local ()
+    else if id = digest c then Lwt_condition.wait delay >|= fun () -> !current_c
+    else Lwt.return @@ Restorer.unknown_service_id
+  in
+  let table = Restorer.Table.of_loader ~hash load in
+  let restorer = Restorer.of_table table in
+  let restore x = Restorer.restore restorer x in
+  (* Check that restoring the same ID twice caches the capability. *)
+  restore a >|= expect_non_exn >>= fun a1 ->
+  restore a >|= expect_non_exn >>= fun a2 ->
+  Alcotest.check cap "Restore cached" a1 a2;
+  Capability.dec_ref a1;
+  Capability.dec_ref a2;
+  (* But if it's released, the next lookup loads a fresh one. *)
+  restore a >|= expect_non_exn >>= fun a3 ->
+  if a1 = a3 then Alcotest.fail "Returned released cap!";
+  Capability.dec_ref a3;
+  (* Doing two lookups in parallel only does one load. *)
+  let b1 = restore b in
+  let b2 = restore b in
+  assert (Lwt.state b1 = Lwt.Sleep);
+  Lwt_condition.broadcast delay ();
+  b1 >|= expect_non_exn >>= fun b1 ->
+  b2 >|= expect_non_exn >>= fun b2 ->
+  Alcotest.check cap "Restore delayed cached" b1 b2;
+  Restorer.Table.clear table;   (* (should have no effect) *)
+  Capability.dec_ref b1;
+  Capability.dec_ref b2;
+  (* Failed lookups aren't cached. *)
+  let c1 = restore c in
+  Lwt_condition.broadcast delay ();
+  c1 >>= fun c1 ->
+  let reject = Alcotest.result cap except in
+  Alcotest.check reject "C initially fails" (Error (Exception.v "Broken C")) c1;
+  let c2 = restore c in
+  let c_service = Echo.local () in
+  current_c := Restorer.grant c_service;
+  Lwt_condition.broadcast delay ();
+  c2 >|= expect_non_exn >>= fun c2 ->
+  Alcotest.check cap "C now works" c_service c2;
+  Capability.dec_ref c2;
+  (* Two users; one frees the cap immediately *)
+  let b1 =
+    restore b >|= expect_non_exn >|= fun b1 ->
+    Capability.dec_ref b1;
+    b1
+  in
+  let b2 = restore b in
+  Lwt_condition.broadcast delay ();
+  b1 >>= fun b1 ->
+  b2 >|= expect_non_exn >>= fun b2 ->
+  Alcotest.check cap "Cap not freed" b1 b2;
+  Capability.dec_ref b2;
+  Lwt.return_unit
+
 let rpc_tests = [
   "Simple",     `Quick, run_lwt (test_simple ~server_key:None);
   "Crypto",     `Quick, run_lwt (test_simple ~server_key:(Some server_key));
@@ -340,7 +407,8 @@ let rpc_tests = [
   "Indexing",   `Quick, run_lwt test_indexing;
   "Options",    `Quick, test_options;
   "Sturdy ref", `Quick, test_sturdy_ref;
-  "Restorer",   `Quick, run_lwt test_restorer;
+  "Table restorer", `Quick, run_lwt test_table_restorer;
+  "Fn restorer", `Quick, run_lwt test_fn_restorer;
 ]
 
 let () =

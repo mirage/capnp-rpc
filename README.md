@@ -12,11 +12,16 @@ See [LICENSE.md](LICENSE.md) for details.
 * [Structure of the library](#structure-of-the-library)
 * [Conceptual model](#conceptual-model)
 * [Tutorial](#tutorial)
+	* [A basic echo service](#a-basic-echo-service)
 	* [Passing capabilities](#passing-capabilities)
 	* [Networking](#networking)
 		* [The server side](#the-server-side)
 		* [The client side](#the-client-side)
+		* [Separate processes](#separate-processes)
 	* [Pipelining](#pipelining)
+	* [Hosting multiple sturdy refs](#hosting-multiple-sturdy-refs)
+	* [Creating and persisting sturdy refs dynamically](#creating-and-persisting-sturdy-refs-dynamically)
+	* [Summary](#summary)
 	* [Further reading](#further-reading)
 * [FAQ](#faq)
 	* [How can I return multiple results?](#how-can-i-return-multiple-results)
@@ -144,6 +149,11 @@ Ideally, the receiver should be able to establish a direct connection to the thi
 this isn't yet implemented and instead the RPC system will forward messages and responses in this case.
 
 ## Tutorial
+
+This tutorial creates a simple echo service and then extends it.
+It shows how to use most of the features of the library, including defining services, using encryption and authentication over network links, and saving service state to disk.
+
+### A basic echo service
 
 Start by writing a [Cap'n Proto schema file][schema].
 For example, here is a very simple echo service:
@@ -469,10 +479,6 @@ Callback got "foo"
 Callback got "foo"
 ```
 
-The example runs the client and server in a single process, but
-for a real system you'd run these as separate processes.
-See the `test-bin/calc.ml` example file for how to do that.
-
 Once the server vat is running, we get a "sturdy ref" for the echo service, which is displayed as a "capnp://" URL.
 The URL contains several pieces of information:
 
@@ -511,9 +517,6 @@ let start_server () =
   let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~public_address listen_address in
 ```
 
-The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable configuration
-based on command-line arguments provided by the user (`test-bin/calc.ml` shows how to do that).
-
 In `start_server`:
 
 - `let service_id = Capnp_rpc_unix.Vat_config.derived_id config` creates the secret ID that
@@ -534,6 +537,91 @@ In `start_server`:
 After starting the server and getting the sturdy ref, we create a client vat and connect to the sturdy ref.
 The result, `proxy_to_service`, is a proxy to the remote service via the network
 that can be used in exactly the same way as the direct reference we used before.
+
+#### Separate processes
+
+The example above runs the client and server in a single process.
+To run them in separate processes we just need to add some command-line parsing to let the user choose whether to run as a server or as a client:
+
+```ocaml
+open Lwt.Infix
+open Capnp_rpc_lwt
+
+let () =
+  Logs.set_level (Some Logs.Warning);
+  Logs.set_reporter (Logs_fmt.reporter ())
+
+let callback_fn msg =
+  Fmt.pr "Callback got %S@." msg
+
+let wait_forever = fst @@ Lwt.wait ()
+
+let serve config =
+  Lwt_main.run begin
+    let service_id = Capnp_rpc_unix.Vat_config.derived_id config in
+    let restore = Restorer.single service_id Echo.local in
+    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
+    let sr = Capnp_rpc_unix.Vat.sturdy_ref vat service_id in
+    Fmt.pr "echo service running at: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
+    wait_forever
+  end
+
+let connect sr =
+  Lwt_main.run begin
+    let client_vat = Capnp_rpc_unix.client_only_vat () in
+    Capnp_rpc_unix.Vat.connect_exn client_vat sr >>= fun service ->
+    let callback = Echo.Callback.local callback_fn in
+    Echo.heartbeat service "foo" callback >>= fun () ->
+    Capability.dec_ref callback;
+    wait_forever
+  end
+
+open Cmdliner
+
+let connect_addr =
+  let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server (capnp://...)" in
+  Arg.(required @@ pos 0 (some (Capnp_rpc_unix.sturdy_ref ())) None i)
+
+let serve_cmd =
+  Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
+  let doc = "run the server" in
+  Term.info "serve" ~doc
+
+let connect_cmd =
+  Term.(const connect $ connect_addr),
+  let doc = "run the client" in
+  Term.info "connect" ~doc
+
+let default_cmd =
+  let doc = "capnp-rpc demo app" in
+  Term.(ret (const (`Help (`Pager, None)))),
+  Term.info "demo" ~version:"v0.1" ~doc
+
+let cmds = [serve_cmd; connect_cmd]
+
+let () =
+  Term.eval_choice default_cmd cmds |> Term.exit
+```
+
+The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable `Vat_config`
+based on command-line arguments provided by the user.
+
+To test, start the server running:
+
+```
+$ ./_build/default/main.exe serve --secret-key-file=key.pem --listen-address tcp:127.0.0.1:7000
+echo service running at: capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
+```
+
+Then run the client, using the URL printed by the server:
+
+```
+$ ./_build/default/main.exe connect capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
+Callback got "foo"
+Callback got "foo"
+Callback got "foo"
+```
+
 
 ### Pipelining
 
@@ -583,14 +671,13 @@ Doing it this way allows `call_for_caps` to release any unused capabilities in t
 We can test it as follows:
 
 ```ocaml
-let run_client service =
   let logger = Echo.get_logger service in
   Echo.Callback.log logger "Message from client" >|= function
   | Ok () -> ()
   | Error err -> Fmt.epr "Server's logger failed: %a" Capnp_rpc.Error.pp err
 ```
 
-This should print something like:
+This should print (in the server's output) something like:
 
 ```
 Service logger: Message from client
@@ -606,22 +693,179 @@ On the wire, the messages are sent together, and look like:
 Now, let's say we'd like the server to send heartbeats to itself:
 
 ```ocaml
-let run_client service =
-  let callback = Echo.get_logger service in
-  Echo.heartbeat service "foo" callback >>= fun () ->
-  Capability.dec_ref callback;
-  fst (Lwt.wait ())
+    let callback = Echo.get_logger service in
+    Echo.heartbeat service "foo" callback >>= fun () ->
+    Capability.dec_ref callback;
+    wait_forever
 ```
 
-Here, we ask the server for its logger and then (without waiting for the reply), tell it to send heartbeat messages to the promised logger.
+Here, we ask the server for its logger and then (without waiting for the reply), tell it to send heartbeat messages to the promised logger (you should see the messages appear in the server process's output).
 
 Previously, when we exported our local `callback` object, it arrived at the service as a proxy that sent messages back to the client over the network.
 But when we send the (promise of the) server's own logger back to it, the RPC system detects this and "shortens" the path;
 the capability reference that the `heartbeat` handler gets is a direct reference to its own logger, which
 it can call without using the network.
 
-For full details of the API, see the comments in `capnp-rpc-lwt/capnp_rpc_lwt.mli`.
+### Hosting multiple sturdy refs
 
+The `Restorer.single` restorer used above is useful for vats hosting a single sturdy ref.
+However, you may want to host multiple sturdy refs,
+perhaps to provide separate "admin" and "user" capabilities to different clients,
+or to allow services to be created and persisted as sturdy refs dynamically.
+To do this, we can use `Restorer.Table`.
+For example, we can extend our example to provide sturdy refs for both the main echo service and the logger service:
+
+```ocaml
+let serve config =
+  Lwt_main.run begin
+    let services = Restorer.Table.create () in
+    let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
+    let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
+    Restorer.Table.add services echo_id Echo.local;
+    Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
+    let restore = Restorer.of_table services in
+    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
+    let echo_sr = Capnp_rpc_unix.Vat.sturdy_ref vat echo_id in
+    let logger_sr = Capnp_rpc_unix.Vat.sturdy_ref vat logger_id in
+    Fmt.pr "echo service: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets echo_sr;
+    Fmt.pr "logger service: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets logger_sr;
+    wait_forever
+  end
+```
+
+Note: the value of the `name` argument to `derived_id` doesn't matter - it just has to be unique so we generate a unique service ID. If not present, the default is `main`.
+
+Exercise: add a `log` command and use it to test the log service. Hint: parse the command-line with:
+
+```ocaml
+let msg =
+  let i = Arg.info [] ~docv:"MESSAGE" ~doc:"Message to log" in
+  Arg.(required @@ pos 1 (some string) None i)
+
+let log_cmd =
+  Term.(const log_client $ connect_addr $ msg),
+  let doc = "log a message" in
+  Term.info "log" ~doc
+
+let cmds = [serve_cmd; connect_cmd; log_cmd]
+```
+
+### Creating and persisting sturdy refs dynamically
+
+So far, we have been providing a static set of sturdy refs.
+We can also generate new sturdy refs dynamically and return them to clients.
+We'll normally want to record each new export in some kind of persistent storage
+so that the sturdy refs still work after restarting the server.
+
+It is possible to use `Table.add` for this.
+However, that requires all capabilities to be loaded into the table at start-up,
+which may be a performance problem.
+
+Instead, we can create the table using `Table.of_loader fn`.
+When the user asks for a sturdy ref that is not in the table, it calls `fn` to load the capability dynamically.
+Your function can use a database or the filesystem to look up the resource.
+You can still use `Table.add` to register additional services, as before.
+
+Let's extend the ping service to support multiple callbacks with different labels.
+Then we can give each user a private sturdy ref to their own logger callback.
+
+There is a `Capnp_rpc_unix.File_store` module that can persist Cap'n Proto structs to disk.
+First, define a suitable Cap'n Proto data structure to hold the information we need to store.
+In this case, it's just the label:
+
+```capnp
+struct SavedLogger {
+  label @0 :Text;
+}
+
+struct SavedService {
+  logger @0 :SavedLogger;
+}
+```
+
+Using Cap'n Proto for this makes it easy to add extra fields or service types later if needed
+(`SavedService.logger` can be upgraded to a union if we decide to add more service types later).
+We can use this with `File_store` to implement the required `Echo.load` function:
+
+```ocaml
+module Store = Capnp_rpc_unix.File_store
+
+let load store digest =
+  match Store.load store ~digest with
+  | None -> Lwt.return Restorer.unknown_service_id
+  | Some saved_service ->
+    let logger = Api.Reader.SavedService.logger_get saved_service in
+    let label = Api.Reader.SavedLogger.label_get logger in
+    let callback msg =
+      Fmt.pr "%s: %S@." label msg
+    in
+    Lwt.return @@ Restorer.grant @@ Callback.local callback
+```
+
+Note: to avoid possible timing attacks, the load function is called with the hash of the service ID rather than with the ID itself. This means that even if the load function takes a different amount of time to respond depending on how much of a valid ID the client guessed, the client will only learn the hash (which is of no use to them), not the ID.
+The file store uses the hash as the filename, which avoids needing to check the ID the client gives for special characters, and also means that someone getting a copy of the store (e.g. an old backup) doesn't get the IDs (which would allow them to access the real service).
+
+The main `serve` function then uses `Echo.load` to create the table:
+
+```ocaml
+let serve config =
+  let hash = `SHA256 in
+  let store = Echo.Store.create ~dir:"/tmp/store" ~hash config in
+  let services = Restorer.Table.of_loader ~hash (Echo.load store) in
+  (* Also add the main echo service, as before: *)
+  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
+  Restorer.Table.add services echo_id (Echo.local ~store);
+  ...
+```
+
+The `Callback.make_sturdy` function creates the saved data to be stored:
+
+```ocaml
+  let make_sturdy store ~label =
+    let open Api.Builder in
+    let service = SavedService.init_root () in
+    let logger = SavedService.logger_init service in
+    SavedLogger.label_set logger label;
+    Store.save store @@ SavedService.to_reader service
+```
+
+As a quick test, you can modify the `serve` function to create a new sturdy ref on startup and display it:
+
+```ocaml
+  let sr = Echo.Callback.make_sturdy store ~label:"Alice" in
+  Fmt.pr "New logger: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
+```
+
+Run the server once to create the logger, then remove the code and restart it.
+You should be able to use `demo.exe log URI MSG` to make the restarted server log messages with the prefix `Alice`.
+
+In a real system, you'd probably want to expose a method for creating new loggers, e.g.
+
+```capnp
+using SturdyRef = Text;
+# For now, transmit sturdy refs as URIs.
+
+interface Echo {
+  ping         @0 (msg :Text) -> (reply :Text);
+  heartbeat    @1 (msg :Text, callback :Callback) -> ();
+  getLogger    @2 () -> (callback :Callback);
+  createLogger @3 (label: Text) -> (callback :SturdyRef);
+}
+```
+
+Exercise: implement `createLogger` in the client and server.
+Hint: you'll need to pass the `store` argument to `Echo.local` so that the method can create the service.
+
+### Summary
+
+Congratulations! You now know how to:
+
+- Define Cap'n Proto services and clients, independently of any networking.
+- Pass capability references in method arguments and results.
+- Stretch capabilities over a network link, with encryption, authentication and access control.
+- Configure a vat using command-line arguments.
+- Pipeline messages to avoid network round-trips.
+- Persist services to disk and restore them later.
 
 ### Further reading
 

@@ -1,3 +1,5 @@
+open Lwt.Infix
+
 module Core_types = Capnp_core.Core_types
 module Log = Capnp_rpc.Debug.Log
 
@@ -55,37 +57,84 @@ let single id cap =
     else Lwt.return unknown_service_id
 
 module Table = struct
-  type t = (string, Core_types.cap) Hashtbl.t
+  type digest = string
 
-  let create () = Hashtbl.create 7
+  type entry =
+    | Cached of resolution Lwt.t
+    | Manual of Core_types.cap          (* We hold a ref on the cap *)
 
-  let hash = Id.digest `SHA256
+  type t = {
+    hash : Nocrypto.Hash.hash;
+    cache : (digest, entry) Hashtbl.t;
+    load : digest -> resolution Lwt.t;
+  }
+
+  (* [cache] contains promises or capabilities with positive ref-counts. *)
+
+  let of_loader ~hash load =
+    let hash = (hash :> Nocrypto.Hash.hash) in
+    let cache = Hashtbl.create 53 in
+    { hash; cache; load }
+
+  let create () =
+    of_loader ~hash:`SHA256 (fun _ -> Lwt.return unknown_service_id)
+
+  let hash t id =
+    Id.digest t.hash id
+
+  let resolve t id =
+    let id = hash t id in
+    match Hashtbl.find t.cache id with
+    | Manual cap ->
+      Core_types.inc_ref cap;
+      Lwt.return @@ Ok cap
+    | Cached res ->
+      begin res >>= function
+        | Error _ as e -> Lwt.return e
+        | Ok cap ->
+          Core_types.inc_ref cap;
+          Lwt.pause () >|= fun () ->
+          Ok cap
+      end
+    | exception Not_found ->
+      let cap = t.load id in
+      Hashtbl.add t.cache id (Cached cap);
+      Lwt.try_bind
+        (fun () -> cap)
+        (fun result ->
+           begin match result with
+             | Error _ -> Hashtbl.remove t.cache id
+             | Ok cap -> cap#when_released (fun () -> Hashtbl.remove t.cache id)
+           end;
+           (* Ensure all [inc_ref]s are done before handing over to the user. *)
+           Lwt.pause () >|= fun () ->
+           result
+        )
+        (fun ex ->
+           Hashtbl.remove t.cache id;
+           Lwt.fail ex
+        )
 
   let add t id cap =
-    let id = hash id in
-    assert (not (Hashtbl.mem t id));
-    Hashtbl.add t id cap
+    let id = hash t id in
+    assert (not (Hashtbl.mem t.cache id));
+    Hashtbl.add t.cache id (Manual cap)
+
+  let release = function
+    | Manual cap -> Core_types.dec_ref cap;
+    | Cached _ -> ()
 
   let remove t id =
-    let id = hash id in
-    match Hashtbl.find t id with
+    let id = hash t id in
+    match Hashtbl.find t.cache id with
     | exception Not_found -> failwith "Service ID not in restorer table"
-    | cap ->
-      Core_types.dec_ref cap;
-      Hashtbl.remove t id
+    | value ->
+      release value;
+      Hashtbl.remove t.cache id
 
   let clear t =
-    Hashtbl.iter (fun _ c -> Core_types.dec_ref c) t;
-    Hashtbl.clear t
-
-  let restorer t =
-    fun id ->
-      let id = hash id in
-      match Hashtbl.find t id with
-      | exception Not_found -> Lwt.return unknown_service_id
-      | cap ->
-        Core_types.inc_ref cap;
-        Lwt.return @@ Ok cap
+    Hashtbl.iter (fun _ v -> release v) t.cache;
+    Hashtbl.clear t.cache
 end
 
-let of_table = Table.restorer
+let of_table = Table.resolve

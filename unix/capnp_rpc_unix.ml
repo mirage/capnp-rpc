@@ -9,12 +9,12 @@ type flow = Unix_flow.flow
 type 'a capability = 'a Capnp_rpc_lwt.Capability.t
 type restorer = Capnp_rpc_lwt.Restorer.t
 
-module Vat_network = Capnp_rpc_lwt.Networking (Network) (Unix_flow)
 module CapTP = Vat_network.CapTP
 module Vat = Vat_network.Vat
 module Sturdy_ref = Vat_network.Sturdy_ref
 module Network = Network
 module Vat_config = Vat_config
+module File_store = File_store
 
 let error fmt =
   fmt |> Fmt.kstrf @@ fun msg ->
@@ -47,15 +47,10 @@ let addr_of_host host =
     else
       addr.Unix.h_addr_list.(0)
 
-let serve ?restore {Vat_config.backlog; secret_key; serve_tls; listen_address; public_address} =
-  let auth =
-    if serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (fst @@ Lazy.force secret_key)
-    else Capnp_rpc_lwt.Auth.Digest.insecure
-  in
-  let secret_key =
-    if serve_tls then Some (fst @@ Lazy.force secret_key)
-    else None
-  in
+let serve ?restore config =
+  let {Vat_config.backlog; secret_key = _; serve_tls; listen_address; public_address} = config in
+  let auth = Vat_config.auth config in
+  let secret_key = if serve_tls then Some (Vat_config.secret_key config) else None in
   let vat = Vat.create ?restore ~address:(public_address, auth) () in
   let socket =
     match listen_address with

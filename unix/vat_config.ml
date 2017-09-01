@@ -119,6 +119,14 @@ let derived_id ?(name="main") t =
   let secret = hashed_secret t in
   Capnp_rpc_lwt.Restorer.Id.derived ~secret name
 
+let auth t =
+  if t.serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (secret_key t)
+  else Capnp_rpc_lwt.Auth.Digest.insecure
+
+let sturdy_ref t service =
+  let address = (t.public_address, auth t) in
+  Vat_network.Sturdy_ref.v ~address ~service
+
 open Cmdliner
 
 let pp f {backlog; secret_key; serve_tls; listen_address; public_address} =

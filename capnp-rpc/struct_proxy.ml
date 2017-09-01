@@ -41,6 +41,7 @@ module Make (C : S.CORE_TYPES) = struct
     method check_invariants = failwith "invalid_cap"
     method sealed_dispatch _ = failwith "invalid_cap"
     method problem = failwith "invalid_cap"
+    method when_released = failwith "invalid_cap"
   end
 
   module Field_map = Map.Make(Wire.Path)
@@ -89,36 +90,54 @@ module Make (C : S.CORE_TYPES) = struct
     | Unresolved x -> unresolved x
     | Forwarding x -> forwarding x
 
+  type promise_field = {
+    sr : struct_ref_internal;
+    path : Wire.Path.t;
+    on_release : (unit -> unit) Queue.t;
+    (* Note: currently, a field can never be released while unresolved.
+       Possibly fields should have their own ref-counts.
+       However, this doesn't matter for the only user of [on_release], which
+       is the restorer system (that just needs to know if something becomes
+       invalid, so it doesn't keep it cached). *)
+  }
+
   type field_state =
-    | PromiseField of struct_ref_internal * Wire.Path.t
+    | PromiseField of promise_field
     | ForwardingField of cap
 
   let field path (p:#struct_ref_internal) =
     object (self : #field_cap)
-      val mutable state = PromiseField (p, path)
+      val mutable state = PromiseField {sr = p; path; on_release = Queue.create ()}
 
       val id = Debug.OID.next ()
 
       method call results msg =
         match state with
-        | PromiseField (p, path) -> p#pipeline path results msg
+        | PromiseField p -> p.sr#pipeline p.path results msg
         | ForwardingField c -> c#call results msg
 
       method pp f =
         match state with
-        | PromiseField (p, path) -> Fmt.pf f "field(%a)%t" Debug.OID.pp id (p#field_pp path)
+        | PromiseField p -> Fmt.pf f "field(%a)%t" Debug.OID.pp id (p.sr#field_pp p.path)
         | ForwardingField c -> Fmt.pf f "field(%a) -> %t" Debug.OID.pp id c#pp
 
       method update_rc d =
         match state with
-        | PromiseField (p, path) -> p#field_update_rc path d
         | ForwardingField c -> c#update_rc d
+        | PromiseField p -> p.sr#field_update_rc p.path d
+
+      method when_released fn =
+        match state with
+        | PromiseField p -> Queue.add fn p.on_release
+        | ForwardingField x -> x#when_released fn
 
       method resolve cap =
         Log.debug (fun f -> f "Resolved field(%a) to %t" Debug.OID.pp id cap#pp);
         match state with
         | ForwardingField _ -> failwith "Field already resolved!"
-        | PromiseField _ -> state <- ForwardingField cap
+        | PromiseField p ->
+          state <- ForwardingField cap;
+          Queue.iter (fun fn -> cap#when_released fn) p.on_release
 
       method shortest =
         match state with
@@ -128,7 +147,7 @@ module Make (C : S.CORE_TYPES) = struct
       method blocker =
         match state with
         | ForwardingField c -> c#blocker
-        | PromiseField (p, i) -> p#field_blocker i
+        | PromiseField p -> p.sr#field_blocker p.path
 
       method problem =
         match state with
@@ -138,17 +157,17 @@ module Make (C : S.CORE_TYPES) = struct
       method when_more_resolved fn =
         match state with
         | ForwardingField c -> c#when_more_resolved fn
-        | PromiseField (p, i) -> p#field_when_resolved i fn
+        | PromiseField p -> p.sr#field_when_resolved p.path fn
 
       method check_invariants =
         match state with
         | ForwardingField c -> c#check_invariants
-        | PromiseField (p, i) -> p#field_check_invariants i
+        | PromiseField p -> p.sr#field_check_invariants p.path
 
       method sealed_dispatch brand =
         match state with
         | ForwardingField _ -> None
-        | PromiseField (p, i) -> p#field_sealed_dispatch i brand
+        | PromiseField p -> p.sr#field_sealed_dispatch p.path brand
     end
 
   class virtual ['promise] t init = object (self : #C.struct_ref)
