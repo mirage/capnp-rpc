@@ -301,4 +301,12 @@ module Make(Wire : S.WIRE) = struct
   let resolve_payload (r:#struct_resolver) (x:Response_payload.t or_error) = r#resolve (resolved x)
   let resolve_ok r msg = resolve_payload r (Ok msg)
   let resolve_exn r ex = resolve_payload r (Error (`Exception ex))
+
+  let rec when_broken fn (x:#cap) =
+    match x#problem with
+    | Some problem -> fn problem
+    | None ->
+      x#when_more_resolved @@ fun x ->
+      when_broken fn x;
+      dec_ref x
 end

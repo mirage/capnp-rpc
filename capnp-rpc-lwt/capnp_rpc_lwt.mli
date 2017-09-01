@@ -39,6 +39,13 @@ module Capability : sig
   (** [broken ex] is a broken capability, with problem [ex].
       Any attempt to call methods on it will fail with [ex]. *)
 
+  val when_broken : (Capnp_rpc.Exception.t -> unit) -> 'a t -> unit
+  (** [when_broken fn x] calls [fn problem] when [x] becomes broken.
+      If [x] is already broken, [fn] is called immediately.
+      If [x] can never become broken (e.g. it is a near ref), this does nothing.
+      If [x]'s ref-count reaches zero without [fn] being called, it will never
+      be called. *)
+
   val problem : 'a t -> Capnp_rpc.Exception.t option
   (** [problem t] is [Some ex] if [t] is broken, or [None] if it is still
       believed to be healthy. Once a capability is broken, it will never

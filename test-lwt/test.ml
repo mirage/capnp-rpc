@@ -394,6 +394,52 @@ let test_fn_restorer _switch =
   Capability.dec_ref b2;
   Lwt.return_unit
 
+let test_broken switch =
+  let cs = make_vats ~switch ~service:(Echo.local ()) () in
+  let connection_switch = Lwt_switch.create () in
+  get_bootstrap ~switch:connection_switch cs >>= fun service ->
+  Echo.ping service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  let problem = ref None in
+  Capability.when_broken (fun x -> problem := Some x) service;
+  Alcotest.check (Alcotest.option except) "Still OK" None @@ Capability.problem service;
+  assert (!problem = None);
+  Lwt_switch.turn_off connection_switch >>= fun () ->
+  assert (Capability.problem service <> None);
+  let expected = Some (Exception.v ~ty:`Disconnected "CapTP switch turned off") in
+  Alcotest.check (Alcotest.option except) "Broken callback ran" expected !problem;
+  Lwt.catch
+    (fun () -> Echo.ping service "ping" >|= fun _ -> Alcotest.fail "Should have failed!")
+    (fun _ -> Lwt.return ())
+  >|= fun () ->
+  Capability.dec_ref service
+
+(* [when_broken] follows promises. *)
+let test_broken2 () =
+  let promise, resolver = Capability.promise () in
+  let problem = ref None in
+  Capability.when_broken (fun x -> problem := Some x) promise;
+  let p2, r2 = Capability.promise () in
+  Capability.resolve_ok resolver p2;
+  Alcotest.check (Alcotest.option except) "No problem yet" None !problem;
+  let ex = Exception.v "Test" in
+  Capability.resolve_ok r2 (Capability.broken ex);
+  Alcotest.check (Alcotest.option except) "Now broken" (Some ex) !problem;
+  ()
+
+let test_broken3 () =
+  let ex = Exception.v "Test" in
+  let c = Capability.broken ex in
+  let problem = ref None in
+  Capability.when_broken (fun x -> problem := Some x) c;
+  Alcotest.check (Alcotest.option except) "Broken immediately" (Some ex) !problem
+
+let test_broken4 () =
+  let promise, _resolver = Capability.promise () in
+  let problem = ref None in
+  Capability.when_broken (fun x -> problem := Some x) promise;
+  Capability.dec_ref promise;
+  Alcotest.check (Alcotest.option except) "Released, not called" None !problem
+
 let rpc_tests = [
   "Simple",     `Quick, run_lwt (test_simple ~server_key:None);
   "Crypto",     `Quick, run_lwt (test_simple ~server_key:(Some server_key));
@@ -409,6 +455,10 @@ let rpc_tests = [
   "Sturdy ref", `Quick, test_sturdy_ref;
   "Table restorer", `Quick, run_lwt test_table_restorer;
   "Fn restorer", `Quick, run_lwt test_fn_restorer;
+  "Broken ref", `Quick, run_lwt test_broken;
+  "Broken ref 2", `Quick, test_broken2;
+  "Broken ref 3", `Quick, test_broken3;
+  "Broken ref 4", `Quick, test_broken4;
 ]
 
 let () =
