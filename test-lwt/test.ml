@@ -8,7 +8,7 @@ module Test_utils = Testbed.Test_utils
 module Vat = Capnp_rpc_unix.Vat
 module CapTP = Capnp_rpc_unix.CapTP
 module Unix_flow = Capnp_rpc_unix.Unix_flow
-module Tls_wrapper = Capnp_rpc_lwt.Auth.Tls_wrapper(Unix_flow)
+module Tls_wrapper = Capnp_rpc_lwt.Tls_wrapper.Make(Unix_flow)
 module Exception = Capnp_rpc.Exception
 
 type cs = {

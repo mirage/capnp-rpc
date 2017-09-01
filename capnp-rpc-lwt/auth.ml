@@ -43,6 +43,11 @@ module Digest = struct
     parse_digest digest >>= fun digest ->
     Ok (hash, digest)
 
+  let of_certificate cert : t =
+    let hash = default_hash in
+    let digest = X509.key_fingerprint ~hash (X509.public_key cert) in
+    `Fingerprint (hash, Cstruct.to_string digest)
+
   let add_to_uri t uri =
     match t with
     | `Insecure -> Uri.with_userinfo uri (Some "insecure")
@@ -131,46 +136,4 @@ module Secret_key = struct
 
   let to_pem_data t =
     X509.Encoding.Pem.Private_key.to_pem_cstruct1 (`RSA t.priv) |> Cstruct.to_string
-end
-
-module Tls_wrapper (Underlying : Mirage_flow_lwt.S) = struct
-  open Lwt.Infix
-
-  module Flow = Tls_mirage.Make(Underlying)
-
-  let plain_endpoint ~switch flow =
-    Endpoint.of_flow ~switch (module Underlying) flow
-
-  let connect_as_server ~switch flow secret_key =
-    match secret_key with
-    | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
-    | Some key ->
-      Log.info (fun f -> f "Doing TLS server-side handshake...");
-      let certificates = Secret_key.certificates key in
-      let client_cert = ref None in
-      let authenticator ?host:_ = function
-        | [] -> `Fail `EmptyCertificateChain
-        | client :: _ ->  (* First certificate is the client's own *)
-          client_cert := Some client;
-          `Ok None
-      in
-      let tls_config = Tls.Config.server ~certificates ~authenticator () in
-      Flow.server_of_flow tls_config flow >|= function
-      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
-      | Ok flow ->
-        match !client_cert with
-        | None -> failwith "No client certificate after auth!"
-        | Some _client_cert ->
-          Ok (Endpoint.of_flow ~switch (module Flow) flow)
-
-  let connect_as_client ~switch flow secret_key auth =
-    match Digest.authenticator auth with
-    | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
-    | Some authenticator ->
-      let certificates = Secret_key.certificates (Lazy.force secret_key) in
-      let tls_config = Tls.Config.client ~certificates ~authenticator () in
-      Log.info (fun f -> f "Doing TLS client-side handshake...");
-      Flow.client_of_flow tls_config flow >|= function
-      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
-      | Ok flow -> Ok (Endpoint.of_flow ~switch (module Flow) flow)
 end

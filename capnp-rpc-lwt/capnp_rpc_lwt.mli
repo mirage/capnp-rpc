@@ -189,6 +189,7 @@ module S = S
 module Endpoint = Endpoint
 module Two_party_network = Two_party_network
 module Auth = Auth
+module Tls_wrapper = Tls_wrapper
 
 module Restorer : sig
   module Id : sig
