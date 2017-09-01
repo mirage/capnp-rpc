@@ -173,7 +173,8 @@ module type CORE_TYPES = sig
         Note that the new capability can be another promise.
         If [c] is already resolved to its final value, this does nothing.
         If [c] is a far-ref, [fn x] will be called when it breaks.
-        If [c] is forwarding to another cap, it will forward this call. *)
+        If [c] is forwarding to another cap, it will forward this call.
+        If [c] gets released before calling [fn], it will never call it. *)
 
     method when_released : (unit -> unit) -> unit
     (** [c#when_released fn] will call [fn ()] when [c]'s ref-count drops to zero.
@@ -296,6 +297,11 @@ module type CORE_TYPES = sig
 
   val resolve_exn : #struct_resolver -> Exception.t -> unit
   (** [resolve_exn r exn] is [resolve_payload r (Error (`Exception exn))]. *)
+
+  val when_broken : (Exception.t -> unit) -> cap -> unit
+  (** [when_broken fn x] calls [fn problem] when [x] becomes broken.
+      If [x] is already broken, [fn] is called immediately.
+      If [x] can never become broken (e.g. it is a near ref), this does nothing. *)
 end
 
 module type NETWORK_TYPES = sig
