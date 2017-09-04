@@ -28,13 +28,15 @@ let sturdy_ref () =
   in
   Cmdliner.Arg.conv (of_string, Sturdy_ref.pp_with_secrets)
 
-let handle_connection ~secret_key vat client =
+let handle_connection ?tags ~secret_key vat client =
   let switch = Lwt_switch.create () in
   let raw_flow = Unix_flow.connect ~switch client in
-  Network.accept_connection ~switch ~secret_key raw_flow >|= function
-  | Error (`Msg msg) -> Log.warn (fun f -> f "Rejecting new connection: %s" msg)
+  Network.accept_connection ~switch ~secret_key raw_flow >>= function
+  | Error (`Msg msg) ->
+    Log.warn (fun f -> f ?tags "Rejecting new connection: %s" msg);
+    Lwt.return_unit
   | Ok ep ->
-    let _ : CapTP.t = Vat.add_connection vat ep in
+    Vat.add_connection vat ~switch ~mode:`Accept ep >|= fun (_ : CapTP.t) ->
     ()
 
 let addr_of_host host =
@@ -47,12 +49,12 @@ let addr_of_host host =
     else
       addr.Unix.h_addr_list.(0)
 
-let serve ?restore config =
+let serve ?switch ?tags ?restore config =
   let {Vat_config.backlog; secret_key = _; serve_tls; listen_address; public_address} = config in
   let vat =
     let auth = Vat_config.auth config in
     let secret_key = lazy (fst (Lazy.force config.secret_key)) in
-    Vat.create ?restore ~address:(public_address, auth) ~secret_key ()
+    Vat.create ?switch ?tags ?restore ~address:(public_address, auth) ~secret_key ()
   in
   let socket =
     match listen_address with
@@ -72,20 +74,32 @@ let serve ?restore config =
       socket
   in
   Unix.listen socket backlog;
-  Logs.info (fun f -> f "Waiting for %s connections on %a"
+  Logs.info (fun f -> f ?tags "Waiting for %s connections on %a"
                 (if serve_tls then "(encrypted)" else "UNENCRYPTED")
                 Vat_config.Listen_address.pp listen_address);
   let lwt_socket = Lwt_unix.of_unix_file_descr socket in
   let rec loop () =
+    Lwt_switch.check switch;
     Lwt_unix.accept lwt_socket >>= fun (client, _addr) ->
-    Logs.info (fun f -> f "Accepting new connection");
+    Logs.info (fun f -> f ?tags "Accepting new connection");
     let secret_key = if serve_tls then Some (Vat_config.secret_key config) else None in
-    Lwt.async (fun () -> handle_connection ~secret_key vat client);
+    Lwt.async (fun () -> handle_connection ?tags ~secret_key vat client);
     loop ()
   in
-  Lwt.async loop;
+  Lwt.async (fun () ->
+      Lwt.catch
+        (fun () ->
+           let th = loop () in
+           Lwt_switch.add_hook switch (fun () -> Lwt.cancel th; Lwt.return_unit);
+           th
+        )
+        (function
+          | Lwt.Canceled -> Lwt.return_unit
+          | ex -> Lwt.fail ex
+        )
+    );
   Lwt.return vat
 
-let client_only_vat ?switch ?restore () =
+let client_only_vat ?switch ?tags ?restore () =
   let secret_key = lazy (Capnp_rpc_lwt.Auth.Secret_key.generate ()) in
-  Vat.create ?switch ?restore ~secret_key ()
+  Vat.create ?switch ?tags ?restore ~secret_key ()

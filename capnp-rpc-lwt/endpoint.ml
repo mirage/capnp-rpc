@@ -62,6 +62,9 @@ let rec recv t =
     | Error ex when Lwt_switch.is_on t.switch -> Capnp_rpc.Debug.failf "recv: %a" F.pp_error ex
     | Error _ -> Lwt.return (Error `Closed)
 
+let disconnect t =
+  Lwt_switch.turn_off t.switch
+
 let pp_error f = function
   | `Closed -> Fmt.string f "Connection closed"
   | `Msg m -> Fmt.string f m

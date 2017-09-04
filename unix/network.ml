@@ -35,6 +35,8 @@ end
 module Address = struct
   type t = Socket_address.t * Capnp_rpc_lwt.Auth.Digest.t
 
+  let digest = snd
+
   let alphabet = B64.uri_safe_alphabet
 
   let b64encode s = B64.encode ~alphabet ~pad:false s
@@ -112,12 +114,11 @@ let connect_socket = function
     Unix.connect socket (Unix.ADDR_INET (addr_of_host host, port));
     socket
 
-let connect ~secret_key (addr, auth) =
+let connect ~switch ~secret_key (addr, auth) =
   match connect_socket addr with
   | exception ex ->
     Lwt.return @@ error "@[<v2>Network connection for %a failed:@,%a@]" Socket_address.pp addr Fmt.exn ex
   | socket ->
-    let switch = Lwt_switch.create () in
     let flow = Unix_flow.connect ~switch (Lwt_unix.of_unix_file_descr socket) in
     Tls_wrapper.connect_as_client ~switch flow secret_key auth
 

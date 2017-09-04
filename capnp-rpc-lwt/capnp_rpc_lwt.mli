@@ -51,6 +51,18 @@ module Capability : sig
       believed to be healthy. Once a capability is broken, it will never
       work again and any calls made on it will fail with exception [ex]. *)
 
+  val wait_until_settled : 'a t -> unit Lwt.t
+  (** [wait_until_settled x] resolves once [x] is a "settled" (non-promise) reference.
+      If [x] is a near, far or broken reference, this returns immediately.
+      If it is currently a local or remote promise, it waits until it isn't.
+      [wait_until_settled] takes ownership of [x] until it returns (you must not
+      [dec_ref] it before then). *)
+
+  val equal : 'a t -> 'a t -> (bool, [`Unsettled]) result
+  (** [equal a b] indicates whether [a] and [b] designate the same settled service.
+      Returns [Error `Unsettled] if [a] or [b] is still a promise (and they therefore
+      may yet turn out to be equal when the promise resolves). *)
+
   module Request : sig
     type 'a t
     (** An ['a t] is a builder for the out-going request's payload. *)

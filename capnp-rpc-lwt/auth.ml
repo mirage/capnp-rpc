@@ -1,3 +1,5 @@
+open Asetmap
+
 module Log = Capnp_rpc.Debug.Log
 
 let default_rsa_key_bits = 2048
@@ -81,6 +83,11 @@ module Digest = struct
          other implementations use other names. *)
       let fingerprints = ["capnp", Cstruct.of_string digest] in
       Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprints ?time:None)
+
+  module Map = Map.Make(struct
+      type nonrec t = t
+      let compare = compare
+    end)
 end
 
 module Secret_key = struct

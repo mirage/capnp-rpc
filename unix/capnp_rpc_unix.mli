@@ -102,6 +102,8 @@ val sturdy_ref : unit -> 'a Sturdy_ref.t Cmdliner.Arg.conv
 (** A cmdliner argument converter for parsing "capnp://" URIs. *)
 
 val serve :
+  ?switch:Lwt_switch.t ->
+  ?tags:Logs.Tag.set ->
   ?restore:Restorer.t ->
   Vat_config.t ->
   Vat.t Lwt.t
@@ -111,6 +113,7 @@ val serve :
 
 val client_only_vat :
   ?switch:Lwt_switch.t ->
+  ?tags:Logs.Tag.set ->
   ?restore:Restorer.t ->
   unit -> Vat.t
 (** [client_only_vat ()] is a new vat that does not listen for incoming connections. *)

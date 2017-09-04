@@ -23,6 +23,33 @@ module Capability = struct
   let when_broken = Core_types.when_broken
   let problem x = x#problem
 
+  let wait_until_settled x =
+    let result, set_result = Lwt.wait () in
+    let rec aux x =
+      if x#blocker = None then (
+        Lwt.wakeup set_result ()
+      ) else (
+        x#when_more_resolved (fun x ->
+            Core_types.dec_ref x;
+            aux x
+          )
+      )
+    in
+    aux x;
+    result
+
+  let equal a b =
+    match a#blocker, b#blocker with
+    | None, None ->
+      let a = a#shortest in
+      let b = b#shortest in
+      begin match a#problem, b#problem with
+      | None, None -> Ok (a = b)
+      | Some a, Some b -> Ok (a = b)
+      | _ -> Ok false
+      end
+    | _ -> Error `Unsettled
+
   let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) (req : 'a Request.t) =
     Log.info (fun f -> f "Calling %a" Capnp.RPC.MethodID.pp m);
     let msg = Request.finish m req in

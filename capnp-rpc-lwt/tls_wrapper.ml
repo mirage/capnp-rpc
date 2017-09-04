@@ -8,7 +8,16 @@ let error fmt =
   Error (`Msg msg)
 
 module Make (Underlying : Mirage_flow_lwt.S) = struct
-  module Flow = Tls_mirage.Make(Underlying)
+  module Flow = struct
+    include Tls_mirage.Make(Underlying)
+
+    let writev flow bufs =
+      writev flow bufs >|= function
+      | Error (`Write `Closed) -> Error `Closed
+      | x -> x
+
+    let write flow buf = writev flow [buf]
+  end
 
   let plain_endpoint ~switch flow =
     Endpoint.of_flow ~switch ~peer_id:Auth.Digest.insecure (module Underlying) flow

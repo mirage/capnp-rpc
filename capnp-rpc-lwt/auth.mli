@@ -1,3 +1,5 @@
+open Asetmap
+
 (** Vat-level authentication and encryption.
 
     Unless your network provides a secure mechanism for establishing connections
@@ -43,6 +45,8 @@ module Digest : sig
   val equal : t -> t -> bool
 
   val pp : t Fmt.t
+
+  module Map : Map.S with type key = t
 end
 
 module Secret_key : sig

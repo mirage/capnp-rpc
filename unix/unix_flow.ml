@@ -49,7 +49,9 @@ let write t buf =
   in
   Lwt.catch
     (fun () -> aux buf)
-    (fun ex -> Lwt.return @@ Error (`Exception ex))
+    (function
+      | Unix.Unix_error (Unix.EPIPE, _, _) -> Lwt.return @@ Error `Closed
+      | ex -> Lwt.return @@ Error (`Exception ex))
 
 let rec writev t = function
   | [] -> Lwt.return (Ok ())
@@ -77,7 +79,7 @@ let read t =
         Lwt.return @@ Ok (`Data (Cstruct.sub buf 0 got))
     )
     (function
-      | Lwt.Canceled -> Lwt.return @@ Error `Closed
+      | Lwt.Canceled -> Lwt.return @@ Ok `Eof
       | ex -> Lwt.return @@ Error (`Exception ex)
     )
 

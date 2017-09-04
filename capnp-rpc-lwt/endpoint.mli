@@ -21,6 +21,9 @@ val of_flow : switch:Lwt_switch.t -> peer_id:Auth.Digest.t ->
 
 val peer_id : t -> Auth.Digest.t
 (** [peer_id t] is the fingerprint of the peer's public key,
-    or [None] TLS isn't being used. *)
+    or [Auth.Digest.insecure] TLS isn't being used. *)
+
+val disconnect : t -> unit Lwt.t
+(** [disconnect t] turns off [t]'s switch. *)
 
 val pp_error : [< `Closed | `Msg of string] Fmt.t

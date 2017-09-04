@@ -17,7 +17,7 @@ module Make (Network : S.NETWORK) = struct
     endpoint : Endpoint.t;
     conn : Conn.t;
     xmit_queue : Capnp.Message.rw Capnp.BytesMessage.Message.t Queue.t;
-    switch : Lwt_switch.t;
+    mutable disconnecting : bool;
   }
 
   let bootstrap t = Conn.bootstrap t.conn
@@ -45,34 +45,35 @@ module Make (Network : S.NETWORK) = struct
      Invariant:
        Whenever Lwt blocks or switches threads, a flush thread is running iff the
        queue is non-empty. *)
-  let rec flush ~switch ~xmit_queue endpoint =
+  let rec flush ~xmit_queue endpoint =
     (* We keep the item on the queue until it is transmitted, as the queue state
        tells us whether there is a [flush] currently running. *)
     let next = Queue.peek xmit_queue in
     Endpoint.send endpoint next >>= function
-    | Error e when Lwt_switch.is_on switch ->
+    | Error `Closed ->
+      Endpoint.disconnect endpoint      (* We'll read a close soon *)
+    | Error e ->
       Log.warn (fun f -> f "Error sending messages: %a (will shutdown connection)" Endpoint.pp_error e);
-      Lwt_switch.turn_off switch
-    | Error _ -> Lwt.return_unit  (* We're shutting down *)
+      Endpoint.disconnect endpoint
     | Ok () ->
       ignore (Queue.pop xmit_queue);
       if not (Queue.is_empty xmit_queue) then
-        flush ~switch ~xmit_queue endpoint
+        flush ~xmit_queue endpoint
       else (* queue is empty and flush thread is done *)
         Lwt.return_unit
 
   (* Enqueue [message] in [xmit_queue] and ensure the flush thread is running. *)
-  let queue_send ~switch ~xmit_queue endpoint message =
+  let queue_send ~xmit_queue endpoint message =
     let was_idle = Queue.is_empty xmit_queue in
     Queue.add message xmit_queue;
-    if was_idle then async_tagged "Message sender thread" (fun () -> flush ~switch ~xmit_queue endpoint)
+    if was_idle then async_tagged "Message sender thread" (fun () -> flush ~xmit_queue endpoint)
 
   let return_not_implemented t x =
     Log.info (fun f -> f ~tags:(tags t) "Returning Unimplemented");
     let open Builder in
     let m = Message.init_root () in
     let _ : Builder.Message.t = Message.unimplemented_set_reader m x in
-    queue_send ~switch:t.switch ~xmit_queue:t.xmit_queue t.endpoint (Message.to_message m)
+    queue_send ~xmit_queue:t.xmit_queue t.endpoint (Message.to_message m)
 
   let listen t =
     let rec loop () =
@@ -86,10 +87,14 @@ module Make (Network : S.NETWORK) = struct
           Log.info (fun f ->
               let tags = Endpoint_types.In.with_qid_tag (Conn.tags t.conn) msg in
               f ~tags "<- %a" (Endpoint_types.In.pp_recv pp_msg) msg);
-          Conn.handle_msg t.conn msg;
           begin match msg with
-            | `Abort _ -> Lwt.return `Aborted
-            | _ -> loop ()
+            | `Abort _ ->
+              Conn.handle_msg t.conn msg;
+              Endpoint.disconnect t.endpoint >>= fun () ->
+              Lwt.return `Aborted
+            | _ ->
+              Conn.handle_msg t.conn msg;
+              loop ()
           end
         | `Unimplemented x as msg ->
           Log.info (fun f ->
@@ -104,20 +109,26 @@ module Make (Network : S.NETWORK) = struct
     in
     loop ()
 
-  let connect ~restore ?(tags=Logs.Tag.empty) ~switch endpoint =
+  let disconnect t ex =
+    if not t.disconnecting then (
+      t.disconnecting <- true;
+      queue_send ~xmit_queue:t.xmit_queue t.endpoint (Serialise.message (`Abort ex));
+      Endpoint.disconnect t.endpoint >|= fun () ->
+      Conn.disconnect t.conn ex
+    ) else (
+      Lwt.return_unit
+    )
+
+  let connect ~restore ?(tags=Logs.Tag.empty) endpoint =
     let xmit_queue = Queue.create () in
-    let queue_send msg = queue_send ~switch ~xmit_queue endpoint (Serialise.message msg) in
+    let queue_send msg = queue_send ~xmit_queue endpoint (Serialise.message msg) in
     let restore = Restorer.fn restore in
     let conn = Conn.create ~restore ~tags ~queue_send in
-    Lwt_switch.add_hook (Some switch) (fun () ->
-        Conn.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "CapTP switch turned off");
-        Lwt.return_unit
-      );
     let t = {
       conn;
       endpoint;
       xmit_queue;
-      switch;
+      disconnecting = false;
     } in
     Lwt.async (fun () ->
         Lwt.catch
@@ -133,13 +144,9 @@ module Make (Network : S.NETWORK) = struct
           )
         >>= fun () ->
         Log.info (fun f -> f ~tags "Connection closed");
-        Lwt_switch.turn_off switch
+        disconnect t (Capnp_rpc.Exception.v ~ty:`Disconnected "Connection closed")
       );
     t
-
-  let disconnect t ex =
-    queue_send ~switch:t.switch ~xmit_queue:t.xmit_queue t.endpoint (Serialise.message (`Abort ex));
-    Lwt_switch.turn_off t.switch
 
   let dump f t = Conn.dump f t.conn
 end

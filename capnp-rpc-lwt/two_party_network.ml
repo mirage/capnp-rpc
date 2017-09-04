@@ -14,8 +14,10 @@ module Address = struct
   let parse_uri _ = failwith "Can't use of_uri wih Two_party_network"
 
   let equal _ _ = assert false
+
+  let digest _ = assert false
 end
 
 let parse_third_party_cap_id _ = `Two_party_only
 
-let connect ~secret_key:_ _ = assert false
+let connect ~switch:_ ~secret_key:_ _ = assert false
