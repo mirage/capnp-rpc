@@ -11,22 +11,24 @@ type restorer = Capnp_rpc_lwt.Restorer.t
 
 module CapTP = Vat_network.CapTP
 module Vat = Vat_network.Vat
-module Sturdy_ref = Vat_network.Sturdy_ref
 module Network = Network
 module Vat_config = Vat_config
 module File_store = File_store
+
+type service_id = Capnp_rpc_lwt.Restorer.Id.t
+type 'a sturdy_ref = 'a Capnp_rpc_lwt.Sturdy_ref.t
 
 let error fmt =
   fmt |> Fmt.kstrf @@ fun msg ->
   Error (`Msg msg)
 
-let sturdy_ref () =
+let sturdy_uri =
   let of_string s =
     match Uri.of_string s with
     | exception ex -> error "Failed to parse URI %S: %a" s Fmt.exn ex
-    | uri -> Sturdy_ref.of_uri uri
+    | uri -> Ok uri
   in
-  Cmdliner.Arg.conv (of_string, Sturdy_ref.pp_with_secrets)
+  Cmdliner.Arg.conv (of_string, Uri.pp_hum)
 
 let handle_connection ?tags ~secret_key vat client =
   let switch = Lwt_switch.create () in

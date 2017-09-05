@@ -4,12 +4,9 @@ module ReaderOps = Capnp.Runtime.ReaderInc.Make(Capnp_rpc_lwt)
 
 type 'a t = {
   dir : string;
-  hash : Capnp_rpc_lwt.Auth.hash;
-  vat_config : Vat_config.t;
 }
 
-let create ~dir ~hash vat_config =
-  { dir; hash; vat_config }
+let create dir = { dir }
 
 let path_of_digest t digest =
   let filename = B64.encode ~alphabet:B64.uri_safe_alphabet ~pad:false digest in
@@ -19,7 +16,7 @@ let segments_of_reader = function
   | None -> []
   | Some ss -> Message.to_storage ss.StructStorage.data.Slice.msg
 
-let update t ~digest data =
+let save t ~digest data =
   let path = path_of_digest t digest in
   let tmp_path = path ^ ".new" in
   let ch = open_out tmp_path in
@@ -29,12 +26,6 @@ let update t ~digest data =
     );
   close_out ch;
   Unix.rename tmp_path path
-
-let save t data =
-  let id = Restorer.Id.generate () in
-  let digest = Restorer.Id.digest t.hash id in
-  update t ~digest data;
-  Vat_config.sturdy_ref t.vat_config id
 
 let remove t ~digest =
   let path = path_of_digest t digest in
@@ -54,5 +45,3 @@ let load t ~digest =
     Logs.info (fun f -> f "File %S not found" path);
     None
   )
-
-let hash t = t.hash

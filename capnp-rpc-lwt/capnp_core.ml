@@ -17,3 +17,8 @@ module Cap_proxy = Capnp_rpc.Cap_proxy.Make(Core_types)
 
 module type ENDPOINT = Capnp_rpc.Message_types.ENDPOINT with
   module Core_types = Core_types
+
+class type sturdy_ref = object
+  method connect : (Core_types.cap, Capnp_rpc.Exception.t) result Lwt.t
+  method to_uri_with_secrets : Uri.t
+end

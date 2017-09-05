@@ -153,6 +153,40 @@ module Capability : sig
   val pp : 'a t Fmt.t
 end
 
+module Sturdy_ref : sig
+  type +'a t
+  (** An off-line (persistent) capability reference.
+
+      A sturdy ref contains all the information necessary to get a live reference to a service:
+
+      - The network address of the hosting vat (e.g. TCP host and port)
+      - A way to authenticate the hosting vat (e.g. a fingerprint of the vat's public key)
+      - A way to identify the target service within the vat and prove permission to access it
+        (e.g. a "Swiss number")
+    *)
+
+  val connect : 'a t -> ('a Capability.t, Capnp_rpc.Exception.t) result Lwt.t
+  (** [connect t] returns a live reference to [t]'s service. *)
+
+  val connect_exn : 'a t -> 'a Capability.t Lwt.t
+  (** [connect_exn] is a wrapper for [connect] that returns a failed Lwt thread on error. *)
+
+  val reader :
+    ('a StructStorage.reader_t -> Capnp.MessageSig.ro Slice.t option) ->
+    'a StructStorage.reader_t -> Uri.t
+  (** [reader accessor] is a field accessor for reading a sturdy ref.
+      e.g. if [sr_get] is a generated field accessor for an AnyPointer field, then
+      [reader Reader.Struct.sr_get] is an accessor that treats it as a SturdyRef field.
+      todo: This should really return a sturdy ref, not a URI, but that's tricky as it
+      requires attaching the vat to the message. *)
+
+  val builder :
+    ('a StructStorage.builder_t -> Capnp.MessageSig.rw Slice.t) ->
+    'a StructStorage.builder_t -> _ t -> unit
+  (** [builder setter] converts a generated AnyPointer field setter [setter] to a SturdyRef
+      setter. Use it to add a SturdyRef to a message with [builder Params.sr_get params sr]. *)
+end
+
 module Service : sig
   (** Functions for service implementors. *)
 
@@ -235,6 +269,9 @@ module Restorer : sig
 
     val to_string : t -> string
     (** [to_string t] is the raw bytes of [t]. *)
+
+    val pp : t Fmt.t
+    val equal : t -> t -> bool
   end
 
   (** {2 Resolutions} *)
@@ -274,8 +311,15 @@ module Restorer : sig
         You should use the [hash id] value to find the item. Note that [hash]
         is purely a local security measure - remote peers only see the ID. *)
 
-    val load : t -> string -> resolution Lwt.t
-    (** [load t digest] is called to restore the service with key [digest].
+    val make_sturdy : t -> Id.t -> Uri.t
+    (** [make_sturdy t id] converts an ID to a full URI, by adding the
+        hosting vat's address and fingerprint. *)
+
+    val load : t -> 'a Sturdy_ref.t -> string -> resolution Lwt.t
+    (** [load t sr digest] is called to restore the service with key [digest].
+        [sr] is a sturdy ref that refers to the service, which the service
+        might want to hand out to clients.
+        Note that connecting to [sr] will block until the loader has returned.
         The result is cached until its ref-count reaches zero, so the table
         will never allow two live capabilities for a single [Id.t] at once. It
         will also not call [load] twice in parallel for the same digest. *)
@@ -290,7 +334,7 @@ module Restorer : sig
 
     val of_loader : (module LOADER with type t = 'loader) -> 'loader -> t
     (** [of_loader (module Loader) l] is a new caching table that uses
-        [Loader.load l (Loader.hash id)] to restore services that aren't in the cache. *)
+        [Loader.load l sr (Loader.hash id)] to restore services that aren't in the cache. *)
 
     val add : t -> Id.t -> 'a Capability.t -> unit
     (** [add t id cap] adds a mapping to [t].
@@ -316,7 +360,8 @@ module Networking (N : S.NETWORK) (Flow : Mirage_flow_lwt.S) : S.VAT_NETWORK
        type flow = Flow.flow and
        type 'a capability = 'a Capability.t and
        type restorer = Restorer.t and
-       type Sturdy_ref.service_id = Restorer.Id.t
+       type service_id = Restorer.Id.t and
+       type 'a sturdy_ref = 'a Sturdy_ref.t
 
 (**/**)
 

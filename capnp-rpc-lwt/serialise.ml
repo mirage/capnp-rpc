@@ -2,7 +2,6 @@ module EmbargoId = Capnp_rpc.Message_types.EmbargoId
 module Log = Capnp_rpc.Debug.Log
 module Builder = Schema.Builder
 module RO_array = Capnp_rpc.RO_array
-module BuilderOps = Capnp.Runtime.BuilderInc.Make(Capnp.RPC.None(Capnp.BytesMessage))
 
 module Make (EP : Capnp_core.ENDPOINT) = struct
   open EP.Table
@@ -58,12 +57,6 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
     type_set b ty;
     reason_set b ex.Capnp_rpc.Exception.reason
 
-  let write_string ptr s =
-    let open Capnp.BytesMessage in
-    let data = { ptr with Slice.len = 0 } in
-    let ss = StructStorage.v ~data ~pointers:ptr in
-    BuilderOps.BA_.set_text ss 0 s
-
   let message : EP.Out.t -> _ =
     let open Builder in
     function
@@ -75,7 +68,7 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
       let b = Message.init_root () in
       let boot = Message.bootstrap_init b in
       Bootstrap.question_id_set boot (QuestionId.uint32 qid);
-      write_string (Bootstrap.deprecated_object_id_get boot) object_id;
+      Schema.BuilderOps.write_string (Bootstrap.deprecated_object_id_get boot) object_id;
       Message.to_message b
     | `Call (qid, target, request, descs, results_to) ->
       let c = Msg.Request.writable request in

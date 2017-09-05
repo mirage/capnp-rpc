@@ -2,14 +2,9 @@ open Lwt.Infix
 
 module Log = Capnp_rpc.Debug.Log
 
-let error ?ty fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
-  Error (Capnp_rpc.Exception.v ?ty msg)
-
 module ID_map = Auth.Digest.Map
 
 module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
-  module Sturdy_ref = Sturdy_ref.Make (Network)
   module CapTP = CapTP_capnp.Make (Network)
 
   let hash = `SHA256 (* Only support a single hash for now *)
@@ -136,15 +131,6 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
 
   let public_address t = t.address
 
-  let sturdy_ref t service =
-    match t.address with
-    | None -> failwith "sturdy_ref: vat was not configured with an address"
-    | Some address ->
-      Sturdy_ref.v ~address ~service
-
-  let plain_endpoint ~switch flow =
-    Endpoint.of_flow ~switch (module Underlying) flow
-
   let connect_anon t addr ~service =
     let switch = Lwt_switch.create () in
     Network.connect ~switch ~secret_key:t.secret_key addr >>= function
@@ -182,17 +168,38 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
         | Ok conn -> Ok (CapTP.bootstrap conn service)
         | Error _ as e -> e
 
-  let connect t sr =
-    let addr = Sturdy_ref.address sr in
-    let service = Sturdy_ref.service sr in
-    let remote_id = Network.Address.digest addr in
-    if remote_id = Auth.Digest.insecure then connect_anon t addr ~service
-    else connect_auth t remote_id addr ~service
+  let make_sturdy_ref t sr =
+    object
+      method connect =
+        let (addr, service) = sr in
+        let remote_id = Network.Address.digest addr in
+        if remote_id = Auth.Digest.insecure then connect_anon t addr ~service
+        else connect_auth t remote_id addr ~service
 
-  let connect_exn t sr =
-    connect t sr >>= function
-    | Ok x -> Lwt.return x
-    | Error e -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Exception.pp e)
+      method to_uri_with_secrets = Network.Address.to_uri sr
+    end
+
+  let sturdy_ref t service : Capnp_core.sturdy_ref =
+    match t.address with
+    | None -> failwith "sturdy_ref: vat was not configured with an address"
+    | Some address -> make_sturdy_ref t (address, service)
+
+  let export _t sr =
+    (* [t] isn't used currently. However, requiring it does emphasise that importing/exporting
+       is a somewhat privileged operation (as it reveals the secret tokens in the sturdy ref). *)
+    sr#to_uri_with_secrets
+
+  let sturdy_uri t id = sturdy_ref t id |> export t
+
+  let import t uri =
+    match Network.Address.parse_uri uri with
+    | Error _ as e -> e
+    | Ok sr -> Ok (make_sturdy_ref t sr)
+
+  let import_exn t uri =
+    match import t uri with
+    | Ok x -> x
+    | Error (`Msg m) -> failwith m
 
   let pp_vat_id f = function
     | None -> Fmt.string f "Client-only vat"

@@ -119,9 +119,9 @@ let auth t =
   if t.serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (secret_key t)
   else Capnp_rpc_lwt.Auth.Digest.insecure
 
-let sturdy_ref t service =
+let sturdy_uri t service =
   let address = (t.public_address, auth t) in
-  Vat_network.Sturdy_ref.v ~address ~service
+  Network.Address.to_uri (address, Capnp_rpc_lwt.Restorer.Id.to_string service)
 
 open Cmdliner
 

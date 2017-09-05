@@ -21,6 +21,9 @@ module Id = struct
     |> Cstruct.to_string
 
   let to_string x = x
+
+  let equal = ( = )
+  let pp = Fmt.string
 end
 
 type resolution = (Core_types.cap, Capnp_rpc.Exception.t) result
@@ -28,7 +31,8 @@ type resolution = (Core_types.cap, Capnp_rpc.Exception.t) result
 module type LOADER = sig
   type t
   val hash : t -> Auth.hash
-  val load : t -> string -> resolution Lwt.t
+  val make_sturdy : t -> Id.t -> Uri.t
+  val load : t -> 'a Sturdy_ref.t -> string -> resolution Lwt.t
 end
 
 type t = Id.t -> resolution Lwt.t
@@ -76,7 +80,7 @@ module Table = struct
   type t = {
     hash : Nocrypto.Hash.hash;
     cache : (digest, entry) Hashtbl.t;
-    load : digest -> resolution Lwt.t;
+    load : Id.t -> digest -> resolution Lwt.t;
   }
 
   (* [cache] contains promises or capabilities with positive ref-counts. *)
@@ -84,7 +88,7 @@ module Table = struct
   let create () =
     let hash = `SHA256 in
     let cache = Hashtbl.create 53 in
-    let load _ = Lwt.return unknown_service_id in
+    let load _ _ = Lwt.return unknown_service_id in
     { hash; cache; load }
 
   let hash t id =
@@ -105,7 +109,7 @@ module Table = struct
           Ok cap
       end
     | exception Not_found ->
-      let cap = t.load digest in
+      let cap = t.load id digest in
       Hashtbl.add t.cache digest (Cached cap);
       Lwt.try_bind
         (fun () -> cap)
@@ -126,8 +130,14 @@ module Table = struct
   let of_loader (type l) (module L : LOADER with type t = l) loader =
     let hash = (L.hash loader :> Nocrypto.Hash.hash) in
     let cache = Hashtbl.create 53 in
-    let load digest = L.load loader digest in
-    { hash; cache; load }
+    let rec load id digest =
+      let sr : Capnp_core.sturdy_ref = object
+        method connect = resolve t id
+        method to_uri_with_secrets = L.make_sturdy loader id
+      end in
+      L.load loader sr digest
+    and t = { hash; cache; load } in
+    t
 
   let add t id cap =
     let id = hash t id in

@@ -15,6 +15,8 @@ module StructRef = struct
   let dec_ref = Core_types.dec_ref
 end
 
+module Sturdy_ref = Sturdy_ref
+
 module Untyped = struct
   let struct_field t i =
     (* todo: would be better to have a separate type for this *)
@@ -69,10 +71,11 @@ module Networking (N : S.NETWORK) (F : Mirage_flow_lwt.S) = struct
   type flow = F.flow
   type 'a capability = 'a Capability.t
   type restorer = Restorer.t
+  type service_id = Restorer.Id.t
+  class type [+'a] sturdy_ref = ['a] Sturdy_ref.t
 
   module Network = N
   module Vat = Vat.Make (N) (F)
-  module Sturdy_ref = Vat.Sturdy_ref
   module CapTP = Vat.CapTP
 end
 
