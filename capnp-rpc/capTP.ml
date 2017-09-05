@@ -1109,10 +1109,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     (* Forwards messages to [init] until resolved.
        Forces [release] when resolved or released. *)
-    let make ~(release:unit Lazy.t) init =
+    let make ~(release:unit Lazy.t) ~settled init =
       let released = Core_types.broken_cap (Exception.v "(released)") in
       let pp_state f = function
-        | Unset x -> Fmt.pf f "(unsettled) -> %t" x.handler#pp
+        | Unset x -> Fmt.pf f "(unset) -> %t" x.handler#pp
         | Set x -> Fmt.pf f "(set) -> %t" x#pp
       in
       let target = function
@@ -1158,6 +1158,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
         method blocker =
           match state with
+          | Unset _ when settled -> None
           | Unset _ -> Some (self :> Core_types.base_ref)
           | Set x -> x#blocker
 
@@ -1240,7 +1241,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         Import.dec_ref import |> apply_import_actions t;
       ) in
       (* Imports can resolve to another cap (if unsettled) or break. *)
-      let switchable = Switchable.make ~release cap in
+      let switchable = Switchable.make ~release ~settled cap in
       Import.init_proxy import switchable;
       switchable
 
@@ -1755,18 +1756,21 @@ module Make (EP : Message_types.ENDPOINT) = struct
     Fmt.pf f "%t => export %a%a" cap#pp ExportId.pp export_id (pp_check (check_exported_cap t)) (cap, export_id)
 
   let dump f t =
-    Fmt.pf f "@[<v2>Questions:@,%a@]@,\
-              @[<v2>Answers:@,%a@]@,\
-              @[<v2>Exports:@,%a@]@,\
-              @[<v2>Imports:@,%a@]@,\
-              @[<v2>Embargoes:@,%a@]@,\
-              @[<v2>Exported caps:@,%a@]@,"
-      (Questions.dump ~check:Question.check Question.dump) t.questions
-      (Answers.dump   ~check:Answer.check   Answer.dump) t.answers
-      (Exports.dump   ~check:Export.check   Export.dump) t.exports
-      (Imports.dump   ~check:Import.check   Import.dump) t.imports
-      (Embargoes.dump ~check:check_embargo  dump_embargo) t.embargoes
-      (hashtbl_dump ~key:exported_sort_key (pp_exported_cap t)) t.exported_caps
+    match t.disconnected with
+    | Some reason -> Fmt.pf f "Disconnected: %a" Exception.pp reason
+    | None ->
+      Fmt.pf f "@[<v2>Questions:@,%a@]@,\
+                @[<v2>Answers:@,%a@]@,\
+                @[<v2>Exports:@,%a@]@,\
+                @[<v2>Imports:@,%a@]@,\
+                @[<v2>Embargoes:@,%a@]@,\
+                @[<v2>Exported caps:@,%a@]@,"
+        (Questions.dump ~check:Question.check Question.dump) t.questions
+        (Answers.dump   ~check:Answer.check   Answer.dump) t.answers
+        (Exports.dump   ~check:Export.check   Export.dump) t.exports
+        (Imports.dump   ~check:Import.check   Import.dump) t.imports
+        (Embargoes.dump ~check:check_embargo  dump_embargo) t.embargoes
+        (hashtbl_dump ~key:exported_sort_key (pp_exported_cap t)) t.exported_caps
 
   let check t =
     Questions.iter  (fun _ -> Question.check) t.questions;

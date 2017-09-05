@@ -13,12 +13,15 @@ type t = {
   flow : flow;
   decoder : Capnp.Codecs.FramedStream.t;
   switch : Lwt_switch.t;
+  peer_id : Auth.Digest.t;
 }
 
-let of_flow (type flow) ~switch (module F : Mirage_flow_lwt.S with type flow = flow) (flow:flow) =
+let peer_id t = t.peer_id
+
+let of_flow (type flow) ~switch ~peer_id (module F : Mirage_flow_lwt.S with type flow = flow) (flow:flow) =
   let generic_flow = Flow ((module F), flow) in
   let decoder = Capnp.Codecs.FramedStream.empty compression in
-  { flow = generic_flow; decoder; switch }
+  { flow = generic_flow; decoder; switch; peer_id }
 
 let dump_msg =
   let next = ref 0 in
@@ -58,6 +61,9 @@ let rec recv t =
       Error `Closed
     | Error ex when Lwt_switch.is_on t.switch -> Capnp_rpc.Debug.failf "recv: %a" F.pp_error ex
     | Error _ -> Lwt.return (Error `Closed)
+
+let disconnect t =
+  Lwt_switch.turn_off t.switch
 
 let pp_error f = function
   | `Closed -> Fmt.string f "Connection closed"

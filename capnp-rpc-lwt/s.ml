@@ -15,10 +15,22 @@ module type NETWORK = sig
 
     val equal : t -> t -> bool
 
+    val digest : t -> Auth.Digest.t
+    (** How to verify that the correct address has been reached. *)
+
     val pp : t Fmt.t
   end
 
-  val connect : Address.t -> (Endpoint.t, [> `Msg of string]) result Lwt.t
+  val connect :
+    switch:Lwt_switch.t ->
+    secret_key:Auth.Secret_key.t Lazy.t ->
+    Address.t ->
+    (Endpoint.t, [> `Msg of string]) result Lwt.t
+  (** [connect ~switch ~secret_key address] connects to [address], proves ownership of
+      [secret_key] (if TLS is being used), and returns the resulting endpoint.
+      Returns an error if no connection can be established or the target fails
+      to authenticate itself.
+      If [switch] is turned off, the connection should be terminated. *)
 
   val parse_third_party_cap_id : Schema.Reader.pointer_t -> Types.third_party_cap_id
 end
@@ -93,12 +105,11 @@ module type VAT_NETWORK = sig
     type t
     (** A CapTP connection to a remote peer. *)
 
-    val connect : restore:restorer -> ?tags:Logs.Tag.set -> switch:Lwt_switch.t -> Endpoint.t -> t
+    val connect : restore:restorer -> ?tags:Logs.Tag.set -> Endpoint.t -> t
     (** [connect ~restore ~switch endpoint] is fresh CapTP protocol handler that sends and
         receives messages using [endpoint].
         [restore] is used to respond to "Bootstrap" messages.
-        If the connection fails then [switch] will be turned off, and turning off the switch
-        will release all resources used by the connection. *)
+        If the connection fails then [endpoint] will be disconnected. *)
 
     val bootstrap : t -> Sturdy_ref.service_id -> 'a capability
     (** [bootstrap t object_id] is the peer's bootstrap object [object_id], if any.
@@ -124,17 +135,25 @@ module type VAT_NETWORK = sig
 
     val create :
       ?switch:Lwt_switch.t ->
+      ?tags:Logs.Tag.set ->
       ?restore:restorer ->
       ?address:Network.Address.t ->
+      secret_key:Auth.Secret_key.t Lazy.t ->
       unit -> t
-    (** [create ~switch ~restore ~address ()] is a new vat that uses [restore] to restore
-        sturdy refs hosted at this vat to live capabilities for peers.
+    (** [create ~switch ~restore ~address ~secret_key ()] is a new vat that
+        uses [restore] to restore sturdy refs hosted at this vat to live
+        capabilities for peers.
         The vat will suggest that other parties connect to it using [address].
         Turning off the switch will disconnect any active connections. *)
 
-    val add_connection : t -> Endpoint.t -> CapTP.t
-    (** [add_connection t endpoint] runs the CapTP protocol over [endpoint],
-        which is a connection to another vat. *)
+    val add_connection : t -> switch:Lwt_switch.t -> mode:[`Accept|`Connect] -> Endpoint.t -> CapTP.t Lwt.t
+    (** [add_connection t ~switch ~mode endpoint] runs the CapTP protocol over [endpoint],
+        which is a connection to another vat.
+        When the connection ends, [switch] will be turned off, and turning off [switch] will
+        end the connection.
+        [mode] is used if two vats connect to each other at the same time to
+        decide which connection to drop. Use [`Connect] if [t] initiated the new
+        connection. Note that [add_connection] may return an existing connection. *)
 
     val public_address : t -> Network.Address.t option
     (** [public_address t] is the address that peers should use when connecting

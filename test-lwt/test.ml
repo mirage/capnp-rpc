@@ -8,19 +8,17 @@ module Test_utils = Testbed.Test_utils
 module Vat = Capnp_rpc_unix.Vat
 module CapTP = Capnp_rpc_unix.CapTP
 module Unix_flow = Capnp_rpc_unix.Unix_flow
-module Tls_wrapper = Capnp_rpc_lwt.Auth.Tls_wrapper(Unix_flow)
+module Tls_wrapper = Capnp_rpc_lwt.Tls_wrapper.Make(Unix_flow)
 module Exception = Capnp_rpc.Exception
 
 type cs = {
   client : Vat.t;
   server : Vat.t;
-  server_key : Auth.Secret_key.t option;
+  client_key : Auth.Secret_key.t;
+  server_key : Auth.Secret_key.t;
+  serve_tls : bool;
+  server_switch : Lwt_switch.t;
 }
-
-let ( >|*= ) x f =
-  x >|= function
-  | Error (`Msg e) -> failwith e
-  | Ok y -> f y
 
 let expect_some msg = function
   | None -> Alcotest.fail msg
@@ -28,16 +26,10 @@ let expect_some msg = function
 
 (* Have the client ask the server for its bootstrap object, and return the
    resulting client-side proxy to it. *)
-let get_bootstrap ~switch cs =
-  let _address, auth = Vat.public_address cs.server |> expect_some "No public address!" in
-  let server_socket, client_socket = Unix_flow.socketpair ~switch () in
-  let _server =
-    Tls_wrapper.connect_as_server ~switch server_socket cs.server_key >|*=
-    Vat.add_connection cs.server
-  in
-  Tls_wrapper.connect_as_client ~switch client_socket auth >|*= fun ep ->
-  let conn = Vat.add_connection cs.client ep in
-  CapTP.bootstrap conn (Restorer.Id.public "")
+let get_bootstrap cs =
+  let id = Restorer.Id.public "" in
+  let sr = Vat.sturdy_ref cs.server id in
+  Vat.connect_exn cs.client sr
 
 module Utils = struct
   [@@@ocaml.warning "-32"]
@@ -50,23 +42,28 @@ end
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
 
-let make_vats ?server_key ~switch ~service () =
-  let auth =
-    match server_key with
-    | Some key -> Capnp_rpc_lwt.Auth.Secret_key.digest key
-    | None -> Capnp_rpc_lwt.Auth.Digest.insecure
+let make_vats ?(serve_tls=false) ~switch ~service () =
+  let id = Restorer.Id.public "" in
+  let restore = Restorer.(single id) service in
+  let server_config =
+    let secret_key = `PEM (Auth.Secret_key.to_pem_data server_key) in
+    Capnp_rpc_unix.Vat_config.create ~secret_key ~serve_tls (`Unix "socket")
   in
-  let address = (`Unix "/tmp/socket", auth) in
-  let restore = Restorer.(single (Id.public "")) service in
+  let server_switch = Lwt_switch.create () in
+  Capnp_rpc_unix.serve ~switch:server_switch ~tags:Test_utils.server_tags ~restore server_config >>= fun server ->
+  Lwt_switch.add_hook (Some switch) (fun () -> Lwt_switch.turn_off server_switch);
   Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);
-  {
-    client = Vat.create ~switch ();
-    server = Vat.create ~switch ~restore ~address ();
+  Lwt.return {
+    client = Vat.create ~switch ~tags:Test_utils.client_tags ~secret_key:(lazy client_key) ();
+    server;
+    client_key;
     server_key;
+    serve_tls;
+    server_switch;
   }
 
 (* Generic Lwt running for Alcotest. *)
-let run_lwt fn () =
+let run_lwt ?(expected_warnings=0) fn () =
   let warnings_at_start = Logs.(err_count () + warn_count ()) in
   Logs.info (fun f -> f "Start test-case");
   let async_ex, async_waker = Lwt.wait () in
@@ -95,33 +92,37 @@ let run_lwt fn () =
   Lwt.wakeup_paused ();
   Gc.full_major ();
   let warnings_at_end = Logs.(err_count () + warn_count ()) in
-  Alcotest.(check int) "Check log for warnings" 0 (warnings_at_end - warnings_at_start)
+  Alcotest.(check int) "Check log for warnings" expected_warnings (warnings_at_end - warnings_at_start)
 
-let test_simple switch ~server_key =
-  let cs = make_vats ~switch ?server_key ~service:(Echo.local ()) () in
-  get_bootstrap ~switch cs >>= fun service ->
+let test_simple switch ~serve_tls =
+  make_vats ~switch ~serve_tls ~service:(Echo.local ()) () >>= fun cs ->
+  get_bootstrap cs >>= fun service ->
   Echo.ping service "ping" >>= fun reply ->
   Alcotest.(check string) "Ping response" "got:0:ping" reply;
   Capability.dec_ref service;
   Lwt.return ()
 
 let test_bad_crypto switch =
-  let cs = make_vats ~switch ~server_key:server_key ~service:(Echo.local ()) () in
-  let cs = {cs with server_key = Some client_key} in (* (bad config) *)
-  Lwt.try_bind
-    (fun () -> get_bootstrap ~switch cs)
-    (fun _ -> Alcotest.fail "Wrong TLS key should have been rejected")
-    (function
-      | Failure msg ->
-        assert (String.is_prefix ~affix:"TLS connection failed: authentication failure" msg);
-        Lwt.return ()
-      | ex ->
-        Lwt.fail ex
-    )
+  make_vats ~switch ~serve_tls:true ~service:(Echo.local ()) () >>= fun cs ->
+  let id = Restorer.Id.public "" in
+  let (addr, _digest) = Vat.public_address cs.server |> expect_some "Has address" in
+  let address = (addr, Auth.Secret_key.digest ~hash:`SHA256 client_key) in (* (should be server_key) *)
+  let sr = Capnp_rpc_unix.Sturdy_ref.v ~address ~service:id in
+  let old_warnings = Logs.warn_count () in
+  Vat.connect cs.client sr >>= function
+  | Ok _ -> Alcotest.fail "Wrong TLS key should have been rejected"
+  | Error (`Msg msg) ->
+    assert (String.is_prefix ~affix:"TLS connection failed: authentication failure" msg);
+    (* Wait for server to log warning *)
+    let rec wait () =
+      if Logs.warn_count () = old_warnings then Lwt.pause () >>= wait
+      else Lwt.return_unit
+    in
+    wait ()
 
 let test_parallel switch =
-  let cs = make_vats ~switch ~service:(Echo.local ()) () in
-  get_bootstrap ~switch cs >>= fun service ->
+  make_vats ~switch ~service:(Echo.local ()) () >>= fun cs ->
+  get_bootstrap cs >>= fun service ->
   let reply1 = Echo.ping service ~slow:true "ping1" in
   Echo.ping service "ping2" >|= Alcotest.(check string) "Ping2 response" "got:1:ping2" >>= fun () ->
   assert (Lwt.state reply1 = Lwt.Sleep);
@@ -132,8 +133,8 @@ let test_parallel switch =
 
 let test_registry switch =
   let registry_impl = Registry.local () in
-  let cs = make_vats ~switch ~service:registry_impl () in
-  get_bootstrap ~switch cs >>= fun registry ->
+  make_vats ~switch ~service:registry_impl () >>= fun cs ->
+  get_bootstrap cs >>= fun registry ->
   let echo_service = Registry.echo_service registry in
   Registry.unblock registry >>= fun () ->
   Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
@@ -144,8 +145,8 @@ let test_registry switch =
 let test_embargo switch =
   let registry_impl = Registry.local () in
   let local_echo = Echo.local () in
-  let cs = make_vats ~switch ~service:registry_impl () in
-  get_bootstrap ~switch cs >>= fun registry ->
+  make_vats ~switch ~service:registry_impl () >>= fun cs ->
+  get_bootstrap cs >>= fun registry ->
   Registry.set_echo_service registry local_echo >>= fun () ->
   Capability.dec_ref local_echo;
   let echo_service = Registry.echo_service registry in
@@ -163,8 +164,8 @@ let test_embargo switch =
 let test_resolve switch =
   let registry_impl = Registry.local () in
   let local_echo = Echo.local () in
-  let cs = make_vats ~switch ~service:registry_impl () in
-  get_bootstrap ~switch cs >>= fun registry ->
+  make_vats ~switch ~service:registry_impl () >>= fun cs ->
+  get_bootstrap cs >>= fun registry ->
   Registry.set_echo_service registry local_echo >>= fun () ->
   Capability.dec_ref local_echo;
   let echo_service = Registry.echo_service_promise registry in
@@ -180,8 +181,8 @@ let test_resolve switch =
   Lwt.return ()
 
 let test_cancel switch =
-  let cs = make_vats ~switch ~service:(Echo.local ()) () in
-  get_bootstrap ~switch cs >>= fun service ->
+  make_vats ~switch ~service:(Echo.local ()) () >>= fun cs ->
+  get_bootstrap cs >>= fun service ->
   let reply1 = Echo.ping service ~slow:true "ping1" in
   assert (Lwt.state reply1 = Lwt.Sleep);
   Lwt.cancel reply1;
@@ -200,8 +201,8 @@ let float = Alcotest.testable Fmt.float (=)
 
 let test_calculator switch =
   let open Calc in
-  let cs = make_vats ~switch ~service:Calc.local () in
-  get_bootstrap ~switch cs >>= fun c ->
+  make_vats ~switch ~service:Calc.local () >>= fun cs ->
+  get_bootstrap cs >>= fun c ->
   Calc.evaluate c (Float 1.) |> Value.final_read >|= Alcotest.check float "Simple calc" 1. >>= fun () ->
   let local_add = Calc.Fn.add in
   let expr = Expr.(Call (local_add, [Float 1.; Float 2.])) in
@@ -216,8 +217,8 @@ let test_calculator switch =
 
 let test_indexing switch =
   let registry_impl = Registry.local () in
-  let cs = make_vats ~switch ~service:registry_impl () in
-  get_bootstrap ~switch cs >>= fun registry ->
+  make_vats ~switch ~service:registry_impl () >>= fun cs ->
+  get_bootstrap cs >>= fun registry ->
   let echo_service, version = Registry.complex registry in
   Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
   Registry.Version.read version >|= Alcotest.(check string) "Version response" "0.1" >>= fun () ->
@@ -290,7 +291,14 @@ let test_sturdy_ref () =
   let sr = Sturdy_ref.v ~address:(`Unix "/sock", auth) ~service:public_main in
   check "Secure Unix" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/sock/bWFpbg" sr
 
-let cap = Alcotest.testable Capability.pp (=)
+let cap_equal_exn a b =
+  match Capability.equal a b with
+  | Ok x -> x
+  | Error `Unsettled -> Alcotest.failf "Can't compare %a and %a: not settled!"
+                          Capability.pp a
+                          Capability.pp b
+
+let cap = Alcotest.testable Capability.pp cap_equal_exn
 
 let expect_non_exn = function
   | Ok x -> x
@@ -395,18 +403,19 @@ let test_fn_restorer _switch =
   Lwt.return_unit
 
 let test_broken switch =
-  let cs = make_vats ~switch ~service:(Echo.local ()) () in
-  let connection_switch = Lwt_switch.create () in
-  get_bootstrap ~switch:connection_switch cs >>= fun service ->
+  make_vats ~switch ~service:(Echo.local ()) () >>= fun cs ->
+  get_bootstrap cs >>= fun service ->
   Echo.ping service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
-  let problem = ref None in
-  Capability.when_broken (fun x -> problem := Some x) service;
+  let problem, set_problem = Lwt.wait () in
+  Capability.when_broken (fun x -> Lwt.wakeup set_problem x) service;
   Alcotest.check (Alcotest.option except) "Still OK" None @@ Capability.problem service;
-  assert (!problem = None);
-  Lwt_switch.turn_off connection_switch >>= fun () ->
+  assert (Lwt.state problem = Lwt.Sleep);
+  Logs.info (fun f -> f "Turning off server...");
+  Lwt_switch.turn_off cs.server_switch >>= fun () ->
+  problem >>= fun problem ->
+  let expected = Exception.v ~ty:`Disconnected "Vat shut down" in
+  Alcotest.check except "Broken callback ran" expected problem;
   assert (Capability.problem service <> None);
-  let expected = Some (Exception.v ~ty:`Disconnected "CapTP switch turned off") in
-  Alcotest.check (Alcotest.option except) "Broken callback ran" expected !problem;
   Lwt.catch
     (fun () -> Echo.ping service "ping" >|= fun _ -> Alcotest.fail "Should have failed!")
     (fun _ -> Lwt.return ())
@@ -440,10 +449,74 @@ let test_broken4 () =
   Capability.dec_ref promise;
   Alcotest.check (Alcotest.option except) "Released, not called" None !problem
 
+let test_parallel_connect switch =
+  make_vats ~switch ~serve_tls:true ~service:(Echo.local ()) () >>= fun cs ->
+  let service = get_bootstrap cs in
+  let service2 = get_bootstrap cs in
+  service >>= fun service ->
+  service2 >>= fun service2 ->
+  Capability.wait_until_settled service >>= fun () ->
+  Capability.wait_until_settled service2 >>= fun () ->
+  Alcotest.check cap "Shared connection" service service2;
+  Capability.dec_ref service;
+  Capability.dec_ref service2;
+  Lwt.return_unit
+
+let test_parallel_fails switch =
+  make_vats ~switch ~serve_tls:true ~service:(Echo.local ()) () >>= fun cs ->
+  let service = get_bootstrap cs in
+  let service2 = get_bootstrap cs in
+  service >>= fun service ->
+  service2 >>= fun service2 ->
+  Lwt_switch.turn_off cs.server_switch >>= fun () ->
+  Capability.wait_until_settled service >>= fun () ->
+  Capability.wait_until_settled service2 >>= fun () ->
+  Alcotest.check cap "Shared failure" service service2;
+  Capability.dec_ref service;
+  Capability.dec_ref service2;
+  (* Restart server (ignore new client) *)
+  Lwt.pause () >>= fun () ->
+  make_vats ~switch ~serve_tls:true ~service:(Echo.local ()) () >>= fun _cs2 ->
+  get_bootstrap cs >>= fun service ->
+  Echo.ping service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  Capability.dec_ref service;
+  Lwt.return_unit
+
+let test_crossed_calls switch =
+  (* Would be good to control the ordering here, to test the various cases.
+     Currently, it's not certain which path is actually tested. *)
+  let id = Restorer.Id.public "" in
+  let make_vat ~secret_key ~tags addr =
+    let service = Echo.local () in
+    let restore = Restorer.(single id) service in
+    let config =
+      let secret_key = `PEM (Auth.Secret_key.to_pem_data secret_key) in
+      Capnp_rpc_unix.Vat_config.create ~secret_key (`Unix addr)
+    in
+    Capnp_rpc_unix.serve ~switch ~tags ~restore config >>= fun vat ->
+    Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);
+    Lwt.return vat
+  in
+  make_vat ~secret_key:client_key ~tags:Test_utils.client_tags "client" >>= fun client ->
+  make_vat ~secret_key:server_key ~tags:Test_utils.server_tags "server" >>= fun server ->
+  let sr_to_client = Capnp_rpc_unix.Vat.sturdy_ref client id in
+  let sr_to_server = Capnp_rpc_unix.Vat.sturdy_ref server id in
+  let to_client = Capnp_rpc_unix.Vat.connect_exn server sr_to_client in
+  let to_server = Capnp_rpc_unix.Vat.connect_exn client sr_to_server in
+  to_client >>= fun to_client ->
+  to_server >>= fun to_server ->
+  Logs.info (fun f -> f ~tags:Test_utils.client_tags "%a" Capnp_rpc_unix.Vat.dump client);
+  Logs.info (fun f -> f ~tags:Test_utils.server_tags "%a" Capnp_rpc_unix.Vat.dump server);
+  Echo.ping to_client "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  Echo.ping to_server "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  Capability.dec_ref to_client;
+  Capability.dec_ref to_server;
+  Lwt.return_unit
+
 let rpc_tests = [
-  "Simple",     `Quick, run_lwt (test_simple ~server_key:None);
-  "Crypto",     `Quick, run_lwt (test_simple ~server_key:(Some server_key));
-  "Bad crypto", `Quick, run_lwt test_bad_crypto;
+  "Simple",     `Quick, run_lwt (test_simple ~serve_tls:false);
+  "Crypto",     `Quick, run_lwt (test_simple ~serve_tls:true);
+  "Bad crypto", `Quick, run_lwt test_bad_crypto ~expected_warnings:1;
   "Parallel",   `Quick, run_lwt test_parallel;
   "Embargo",    `Quick, run_lwt test_embargo;
   "Resolve",    `Quick, run_lwt test_resolve;
@@ -459,6 +532,9 @@ let rpc_tests = [
   "Broken ref 2", `Quick, test_broken2;
   "Broken ref 3", `Quick, test_broken3;
   "Broken ref 4", `Quick, test_broken4;
+  "Parallel connect", `Quick, run_lwt test_parallel_connect;
+  "Parallel fails", `Quick, run_lwt test_parallel_fails;
+  "Crossed calls", `Quick, run_lwt test_crossed_calls;
 ]
 
 let () =

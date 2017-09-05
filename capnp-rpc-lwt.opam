@@ -18,7 +18,7 @@ depends: [
   "logs"
   "asetmap"
   "mirage-flow-lwt"
-  "tls"
+  "tls" { >= "0.8.0" }
   "mirage-kv-lwt"
   "mirage-clock"
   "base64"

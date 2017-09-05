@@ -1,9 +1,15 @@
+open Asetmap
+
 module Log = Capnp_rpc.Debug.Log
 
 let default_rsa_key_bits = 2048
 let default_hash = `SHA256
 
-type hash = [`SHA1 | `SHA224 | `SHA256 | `SHA384 | `SHA512]
+type hash = [`SHA256]
+(* Note: if we add more hashes here, we need to modify [Vat] to store *all*
+   hashes of peer's public keys when they connect. Otherwise, we might record
+   a client as "sha-256:abc" but it later refers to itself in a sturdy ref as
+   "sha-512:def". We need to detect it's the same peer. *)
 
 let error fmt =
   fmt |> Fmt.kstrf @@ fun msg ->
@@ -24,18 +30,10 @@ module Digest = struct
   let alphabet = B64.uri_safe_alphabet
 
   let string_of_hash = function
-    | `SHA1   -> "sha-1"
-    | `SHA224 -> "sha-224"
     | `SHA256 -> "sha-256"
-    | `SHA384 -> "sha-384"
-    | `SHA512 -> "sha-512"
 
   let parse_hash = function
-    | "sha-1"   -> Ok `SHA1
-    | "sha-224" -> Ok `SHA224
     | "sha-256" -> Ok `SHA256
-    | "sha-384" -> Ok `SHA384
-    | "sha-512" -> Ok `SHA512
     | x -> error "Unknown hash type %S" x
 
   let parse_digest s =
@@ -46,6 +44,11 @@ module Digest = struct
     parse_hash hash >>= fun hash ->
     parse_digest digest >>= fun digest ->
     Ok (hash, digest)
+
+  let of_certificate cert : t =
+    let hash = default_hash in
+    let digest = X509.key_fingerprint ~hash (X509.public_key cert) in
+    `Fingerprint (hash, Cstruct.to_string digest)
 
   let add_to_uri t uri =
     match t with
@@ -80,17 +83,22 @@ module Digest = struct
          other implementations use other names. *)
       let fingerprints = ["capnp", Cstruct.of_string digest] in
       Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprints ?time:None)
+
+  module Map = Map.Make(struct
+      type nonrec t = t
+      let compare = compare
+    end)
 end
 
 module Secret_key = struct
   type t = {
     priv : Nocrypto.Rsa.priv;
-    tls_config : Tls.Config.server;
+    certificates : Tls.Config.own_cert;
   }
 
   let equal a b = a.priv = b.priv
 
-  let tls_config t = t.tls_config
+  let certificates t = t.certificates
 
   let digest ?(hash=default_hash) t =
     let nc_hash = (hash :> Nocrypto.Hash.hash) in
@@ -120,8 +128,7 @@ module Secret_key = struct
   let of_priv priv =
     let cert = x509 priv in
     let certificates = `Single ([cert], priv) in
-    let tls_config = Tls.Config.server ~certificates () in
-    { priv; tls_config }
+    { priv; certificates }
 
   let generate () =
     Log.info (fun f -> f "Generating new private key...");
@@ -136,32 +143,4 @@ module Secret_key = struct
 
   let to_pem_data t =
     X509.Encoding.Pem.Private_key.to_pem_cstruct1 (`RSA t.priv) |> Cstruct.to_string
-end
-
-module Tls_wrapper (Underlying : Mirage_flow_lwt.S) = struct
-  open Lwt.Infix
-
-  module Flow = Tls_mirage.Make(Underlying)
-
-  let plain_endpoint ~switch flow =
-    Endpoint.of_flow ~switch (module Underlying) flow
-
-  let connect_as_server ~switch flow secret_key =
-    match secret_key with
-    | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
-    | Some key ->
-      Log.info (fun f -> f "Doing TLS server-side handshake...");
-      Flow.server_of_flow (Secret_key.tls_config key) flow >|= function
-      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
-      | Ok flow -> Ok (Endpoint.of_flow ~switch (module Flow) flow)
-
-  let connect_as_client ~switch flow auth =
-    match Digest.authenticator auth with
-    | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
-    | Some authenticator ->
-      let tls_config = Tls.Config.client ~authenticator () in
-      Log.info (fun f -> f "Doing TLS client-side handshake...");
-      Flow.client_of_flow tls_config flow >|= function
-      | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
-      | Ok flow -> Ok (Endpoint.of_flow ~switch (module Flow) flow)
 end
