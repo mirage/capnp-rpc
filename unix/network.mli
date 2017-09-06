@@ -6,9 +6,18 @@ module Socket_address : sig
     | `TCP of string * int
   ]
 
+  val validate_public : t -> unit
+  (** Raises an exception if [t] is not a valid public address (e.g. the Unix path is relative) *)
+
   val pp : t Fmt.t
 
   val equal : t -> t -> bool
+
+  val unix : string -> t
+  (** [unix path] is a Unix-domain socket address. [path] is made absolute if it isn't already. *)
+
+  val tcp : host:string -> port:int -> t
+  (** [tcp ~host port] is [`TCP (host, port)]. *)
 end
 
 include Capnp_rpc_lwt.S.NETWORK with

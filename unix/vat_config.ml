@@ -6,11 +6,6 @@ module Log = Capnp_rpc.Debug.Log
 module Listen_address = struct
   include Network.Socket_address
 
-  let abs_path p =
-    if Filename.is_relative p then
-      Filename.concat (Sys.getcwd ()) p
-    else p
-
   let parse_tcp s =
     match String.cut ~sep:":" s with
     | None -> Error (`Msg "Missing :PORT in listen address")
@@ -18,11 +13,11 @@ module Listen_address = struct
       match String.to_int port with
       | None -> Error (`Msg "PORT must be an integer")
       | Some port ->
-        Ok (`TCP (host, port))
+        Ok (tcp ~host ~port)
 
   let of_string s =
     match String.cut ~sep:":" s with
-    | Some ("unix", path) -> Ok (`Unix (abs_path path))
+    | Some ("unix", path) -> Ok (unix path)
     | Some ("tcp", tcp) -> parse_tcp tcp
     | None -> Error (`Msg "Missing ':'")
     | Some _ -> Error (`Msg "Only tcp:HOST:PORT and unix:PATH addresses are currently supported")
@@ -97,6 +92,7 @@ let create ?(backlog=5) ?public_address ~secret_key ?(serve_tls=true) listen_add
     | Some x -> x
     | None -> listen_address
   in
+  Network.Socket_address.validate_public public_address;
   let secret_key = lazy (
     match secret_key with
     | `File path -> init_secret_key_file path

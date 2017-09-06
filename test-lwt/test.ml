@@ -42,12 +42,14 @@ end
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
 
+let server_pem = `PEM (Auth.Secret_key.to_pem_data server_key)
+
 let make_vats ?(serve_tls=false) ~switch ~service () =
   let id = Restorer.Id.public "" in
-  let restore = Restorer.(single id) service in
+  let restore = Restorer.single id service in
   let server_config =
-    let secret_key = `PEM (Auth.Secret_key.to_pem_data server_key) in
-    Capnp_rpc_unix.Vat_config.create ~secret_key ~serve_tls (`Unix "socket")
+    let socket_path = Filename.concat (Sys.getcwd ()) "server" in
+    Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem ~serve_tls (`Unix socket_path)
   in
   let server_switch = Lwt_switch.create () in
   Capnp_rpc_unix.serve ~switch:server_switch ~tags:Test_utils.server_tags ~restore server_config >>= fun server ->
@@ -492,7 +494,8 @@ let test_crossed_calls switch =
     let restore = Restorer.(single id) service in
     let config =
       let secret_key = `PEM (Auth.Secret_key.to_pem_data secret_key) in
-      Capnp_rpc_unix.Vat_config.create ~secret_key (`Unix addr)
+      let socket_path = Filename.concat (Sys.getcwd ()) addr in
+      Capnp_rpc_unix.Vat_config.create ~secret_key (`Unix socket_path)
     in
     Capnp_rpc_unix.serve ~switch ~tags ~restore config >>= fun vat ->
     Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);

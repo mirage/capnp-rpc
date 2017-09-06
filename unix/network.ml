@@ -25,9 +25,21 @@ module Socket_address = struct
     | `TCP of string * int
   ]
 
+  let abs_path p =
+    if Filename.is_relative p then
+      Filename.concat (Sys.getcwd ()) p
+    else p
+
+  let unix x = `Unix (abs_path x)
+  let tcp ~host ~port = `TCP (host, port)
+
   let pp f = function
     | `Unix path -> Fmt.pf f "unix:%s" path
     | `TCP (host, port) -> Fmt.pf f "tcp:%s:%d" host port
+
+  let validate_public = function
+    | `Unix path -> if Filename.is_relative path then Fmt.failwith "Path %S is relative!" path
+    | `TCP _ -> ()
 
   let equal = ( = )
 end
