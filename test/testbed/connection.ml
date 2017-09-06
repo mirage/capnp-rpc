@@ -77,7 +77,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   let restore_single = function
     | None -> None
     | Some bootstrap -> Some (fun k -> function
-        | "" -> k @@ Ok bootstrap
+        | "" -> Capnp_direct.Core_types.inc_ref bootstrap; k @@ Ok bootstrap
         | _ -> k @@ Error (Capnp_rpc.Exception.v "Only a main interface is available")
       )
 

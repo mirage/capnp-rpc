@@ -53,8 +53,10 @@ let single id cap =
   let id = Nocrypto.Hash.digest `SHA256 (Cstruct.of_string id) in
   fun requested_id ->
     let requested_id = Nocrypto.Hash.digest `SHA256 (Cstruct.of_string requested_id) in
-    if Cstruct.equal id requested_id then Lwt.return (Ok cap)
-    else Lwt.return unknown_service_id
+    if Cstruct.equal id requested_id then (
+      Core_types.inc_ref cap;
+      Lwt.return (Ok cap)
+    ) else Lwt.return unknown_service_id
 
 module Table = struct
   type digest = string

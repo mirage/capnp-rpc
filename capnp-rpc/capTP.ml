@@ -1098,6 +1098,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     end
 
     type unset = {
+      mutable rc : RC.t;
       handler : handler; (* Will forward calls here until set *)
       on_set : (Core_types.cap -> unit) Queue.t;
       on_release : (unit -> unit) Queue.t;
@@ -1107,49 +1108,61 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | Unset of unset
       | Set of Core_types.cap
 
+    let released = Core_types.broken_cap (Exception.v "(released)")
+
+    let pp_state f = function
+      | Unset x -> Fmt.pf f "(unset, %a) -> %t" RC.pp x.rc x.handler#pp
+      | Set x -> Fmt.pf f "(set) -> %t" x#pp
+
+    let target = function
+      | Unset x -> x.handler
+      | Set x -> (x :> handler)
+
+    type 'a S.brand += Gc : unit S.brand
+
     (* Forwards messages to [init] until resolved.
        Forces [release] when resolved or released. *)
     let make ~(release:unit Lazy.t) ~settled init =
-      let released = Core_types.broken_cap (Exception.v "(released)") in
-      let pp_state f = function
-        | Unset x -> Fmt.pf f "(unset) -> %t" x.handler#pp
-        | Set x -> Fmt.pf f "(set) -> %t" x#pp
-      in
-      let target = function
-        | Unset x -> x.handler
-        | Set x -> (x :> handler)
-      in
       object (self : #Core_types.cap)
-        inherit Core_types.ref_counted as super
-
         val id = Debug.OID.next ()
 
         val mutable state =
-          Unset { handler = init; on_set = Queue.create (); on_release = Queue.create () }
+          Unset { rc = RC.one; handler = init; on_set = Queue.create (); on_release = Queue.create () }
 
         method call msg caps =
           (target state)#call msg caps
 
+        method update_rc d =
+          match state with
+          | Unset u ->
+            u.rc <- RC.sum u.rc d ~pp:(fun f -> self#pp f);
+            if RC.is_zero u.rc then (
+              Lazy.force release;
+              let old_state = state in
+              state <- Set released;
+              match old_state with
+              | Unset u -> Queue.iter (fun f -> f ()) u.on_release
+              | Set x -> dec_ref x
+            )
+          | Set x -> x#update_rc d
+
         method resolve cap =
-          self#check_refcount;
           match state with
           | Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
-          | Unset {handler = _; on_set; on_release} ->
+          | Unset {handler = _; rc; on_set; on_release} ->
+            let pp f = self#pp f in
+            RC.check ~pp rc;
             state <- Set cap;
+            begin match RC.to_int rc with
+              | Some rc -> cap#update_rc (rc - 1);     (* Transfer our ref-count *)
+              | None -> ()
+            end;
             Queue.iter (fun f -> f (with_inc_ref cap)) on_set;
             Queue.iter (fun f -> cap#when_released f) on_release;
             Lazy.force release
 
         method break ex =
           self#resolve (Core_types.broken_cap ex)
-
-        method private release =
-          Lazy.force release;
-          let old_state = state in
-          state <- Set released;
-          match old_state with
-          | Unset u -> Queue.iter (fun f -> f ()) u.on_release
-          | Set x -> dec_ref x
 
         method shortest =
           match state with
@@ -1180,22 +1193,44 @@ module Make (EP : Message_types.ENDPOINT) = struct
         (* When trying to find the target for export, it's OK to expose our current
            target, even though [shortest] shouldn't.
            In particular, we need this to deal with disembargo requests. *)
-        method! sealed_dispatch : type a. a S.brand -> a option = function
+        method sealed_dispatch : type a. a S.brand -> a option = function
           | CapTP ->
             begin match state with
               | Unset x -> x.handler#sealed_dispatch CapTP
               | Set x -> x#shortest#sealed_dispatch CapTP
             end
-          | x -> super#sealed_dispatch x
+          | Gc ->
+            begin match state with
+              | Unset x ->
+                Core_types.Wire.ref_leak_detected (fun () ->
+                    if RC.is_zero x.rc then (
+                      Log.warn (fun f -> f "@[<v2>Reference GC'd with non-zero ref-count!@,%t@,\
+                                            But, ref-count is now zero, so a previous GC leak must have fixed it.@]"
+                                   self#pp);
+                    ) else (
+                      Log.warn (fun f -> f "@[<v2>Reference GC'd with %a!@,%t@]"
+                                   RC.pp x.rc self#pp);
+                      x.rc <- RC.leaked;
+                      self#resolve released
+                    )
+                  );
+              | Set _ -> ()
+            end;
+            Some ()
+          | _ -> None
 
-        method! check_invariants =
-          super#check_invariants;
+        method check_invariants =
           match state with
-          | Unset _ -> ()
+          | Unset u ->
+            let pp f = self#pp f in
+            RC.check ~pp u.rc
           | Set x -> x#check_invariants
 
         method pp f =
-          Fmt.pf f "switchable(%a, %t) %a" Debug.OID.pp id super#pp_refcount pp_state state
+          Fmt.pf f "switchable(%a) %a" Debug.OID.pp id pp_state state
+
+        initializer
+          Gc.finalise (fun (self:#Core_types.base_ref) -> ignore (self#sealed_dispatch Gc)) self
       end
   end
 
@@ -1429,7 +1464,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | Ok service ->
             let msg =
               Wire.Response.bootstrap ()
-              |> Core_types.Response_payload.with_caps (RO_array.of_list [with_inc_ref service])
+              |> Core_types.Response_payload.with_caps (RO_array.of_list [service])
             in
             Ok msg
       in

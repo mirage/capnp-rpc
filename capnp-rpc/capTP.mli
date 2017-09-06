@@ -8,7 +8,8 @@ module Make (EP : Message_types.ENDPOINT) : sig
   type restorer = ((EP.Core_types.cap, Exception.t) result -> unit) -> string -> unit
   (** A [restorer] is a function [f] for restoring saved capabilities.
       [f k object_id] must eventually call [k result] exactly once to respond
-      to the client's bootstrap message with [result]. *)
+      to the client's bootstrap message with [result]. [k] takes ownership of the
+      capability. *)
 
   val create : ?restore:restorer -> tags:Logs.Tag.set ->
     queue_send:([> EP.Out.t] -> unit) -> t
