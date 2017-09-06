@@ -11,6 +11,11 @@ module Make (Underlying : Mirage_flow_lwt.S) = struct
   module Flow = struct
     include Tls_mirage.Make(Underlying)
 
+    let read flow =
+      read flow >|= function
+      | Error (`Write `Closed) -> Ok `Eof (* This can happen, despite being a write error on a read! *)
+      | x -> x
+
     let writev flow bufs =
       writev flow bufs >|= function
       | Error (`Write `Closed) -> Error `Closed
