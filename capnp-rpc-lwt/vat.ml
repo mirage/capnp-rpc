@@ -155,18 +155,21 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     | Error _  as e -> e
 
   let connect_auth t remote_id addr ~service =
-    match ID_map.find remote_id t.connections with
-    | Some conn ->
-      (* Already connected; use that. *)
-      Lwt.return @@ Ok (CapTP.bootstrap conn service)
-    | None ->
-      match ID_map.find remote_id t.connecting with
-      | None -> initiate_connection t remote_id addr service
+    let my_id = Auth.Secret_key.digest ~hash (Lazy.force t.secret_key) in
+    if Auth.Digest.equal remote_id my_id then
+      Restorer.restore t.restore service
+    else match ID_map.find remote_id t.connections with
       | Some conn ->
-        (* We're already trying to establish a connection, wait for that. *)
-        conn >|= function
-        | Ok conn -> Ok (CapTP.bootstrap conn service)
-        | Error _ as e -> e
+        (* Already connected; use that. *)
+        Lwt.return @@ Ok (CapTP.bootstrap conn service)
+      | None ->
+        match ID_map.find remote_id t.connecting with
+        | None -> initiate_connection t remote_id addr service
+        | Some conn ->
+          (* We're already trying to establish a connection, wait for that. *)
+          conn >|= function
+          | Ok conn -> Ok (CapTP.bootstrap conn service)
+          | Error _ as e -> e
 
   let make_sturdy_ref t sr =
     object

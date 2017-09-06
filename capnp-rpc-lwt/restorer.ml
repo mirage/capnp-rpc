@@ -55,7 +55,7 @@ let fn (r:t) =
           )
       )
 
-let restore f x = f x
+let restore (f:t) x = f x
 
 let none : t = fun _ ->
   Lwt.return @@ Error (Capnp_rpc.Exception.v "This vat has no restorer")

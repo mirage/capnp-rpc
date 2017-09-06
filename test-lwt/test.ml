@@ -35,8 +35,18 @@ module Utils = struct
     Logs.info (fun f -> f ~tags:Test_utils.server_tags "%a" Vat.dump cs.server)
 end
 
+let cap_equal_exn a b =
+  match Capability.equal a b with
+  | Ok x -> x
+  | Error `Unsettled -> Alcotest.failf "Can't compare %a and %a: not settled!"
+                          Capability.pp a
+                          Capability.pp b
+
+let cap = Alcotest.testable Capability.pp cap_equal_exn
+
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
+let bad_key = Auth.Secret_key.generate ()
 
 let server_pem = `PEM (Auth.Secret_key.to_pem_data server_key)
 
@@ -104,7 +114,7 @@ let test_bad_crypto switch =
   make_vats ~switch ~serve_tls:true ~service:(Echo.local ()) () >>= fun cs ->
   let id = Restorer.Id.public "" in
   let uri = Vat.sturdy_uri cs.server id in
-  let bad_digest = Auth.Secret_key.digest ~hash:`SHA256 client_key in (* (should be server) *)
+  let bad_digest = Auth.Secret_key.digest ~hash:`SHA256 bad_key in
   let uri = Auth.Digest.add_to_uri bad_digest uri in
   let sr = Capnp_rpc_unix.Vat.import_exn cs.client uri in
   let old_warnings = Logs.warn_count () in
@@ -269,7 +279,7 @@ let expect_ok = function
   | Error (`Msg m) -> Alcotest.fail m
   | Ok x -> x
 
-let test_sturdy_ref () =
+let test_sturdy_uri () =
   let module Address = Capnp_rpc_unix.Network.Address in
   let address = (module Address : Alcotest.TESTABLE with type t = Address.t) in
   let sturdy_ref = Alcotest.pair address Alcotest.string in
@@ -290,14 +300,17 @@ let test_sturdy_ref () =
   let sr = (`Unix "/sock", auth), "main" in
   check "Secure Unix" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/sock/bWFpbg" sr
 
-let cap_equal_exn a b =
-  match Capability.equal a b with
-  | Ok x -> x
-  | Error `Unsettled -> Alcotest.failf "Can't compare %a and %a: not settled!"
-                          Capability.pp a
-                          Capability.pp b
-
-let cap = Alcotest.testable Capability.pp cap_equal_exn
+let test_sturdy_self switch =
+  let service = Echo.local () in
+  Capability.inc_ref service;
+  make_vats ~switch ~serve_tls:true ~service () >>= fun cs ->
+  let id = Restorer.Id.public "" in
+  let sr = Vat.sturdy_uri cs.server id |> Vat.import_exn cs.server in
+  Sturdy_ref.connect_exn sr >>= fun service2 ->
+  Alcotest.check cap "Restore from same vat" service service2;
+  Capability.dec_ref service2;
+  Capability.dec_ref service;
+  Lwt.return ()
 
 let expect_non_exn = function
   | Ok x -> x
@@ -574,7 +587,8 @@ let rpc_tests = [
   "Cancel",     `Quick, run_lwt test_cancel;
   "Indexing",   `Quick, run_lwt test_indexing;
   "Options",    `Quick, test_options;
-  "Sturdy ref", `Quick, test_sturdy_ref;
+  "Sturdy URI", `Quick, test_sturdy_uri;
+  "Sturdy self", `Quick, run_lwt test_sturdy_self;
   "Table restorer", `Quick, run_lwt test_table_restorer;
   "Fn restorer", `Quick, run_lwt test_fn_restorer;
   "Broken ref", `Quick, run_lwt test_broken;
