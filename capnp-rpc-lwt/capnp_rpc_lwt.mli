@@ -232,6 +232,9 @@ module Restorer : sig
         error depending on how much of the ID the caller guessed correctly).
         Taking a secure hash of the value first is one way to avoid this, since
         revealing the hash isn't helpful to the attacker. *)
+
+    val to_string : t -> string
+    (** [to_string t] is the raw bytes of [t]. *)
   end
 
   (** {2 Resolutions} *)
@@ -261,6 +264,23 @@ module Restorer : sig
   (** [single id cap] is a restorer that responds to [id] with [cap] and
       rejects everything else. *)
 
+  module type LOADER = sig
+    type t
+    (** A user-provided function to restore services from persistent storage. *)
+
+    val hash : t -> Auth.hash
+    (** [hash t] is the hash to apply to a [Restorer.Id.t] to get the storage key,
+        which is passed to [load].
+        You should use the [hash id] value to find the item. Note that [hash]
+        is purely a local security measure - remote peers only see the ID. *)
+
+    val load : t -> string -> resolution Lwt.t
+    (** [load t digest] is called to restore the service with key [digest].
+        The result is cached until its ref-count reaches zero, so the table
+        will never allow two live capabilities for a single [Id.t] at once. It
+        will also not call [load] twice in parallel for the same digest. *)
+  end
+
   module Table : sig
     type t
     (** A restorer that keeps a hashtable mapping IDs to capabilities in memory. *)
@@ -268,14 +288,9 @@ module Restorer : sig
     val create : unit -> t
     (** [create ()] is a new in-memory-only table. *)
 
-    val of_loader : hash:Auth.hash -> (string -> resolution Lwt.t) -> t
-    (** [of_loader ~hash fn] is a new caching table that uses [fn (hash id)] to
-        restore services that aren't in the cache.
-        Note that [hash] is purely a local security measure - remote peers only
-        see [id].
-        The result is cached until its ref-count reaches zero, so the table
-        will never allow two live capabilities for a single [Id.t] at once. It
-        will also not call [fn id] twice in parallel for the same ID. *)
+    val of_loader : (module LOADER with type t = 'loader) -> 'loader -> t
+    (** [of_loader (module Loader) l] is a new caching table that uses
+        [Loader.load l (Loader.hash id)] to restore services that aren't in the cache. *)
 
     val add : t -> Id.t -> 'a Capability.t -> unit
     (** [add t id cap] adds a mapping to [t].

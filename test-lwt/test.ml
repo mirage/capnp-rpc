@@ -339,6 +339,13 @@ let test_table_restorer _switch =
   Restorer.Table.clear table;
   Lwt.return ()
 
+module Loader = struct
+  type t = string -> Restorer.resolution Lwt.t
+
+  let hash _ = `SHA256
+  let load t digest = t digest
+end
+
 let test_fn_restorer _switch =
   let cap = Alcotest.testable Capability.pp (=) in
   let a = Restorer.Id.public "a" in
@@ -346,15 +353,14 @@ let test_fn_restorer _switch =
   let c = Restorer.Id.public "c" in
   let current_c = ref (Restorer.reject (Exception.v "Broken C")) in
   let delay = Lwt_condition.create () in
-  let hash = `SHA256 in
-  let digest = Restorer.Id.digest hash in
-  let load id =
-    if id = digest a then Lwt.return @@ Restorer.grant @@ Echo.local ()
-    else if id = digest b then Lwt_condition.wait delay >|= fun () -> Restorer.grant @@ Echo.local ()
-    else if id = digest c then Lwt_condition.wait delay >|= fun () -> !current_c
+  let digest = Restorer.Id.digest (Loader.hash ()) in
+  let load d =
+    if d = digest a then Lwt.return @@ Restorer.grant @@ Echo.local ()
+    else if d = digest b then Lwt_condition.wait delay >|= fun () -> Restorer.grant @@ Echo.local ()
+    else if d = digest c then Lwt_condition.wait delay >|= fun () -> !current_c
     else Lwt.return @@ Restorer.unknown_service_id
   in
-  let table = Restorer.Table.of_loader ~hash load in
+  let table = Restorer.Table.of_loader (module Loader) load in
   let restorer = Restorer.of_table table in
   let restore x = Restorer.restore restorer x in
   (* Check that restoring the same ID twice caches the capability. *)

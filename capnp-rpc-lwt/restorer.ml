@@ -19,9 +19,17 @@ module Id = struct
     let alg = (alg :> Nocrypto.Hash.hash) in
     Nocrypto.Hash.digest alg (Cstruct.of_string t)
     |> Cstruct.to_string
+
+  let to_string x = x
 end
 
 type resolution = (Core_types.cap, Capnp_rpc.Exception.t) result
+
+module type LOADER = sig
+  type t
+  val hash : t -> Auth.hash
+  val load : t -> string -> resolution Lwt.t
+end
 
 type t = Id.t -> resolution Lwt.t
 
@@ -73,20 +81,18 @@ module Table = struct
 
   (* [cache] contains promises or capabilities with positive ref-counts. *)
 
-  let of_loader ~hash load =
-    let hash = (hash :> Nocrypto.Hash.hash) in
-    let cache = Hashtbl.create 53 in
-    { hash; cache; load }
-
   let create () =
-    of_loader ~hash:`SHA256 (fun _ -> Lwt.return unknown_service_id)
+    let hash = `SHA256 in
+    let cache = Hashtbl.create 53 in
+    let load _ = Lwt.return unknown_service_id in
+    { hash; cache; load }
 
   let hash t id =
     Id.digest t.hash id
 
   let resolve t id =
-    let id = hash t id in
-    match Hashtbl.find t.cache id with
+    let digest = hash t id in
+    match Hashtbl.find t.cache digest with
     | Manual cap ->
       Core_types.inc_ref cap;
       Lwt.return @@ Ok cap
@@ -99,23 +105,29 @@ module Table = struct
           Ok cap
       end
     | exception Not_found ->
-      let cap = t.load id in
-      Hashtbl.add t.cache id (Cached cap);
+      let cap = t.load digest in
+      Hashtbl.add t.cache digest (Cached cap);
       Lwt.try_bind
         (fun () -> cap)
         (fun result ->
            begin match result with
-             | Error _ -> Hashtbl.remove t.cache id
-             | Ok cap -> cap#when_released (fun () -> Hashtbl.remove t.cache id)
+             | Error _ -> Hashtbl.remove t.cache digest
+             | Ok cap -> cap#when_released (fun () -> Hashtbl.remove t.cache digest)
            end;
            (* Ensure all [inc_ref]s are done before handing over to the user. *)
            Lwt.pause () >|= fun () ->
            result
         )
         (fun ex ->
-           Hashtbl.remove t.cache id;
+           Hashtbl.remove t.cache digest;
            Lwt.fail ex
         )
+
+  let of_loader (type l) (module L : LOADER with type t = l) loader =
+    let hash = (L.hash loader :> Nocrypto.Hash.hash) in
+    let cache = Hashtbl.create 53 in
+    let load digest = L.load loader digest in
+    { hash; cache; load }
 
   let add t id cap =
     let id = hash t id in
