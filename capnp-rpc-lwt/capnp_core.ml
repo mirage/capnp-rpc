@@ -6,8 +6,7 @@ module Capnp_content = struct
   let ref_leak_detected fn =
     Lwt.async (fun () ->
         Lwt.pause () >|= fun () ->
-        fn ();
-        failwith "ref_leak_detected"
+        fn ()
       )
 end
 
