@@ -725,10 +725,10 @@ let serve config =
     Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
     let restore = Restorer.of_table services in
     Capnp_rpc_unix.serve config ~restore >>= fun vat ->
-    let echo_sr = Capnp_rpc_unix.Vat.sturdy_ref vat echo_id in
-    let logger_sr = Capnp_rpc_unix.Vat.sturdy_ref vat logger_id in
-    Fmt.pr "echo service: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets echo_sr;
-    Fmt.pr "logger service: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets logger_sr;
+    let echo_sr = Capnp_rpc_unix.Vat.sturdy_uri vat echo_id in
+    let logger_sr = Capnp_rpc_unix.Vat.sturdy_uri vat logger_id in
+    Fmt.pr "echo service: %a@." Uri.pp_hum echo_sr;
+    Fmt.pr "logger service: %a@." Uri.pp_hum logger_sr;
     wait_forever
   end
 ```
@@ -761,9 +761,10 @@ It is possible to use `Table.add` for this.
 However, that requires all capabilities to be loaded into the table at start-up,
 which may be a performance problem.
 
-Instead, we can create the table using `Table.of_loader fn`.
-When the user asks for a sturdy ref that is not in the table, it calls `fn` to load the capability dynamically.
-Your function can use a database or the filesystem to look up the resource.
+Instead, we can create the table using `Table.of_loader`.
+When the user asks for a sturdy ref that is not in the table,
+it calls our `load` function to load the capability dynamically.
+The function can use a database or the filesystem to look up the resource.
 You can still use `Table.add` to register additional services, as before.
 
 Let's extend the ping service to support multiple callbacks with different labels.
@@ -785,76 +786,98 @@ struct SavedService {
 
 Using Cap'n Proto for this makes it easy to add extra fields or service types later if needed
 (`SavedService.logger` can be upgraded to a union if we decide to add more service types later).
-We can use this with `File_store` to implement the required `Echo.load` function:
+Here's a `DB` module that loads and saves loggers using `File_store`:
 
 ```ocaml
-module Store = Capnp_rpc_unix.File_store
+module DB : sig
+  include Restorer.LOADER
 
-let load store digest =
-  match Store.load store ~digest with
-  | None -> Lwt.return Restorer.unknown_service_id
-  | Some saved_service ->
-    let logger = Api.Reader.SavedService.logger_get saved_service in
-    let label = Api.Reader.SavedLogger.label_get logger in
-    let callback msg =
-      Fmt.pr "%s: %S@." label msg
-    in
-    Lwt.return @@ Restorer.grant @@ Callback.local callback
-```
+  val create :
+    make_sturdy:(Restorer.Id.t -> Uri.t) ->
+    string ->
+    t
+  (** [create ~make_sturdy dir] is a database that persists services in [dir]. *)
 
-Note: to avoid possible timing attacks, the load function is called with the hash of the service ID rather than with the ID itself. This means that even if the load function takes a different amount of time to respond depending on how much of a valid ID the client guessed, the client will only learn the hash (which is of no use to them), not the ID.
-The file store uses the hash as the filename, which avoids needing to check the ID the client gives for special characters, and also means that someone getting a copy of the store (e.g. an old backup) doesn't get the IDs (which would allow them to access the real service).
+  val save_new : t -> label:string -> Restorer.Id.t
+  (** [save_new t ~label] adds a new logger with label [label] to the store and
+      returns its newly-generated ID. *)
+end = struct
+  module Store = Capnp_rpc_unix.File_store
 
-The main `serve` function then uses `Echo.load` to create the table:
+  type t = {
+    store : Api.Reader.SavedService.struct_t Store.t;
+    make_sturdy : Restorer.Id.t -> Uri.t;
+  }
 
-```ocaml
-let serve config =
-  let hash = `SHA256 in
-  let store = Echo.Store.create ~dir:"/tmp/store" ~hash config in
-  let services = Restorer.Table.of_loader ~hash (Echo.load store) in
-  (* Also add the main echo service, as before: *)
-  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
-  Restorer.Table.add services echo_id (Echo.local ~store);
-  ...
-```
+  let hash _ = `SHA256
 
-The `Callback.make_sturdy` function creates the saved data to be stored:
+  let make_sturdy t = t.make_sturdy
 
-```ocaml
-  let make_sturdy store ~label =
+  let load t _sr digest =
+    match Store.load t.store ~digest with
+    | None -> Lwt.return Restorer.unknown_service_id
+    | Some saved_service ->
+      let logger = Api.Reader.SavedService.logger_get saved_service in
+      let label = Api.Reader.SavedLogger.label_get logger in
+      let callback msg =
+        Fmt.pr "%s: %S@." label msg
+      in
+      Lwt.return @@ Restorer.grant @@ Callback.local callback
+
+  let save t ~digest label =
     let open Api.Builder in
     let service = SavedService.init_root () in
     let logger = SavedService.logger_init service in
     SavedLogger.label_set logger label;
-    Store.save store @@ SavedService.to_reader service
+    Store.save t.store ~digest @@ SavedService.to_reader service
+
+  let save_new t ~label =
+    let id = Restorer.Id.generate () in
+    let digest = Restorer.Id.digest (hash t) id in
+    save t ~digest label;
+    id
+
+  let create ~make_sturdy dir =
+    let store = Store.create dir in
+    {store; make_sturdy}
+end
+```
+
+Note: to avoid possible timing attacks, the load function is called with the digest of the service ID rather than with the ID itself. This means that even if the load function takes a different amount of time to respond depending on how much of a valid ID the client guessed, the client will only learn the digest (which is of no use to them), not the ID.
+The file store uses the digest as the filename, which avoids needing to check the ID the client gives for special characters, and also means that someone getting a copy of the store (e.g. an old backup) doesn't get the IDs (which would allow them to access the real service).
+
+The main `serve` function then uses `Echo.DB` to create the table:
+
+```ocaml
+let serve config =
+  (* Create the on-disk store *)
+  let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+  let db = Echo.DB.create ~make_sturdy "/tmp/store" in
+  (* Create the restorer *)
+  let services = Restorer.Table.of_loader (module Echo.DB) db in
+  let restore = Restorer.of_table services in
+  (* Add the fixed services *)
+  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
+  let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
+  Restorer.Table.add services echo_id (Echo.local ~restore db);
+  Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
+  (* Run the server *)
+  Lwt_main.run begin
+    ...
 ```
 
 As a quick test, you can modify the `serve` function to create a new sturdy ref on startup and display it:
 
 ```ocaml
-  let sr = Echo.Callback.make_sturdy store ~label:"Alice" in
-  Fmt.pr "New logger: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
+  let id = Echo.DB.save_new db ~label:"Alice" in
+  let sr = Capnp_rpc_unix.Vat_config.sturdy_uri config id in
+  Fmt.pr "New logger: %a@." Uri.pp_hum sr;
 ```
 
 Run the server once to create the logger, then remove the code and restart it.
 You should be able to use `demo.exe log URI MSG` to make the restarted server log messages with the prefix `Alice`.
 
-In a real system, you'd probably want to expose a method for creating new loggers, e.g.
-
-```capnp
-using SturdyRef = Text;
-# For now, transmit sturdy refs as URIs.
-
-interface Echo {
-  ping         @0 (msg :Text) -> (reply :Text);
-  heartbeat    @1 (msg :Text, callback :Callback) -> ();
-  getLogger    @2 () -> (callback :Callback);
-  createLogger @3 (label: Text) -> (callback :SturdyRef);
-}
-```
-
-Exercise: implement `createLogger` in the client and server.
-Hint: you'll need to pass the `store` argument to `Echo.local` so that the method can create the service.
+In a real system, you'd probably want to expose a method for creating new loggers, e.g. TODO
 
 ### Summary
 

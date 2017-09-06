@@ -8,7 +8,8 @@ include Capnp_rpc_lwt.S.VAT_NETWORK with
   type flow = Unix_flow.flow and
   type 'a capability = 'a Capability.t and
   type restorer = Restorer.t and
-  type Sturdy_ref.service_id = Restorer.Id.t and
+  type service_id = Restorer.Id.t and
+  type 'a sturdy_ref = 'a Sturdy_ref.t and
   module Network = Network
 
 module Vat_config : sig
@@ -47,8 +48,8 @@ module Vat_config : sig
       (using {!Restorer.Id.derived}). It won't change (unless the vat's key
       changes). [name] defaults to ["main"]. *)
 
-  val sturdy_ref : t -> Restorer.Id.t -> 'a Sturdy_ref.t
-  (** [sturdy_ref t id] is a sturdy ref for [id] at the vat that would be
+  val sturdy_uri : t -> Restorer.Id.t -> Uri.t
+  (** [sturdy_uri t id] is a sturdy URI for [id] at the vat that would be
       created by [t]. *)
 
   val pp : t Fmt.t
@@ -67,39 +68,23 @@ module File_store : sig
   type 'a t
   (** A store of values of type ['a]. *)
 
-  val create :
-    dir:string ->
-    hash:Auth.hash ->
-    Vat_config.t ->
-    'a t
-  (** [create ~dir ~hash config] is a store for Cap'n Proto structs.
-      Each saved item gets a random service ID and is stored inside [dir]
-      in a file named [hash id].
-      [config] is used for [Vat_config.sturdy_ref], to include the vat's
-      address and fingerprint in the generated sturdy refs. *)
+  val create : string -> 'a t
+  (** [create dir] is a store for Cap'n Proto structs.
+      Items are stored inside [dir]. *)
 
-  val hash : 'a t -> Auth.hash
-  (** [hash t] is the hash passed to [create]. *)
-
-  val save : 'a t -> 'a StructStorage.reader_t -> 'a Sturdy_ref.t
-  (** [save t data] is a reference to a new persistent service.
-      [data] is stored to disk. It will be used later to restore
-      the service. *)
+  val save : 'a t -> digest:string -> 'a StructStorage.reader_t -> unit
+  (** [save t ~digest data] saves [data] to disk in a file named [base64_encode digest]. *)
 
   val load : 'a t -> digest:string -> 'a StructStorage.reader_t option
-  (** [load t ~digest] is the data passed to [save] when the service
-      whose ID hashes to digest was saved, or [None] if the digest
-      is not known. *)
-
-  val update : 'a t -> digest:string -> 'a StructStorage.reader_t -> unit
-  (** [update t ~digest data] overwrites the saved data for [digest] with [data]. *)
+  (** [load t ~digest] is the data passed to [save t ~digest],
+      or [None] if the digest is not known. *)
 
   val remove : 'a t -> digest:string -> unit
   (** [remove t ~digest] removes the stored data for [digest]. *)
 end
 
-val sturdy_ref : unit -> 'a Sturdy_ref.t Cmdliner.Arg.conv
-(** A cmdliner argument converter for parsing "capnp://" URIs. *)
+val sturdy_uri : Uri.t Cmdliner.Arg.conv
+(** A cmdliner argument converter for "capnp://" URIs. *)
 
 val serve :
   ?switch:Lwt_switch.t ->

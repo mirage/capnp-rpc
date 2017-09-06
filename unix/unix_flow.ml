@@ -11,7 +11,7 @@ type flow = {
   mutable current_read : int Lwt.t option;
   mutable closed : bool;
 }
-type error = [`Closed | `Exception of exn]
+type error = [`Exception of exn]
 type write_error = [`Closed | `Exception of exn]
 type 'a io = 'a Lwt.t
 

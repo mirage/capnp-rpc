@@ -1,5 +1,6 @@
 open Lwt.Infix
 
+module Vat = Capnp_rpc_unix.Vat
 module Calc = Examples.Calc
 
 (* Verbose logging *)
@@ -33,8 +34,8 @@ let serve vat_config =
     let service_id = Capnp_rpc_lwt.Restorer.Id.public "calculator" in
     let restore = Capnp_rpc_lwt.Restorer.single service_id Examples.Calc.local in
     Capnp_rpc_unix.serve vat_config ~restore >>= fun vat ->
-    let sr = Capnp_rpc_unix.Vat.sturdy_ref vat service_id in
-    Fmt.pr "Waiting for incoming connections at:@.%a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
+    let sr = Vat.sturdy_uri vat service_id in
+    Fmt.pr "Waiting for incoming connections at:@.%a@." Uri.pp_hum sr;
     fst @@ Lwt.wait ()
   end
 
@@ -43,7 +44,8 @@ let serve vat_config =
 let connect addr =
   Lwt_main.run begin
     let vat = Capnp_rpc_unix.client_only_vat () in
-    Capnp_rpc_unix.Vat.connect_exn vat addr >>= fun calc ->
+    let sr = Vat.import_exn vat addr in
+    Capnp_rpc_lwt.Sturdy_ref.connect_exn sr >>= fun calc ->
     Logs.info (fun f -> f "Evaluating expression...");
     let remote_add = Calc.getOperator calc `Add in
     let result = Calc.evaluate calc Calc.Expr.(Call (remote_add, [Float 40.0; Float 2.0])) in
@@ -58,7 +60,7 @@ open Cmdliner
 
 let connect_addr =
   let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server (capnp://...)" in
-  Arg.(required @@ pos 0 (some (Capnp_rpc_unix.sturdy_ref ())) None i)
+  Arg.(required @@ pos 0 (some Capnp_rpc_unix.sturdy_uri) None i)
 
 let serve_cmd =
   Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),

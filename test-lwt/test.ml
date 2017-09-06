@@ -20,16 +20,12 @@ type cs = {
   server_switch : Lwt_switch.t;
 }
 
-let expect_some msg = function
-  | None -> Alcotest.fail msg
-  | Some x -> x
-
 (* Have the client ask the server for its bootstrap object, and return the
    resulting client-side proxy to it. *)
 let get_bootstrap cs =
   let id = Restorer.Id.public "" in
-  let sr = Vat.sturdy_ref cs.server id in
-  Vat.connect_exn cs.client sr
+  let sr = Vat.sturdy_uri cs.server id |> Vat.import_exn cs.client in
+  Sturdy_ref.connect_exn sr
 
 module Utils = struct
   [@@@ocaml.warning "-32"]
@@ -107,11 +103,12 @@ let test_simple switch ~serve_tls =
 let test_bad_crypto switch =
   make_vats ~switch ~serve_tls:true ~service:(Echo.local ()) () >>= fun cs ->
   let id = Restorer.Id.public "" in
-  let (addr, _digest) = Vat.public_address cs.server |> expect_some "Has address" in
-  let address = (addr, Auth.Secret_key.digest ~hash:`SHA256 client_key) in (* (should be server_key) *)
-  let sr = Capnp_rpc_unix.Sturdy_ref.v ~address ~service:id in
+  let uri = Vat.sturdy_uri cs.server id in
+  let bad_digest = Auth.Secret_key.digest ~hash:`SHA256 client_key in (* (should be server) *)
+  let uri = Auth.Digest.add_to_uri bad_digest uri in
+  let sr = Capnp_rpc_unix.Vat.import_exn cs.client uri in
   let old_warnings = Logs.warn_count () in
-  Vat.connect cs.client sr >>= function
+  Sturdy_ref.connect sr >>= function
   | Ok _ -> Alcotest.fail "Wrong TLS key should have been rejected"
   | Error e ->
     let msg = Fmt.to_to_string Capnp_rpc.Exception.pp e in
@@ -273,25 +270,24 @@ let expect_ok = function
   | Ok x -> x
 
 let test_sturdy_ref () =
-  let module Sturdy_ref = Capnp_rpc_unix.Sturdy_ref in
-  let sturdy_ref = Alcotest.testable Sturdy_ref.pp_with_secrets Sturdy_ref.equal in
+  let module Address = Capnp_rpc_unix.Network.Address in
+  let address = (module Address : Alcotest.TESTABLE with type t = Address.t) in
+  let sturdy_ref = Alcotest.pair address Alcotest.string in
   let check msg expected_uri sr =
-    let uri = Sturdy_ref.to_uri_with_secrets sr in
+    let uri = Address.to_uri sr in
     Alcotest.(check string) msg expected_uri (Uri.to_string uri);
-    let sr2 = Sturdy_ref.of_uri uri |> expect_ok in
-    Alcotest.(check sturdy_ref) msg sr sr2
+    let sr2 = Address.parse_uri uri |> expect_ok in
+    Alcotest.check sturdy_ref msg sr sr2
   in
-  let public_bootstrap = Restorer.Id.public "" in
-  let public_main = Restorer.Id.public "main" in
-  let sr = Sturdy_ref.v ~address:(`Unix "/sock", Auth.Digest.insecure) ~service:public_bootstrap in
+  let sr = (`Unix "/sock", Auth.Digest.insecure), "" in
   check "Insecure Unix" "capnp://insecure@/sock/" sr;
-  let sr = Sturdy_ref.v ~address:(`TCP ("localhost", 7000), Auth.Digest.insecure) ~service:public_bootstrap in
+  let sr = (`TCP ("localhost", 7000), Auth.Digest.insecure), "" in
   check "Insecure TCP" "capnp://insecure@localhost:7000" sr;
   let test_uri = Uri.of_string "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/" in
   let auth = Auth.Digest.from_uri test_uri |> expect_ok in
-  let sr = Sturdy_ref.v ~address:(`TCP ("localhost", 7000), auth) ~service:public_main in
+  let sr = (`TCP ("localhost", 7000), auth), "main" in
   check "Secure TCP" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@localhost:7000/bWFpbg" sr;
-  let sr = Sturdy_ref.v ~address:(`Unix "/sock", auth) ~service:public_main in
+  let sr = (`Unix "/sock", auth), "main" in
   check "Secure Unix" "capnp://sha-256:s16WV4JeGusAL_nTjvICiQOFqm3LqYrDj3K-HXdMi8s@/sock/bWFpbg" sr
 
 let cap_equal_exn a b =
@@ -343,7 +339,8 @@ module Loader = struct
   type t = string -> Restorer.resolution Lwt.t
 
   let hash _ = `SHA256
-  let load t digest = t digest
+  let make_sturdy _ id = Uri.make ~path:(Restorer.Id.to_string id) ()
+  let load t _sr digest = t digest
 end
 
 let test_fn_restorer _switch =
@@ -509,10 +506,10 @@ let test_crossed_calls switch =
   in
   make_vat ~secret_key:client_key ~tags:Test_utils.client_tags "client" >>= fun client ->
   make_vat ~secret_key:server_key ~tags:Test_utils.server_tags "server" >>= fun server ->
-  let sr_to_client = Capnp_rpc_unix.Vat.sturdy_ref client id in
-  let sr_to_server = Capnp_rpc_unix.Vat.sturdy_ref server id in
-  let to_client = Capnp_rpc_unix.Vat.connect_exn server sr_to_client in
-  let to_server = Capnp_rpc_unix.Vat.connect_exn client sr_to_server in
+  let sr_to_client = Capnp_rpc_unix.Vat.sturdy_uri client id |> Vat.import_exn server in
+  let sr_to_server = Capnp_rpc_unix.Vat.sturdy_uri server id |> Vat.import_exn client in
+  let to_client = Sturdy_ref.connect_exn sr_to_client in
+  let to_server = Sturdy_ref.connect_exn sr_to_server in
   to_client >>= fun to_client ->
   to_server >>= fun to_server ->
   Logs.info (fun f -> f ~tags:Test_utils.client_tags "%a" Capnp_rpc_unix.Vat.dump client);
@@ -521,6 +518,48 @@ let test_crossed_calls switch =
   Echo.ping to_server "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
   Capability.dec_ref to_client;
   Capability.dec_ref to_server;
+  Lwt.return_unit
+
+let test_store switch =
+  (* Persistent server configuration *)
+  let db = Store.DB.create () in
+  let socket_path = Filename.concat (Sys.getcwd ()) "server" in
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem (`Unix socket_path) in
+  let main_id = Restorer.Id.generate () in
+  let start_server ~switch () =
+    let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+    let table = Store.File.table ~make_sturdy db in
+    Lwt_switch.add_hook (Some switch) (fun () -> Restorer.Table.clear table; Lwt.return_unit);
+    let restore = Restorer.of_table table in
+    let service = Store.local ~restore db in
+    Restorer.Table.add table main_id service;
+    Capnp_rpc_unix.serve ~switch ~restore ~tags:Test_utils.server_tags config
+  in
+  (* Start server *)
+  let server_switch = Lwt_switch.create () in
+  start_server ~switch:server_switch () >>= fun server ->
+  let store_uri = Capnp_rpc_unix.Vat.sturdy_uri server main_id in
+  (* Set up client *)
+  let client = Capnp_rpc_unix.client_only_vat ~tags:Test_utils.client_tags ~switch () in
+  let sr = Capnp_rpc_unix.Vat.import_exn client store_uri in
+  Sturdy_ref.connect_exn sr >>= fun store ->
+  (* Try creating a file *)
+  let file = Store.create_file store in
+  Store.File.set file "Hello" >>= fun () ->
+  Store.File.save file >>= fun file_sr ->
+  let file_sr = Vat.import_exn client file_sr in (* todo: get rid of this step *)
+  (* Shut down server *)
+  Lwt_switch.turn_off server_switch >>= fun () ->
+  assert (Capability.problem file <> None);
+  (* Restart server *)
+  start_server ~switch () >>= fun _server ->
+  (* Reconnect client *)
+  Sturdy_ref.connect_exn file_sr >>= fun file ->
+  Store.File.get file >>= fun data ->
+  Alcotest.(check string) "Read file" "Hello" data;
+  (* Clean up *)
+  Capability.dec_ref file;
+  Capability.dec_ref store;
   Lwt.return_unit
 
 let rpc_tests = [
@@ -545,6 +584,7 @@ let rpc_tests = [
   "Parallel connect", `Quick, run_lwt test_parallel_connect;
   "Parallel fails", `Quick, run_lwt test_parallel_fails;
   "Crossed calls", `Quick, run_lwt test_crossed_calls;
+  "Store",      `Quick, run_lwt test_store;
 ]
 
 let () =

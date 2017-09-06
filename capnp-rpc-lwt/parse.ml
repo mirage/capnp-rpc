@@ -107,18 +107,10 @@ module Make_basic
     in
     `Call (aid, target, msg, descs, results_to)
 
-  let string_of_pointer = function
-    | None -> ""
-    | Some ptr ->
-      let open Capnp.BytesMessage in
-      let data = { ptr with Slice.len = 0 } in
-      let ss = StructStorage.v ~data ~pointers:ptr in
-      Schema.ReaderOps.get_text ~default:"" (Some ss) 0
-
   let parse_bootstrap boot =
     let open Reader in
     let qid = Bootstrap.question_id_get boot |> AnswerId.of_uint32 in
-    let object_id = Bootstrap.deprecated_object_id_get boot |> string_of_pointer in
+    let object_id = Bootstrap.deprecated_object_id_get boot |> Schema.ReaderOps.string_of_pointer in
     `Bootstrap (qid, object_id)
 
   let parse_disembargo x =

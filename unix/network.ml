@@ -57,7 +57,7 @@ module Address = struct
     try Ok (B64.decode ~alphabet s)
     with ex -> error "Bad base64 digest %S: %a" s Fmt.exn ex
 
-  let to_uri (addr, auth) service_id =
+  let to_uri ((addr, auth), service_id) =
     let service_id = b64encode service_id in
     let uri =
       match addr with
@@ -70,7 +70,7 @@ module Address = struct
     Capnp_rpc_lwt.Auth.Digest.add_to_uri auth uri
 
   let pp f t =
-    Uri.pp_hum f (to_uri t "")
+    Uri.pp_hum f (to_uri (t, ""))
 
   let ( >>= ) x f =
     match x with
@@ -81,7 +81,14 @@ module Address = struct
     if String.is_prefix ~affix:"/" s then String.with_range ~first:1 s
     else s
 
+  let check_sheme uri =
+    match Uri.scheme uri with
+    | Some "capnp" -> Ok ()
+    | Some scheme -> error "Unknown scheme %S (expected 'capnp://...')" scheme
+    | None -> error "Missing scheme in %a (expected 'capnp://...')" Uri.pp_hum uri
+
   let parse_uri uri =
+    check_sheme uri >>= fun () ->
     let host = Uri.host uri |> none_if_empty in
     let port = Uri.port uri in
     let path = Uri.path uri in
