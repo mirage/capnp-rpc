@@ -163,7 +163,7 @@ module type VAT_NETWORK = sig
     (** [sturdy_ref t object_id] is a sturdy ref for [object_id], hosted at this vat.
         Fails if this vat does not accept incoming connections. *)
 
-    val connect : t -> 'a Sturdy_ref.t -> ('a capability, [> `Msg of string]) result Lwt.t
+    val connect : t -> 'a Sturdy_ref.t -> ('a capability, Capnp_rpc.Exception.t) result Lwt.t
     (** [connect t sr] creates and returns a live reference to the off-line capability [sr]. *)
 
     val connect_exn : t -> 'a Sturdy_ref.t -> 'a capability Lwt.t

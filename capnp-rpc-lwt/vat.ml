@@ -2,9 +2,9 @@ open Lwt.Infix
 
 module Log = Capnp_rpc.Debug.Log
 
-let error fmt =
+let error ?ty fmt =
   fmt |> Fmt.kstrf @@ fun msg ->
-  Error (`Msg msg)
+  Error (Capnp_rpc.Exception.v ?ty msg)
 
 module ID_map = Auth.Digest.Map
 
@@ -14,7 +14,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
 
   let hash = `SHA256 (* Only support a single hash for now *)
 
-  type connection_attempt = (CapTP.t, [`Msg of string]) result Lwt.t
+  type connection_attempt = (CapTP.t, Capnp_rpc.Exception.t) result Lwt.t
 
   type t = {
     switch : Lwt_switch.t option;
@@ -148,7 +148,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   let connect_anon t addr ~service =
     let switch = Lwt_switch.create () in
     Network.connect ~switch ~secret_key:t.secret_key addr >>= function
-    | Error _ as e -> Lwt.return e
+    | Error (`Msg m) -> Lwt.return @@ Error (Capnp_rpc.Exception.v m)
     | Ok ep ->
       add_connection t ~switch ep ~mode:`Connect >|= fun conn ->
       Ok (CapTP.bootstrap conn service)
@@ -158,7 +158,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     let switch = Lwt_switch.create () in
     let conn =
       Network.connect ~switch ~secret_key:t.secret_key addr >>= function
-      | Error _ as e -> Lwt.return e
+      | Error (`Msg m) -> Lwt.return @@ Error (Capnp_rpc.Exception.v m)
       | Ok ep -> add_connection t ~switch ep ~mode:`Connect >|= fun conn -> Ok conn
     in
     t.connecting <- ID_map.add remote_id conn t.connecting;
@@ -180,7 +180,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
         (* We're already trying to establish a connection, wait for that. *)
         conn >|= function
         | Ok conn -> Ok (CapTP.bootstrap conn service)
-        | Error (`Msg _) as e -> e
+        | Error _ as e -> e
 
   let connect t sr =
     let addr = Sturdy_ref.address sr in
@@ -192,7 +192,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   let connect_exn t sr =
     connect t sr >>= function
     | Ok x -> Lwt.return x
-    | Error (`Msg msg) -> Lwt.fail_with msg
+    | Error e -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Exception.pp e)
 
   let pp_vat_id f = function
     | None -> Fmt.string f "Client-only vat"

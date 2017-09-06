@@ -111,8 +111,9 @@ let test_bad_crypto switch =
   let old_warnings = Logs.warn_count () in
   Vat.connect cs.client sr >>= function
   | Ok _ -> Alcotest.fail "Wrong TLS key should have been rejected"
-  | Error (`Msg msg) ->
-    assert (String.is_prefix ~affix:"TLS connection failed: authentication failure" msg);
+  | Error e ->
+    let msg = Fmt.to_to_string Capnp_rpc.Exception.pp e in
+    assert (String.is_prefix ~affix:"Failed: TLS connection failed: authentication failure" msg);
     (* Wait for server to log warning *)
     let rec wait () =
       if Logs.warn_count () = old_warnings then Lwt.pause () >>= wait
