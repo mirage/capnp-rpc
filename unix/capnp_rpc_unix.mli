@@ -84,7 +84,7 @@ module File_store : sig
 end
 
 val sturdy_uri : Uri.t Cmdliner.Arg.conv
-(** A cmdliner argument converter for "capnp://" URIs. *)
+(** A cmdliner argument converter for a "capnp://" URI (or the path of a file containing such a URI). *)
 
 val serve :
   ?switch:Lwt_switch.t ->

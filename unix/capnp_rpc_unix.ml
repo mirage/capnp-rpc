@@ -1,3 +1,4 @@
+open Astring
 open Lwt.Infix
 
 module Log = Capnp_rpc.Debug.Log
@@ -22,11 +23,25 @@ let error fmt =
   fmt |> Fmt.kstrf @@ fun msg ->
   Error (`Msg msg)
 
+let parse_uri s =
+  match Uri.of_string s with
+  | exception ex -> error "Failed to parse URI %S: %a" s Fmt.exn ex
+  | uri ->
+    match Network.Address.parse_uri uri with
+    | Ok _ -> Ok uri    (* (just check it parses) *)
+    | Error _ as e -> e
+
 let sturdy_uri =
   let of_string s =
-    match Uri.of_string s with
-    | exception ex -> error "Failed to parse URI %S: %a" s Fmt.exn ex
-    | uri -> Ok uri
+    if String.is_prefix s ~affix:"capnp://" then parse_uri s
+    else if Sys.file_exists s then (
+      let ch = open_in s in
+      let len = in_channel_length ch in
+      let data = really_input_string ch len in
+      close_in ch;
+      parse_uri data
+    ) else error "Expected a URI starting with \"capnp://\" \
+                  or the path to a file containing such a URI, but got %S." s
   in
   Cmdliner.Arg.conv (of_string, Uri.pp_hum)
 
