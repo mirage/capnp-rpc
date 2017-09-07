@@ -575,7 +575,7 @@ module Vat = struct
   (* TODO: return a random object or error at some future time *)
   let restore t k object_id =
     match object_id, t.bootstrap with
-    | "", Some (cap, _) -> k @@ Ok (cap :> Core_types.cap)
+    | "", Some (cap, _) -> Core_types.inc_ref cap; k @@ Ok (cap :> Core_types.cap)
     | _ -> k @@ Error (Capnp_rpc.Exception.v "Bad object_id for restore")
 
   let free_all t =
