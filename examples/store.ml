@@ -60,14 +60,9 @@ module File = struct
     let request = Capability.Request.create_no_args () in
     Capability.call_for_value_exn t method_id request >|= Results.data_get
 
-  let save t =
-    let open Api.Client.File.Save in
-    let request = Capability.Request.create_no_args () in
-    Capability.call_for_value_exn t method_id request >|= Sturdy_ref.reader Results.sr_get
-
   let local (db:DB.t) sr digest =
     let module File = Api.Service.File in
-    File.local @@ object
+    Persistence.with_sturdy_ref sr File.local @@ object
       inherit File.service
 
       method get_impl _ release_params =
@@ -83,13 +78,6 @@ module File = struct
         release_params ();
         DB.set db digest data;
         Service.return_empty ()
-
-      method save_impl _ release_params =
-        release_params ();
-        let open File.Save in
-        let resp, results = Service.Response.create Results.init_pointer in
-        Sturdy_ref.builder Results.sr_get results sr;
-        Service.return resp
     end
 
   module Loader = struct
@@ -103,10 +91,12 @@ module File = struct
     let make_sturdy t = t.make_sturdy
 
     let load t sr digest =
-      if DB.mem t.db digest then
+      if DB.mem t.db digest then (
+        let sr = Sturdy_ref.cast sr in
         Lwt.return @@ Restorer.grant @@ local t.db sr digest
-      else
+      ) else (
         Lwt.return Restorer.unknown_service_id
+      )
   end
 
   let table ~make_sturdy db =
