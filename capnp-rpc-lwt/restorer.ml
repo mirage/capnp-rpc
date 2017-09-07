@@ -81,15 +81,16 @@ module Table = struct
     hash : Nocrypto.Hash.hash;
     cache : (digest, entry) Hashtbl.t;
     load : Id.t -> digest -> resolution Lwt.t;
+    make_sturdy : Id.t -> Uri.t;
   }
 
   (* [cache] contains promises or capabilities with positive ref-counts. *)
 
-  let create () =
+  let create make_sturdy =
     let hash = `SHA256 in
     let cache = Hashtbl.create 53 in
     let load _ _ = Lwt.return unknown_service_id in
-    { hash; cache; load }
+    { hash; cache; load; make_sturdy }
 
   let hash t id =
     Id.digest t.hash id
@@ -136,13 +137,19 @@ module Table = struct
         method to_uri_with_secrets = L.make_sturdy loader id
       end in
       L.load loader sr digest
-    and t = { hash; cache; load } in
+    and t = { hash; cache; load; make_sturdy = L.make_sturdy loader } in
     t
 
   let add t id cap =
     let id = hash t id in
     assert (not (Hashtbl.mem t.cache id));
     Hashtbl.add t.cache id (Manual cap)
+
+  let sturdy_ref t id =
+    object
+      method connect = resolve t id
+      method to_uri_with_secrets = t.make_sturdy id
+    end
 
   let release = function
     | Manual cap -> Core_types.dec_ref cap;

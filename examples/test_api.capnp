@@ -27,12 +27,9 @@ struct Bar {
   version @1 :Version;
 }
 
-using SturdyRef = AnyPointer;
-
 interface File {
   set @0 (data :Text) -> ();
   get @1 () -> (data :Text);
-  save @2 () -> (sr :SturdyRef);
 }
 
 interface Store {

@@ -12,3 +12,8 @@
  ((targets (rpc_schema.ml rpc_schema.mli))
   (deps (rpc_schema.capnp))
   (action  (run capnpc -o ocaml ${<}))))
+
+(rule
+ ((targets (persistent.ml persistent.mli))
+  (deps (persistent.capnp))
+  (action  (run capnpc -o ocaml ${<}))))

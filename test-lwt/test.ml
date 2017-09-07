@@ -319,7 +319,8 @@ let expect_non_exn = function
 let except = Alcotest.testable Capnp_rpc.Exception.pp (=)
 
 let test_table_restorer _switch =
-  let table = Restorer.Table.create () in
+  let make_sturdy id = Uri.make ~path:(Restorer.Id.to_string id) () in
+  let table = Restorer.Table.create make_sturdy in
   let echo_id = Restorer.Id.public "echo" in
   let registry_id = Restorer.Id.public "registry" in
   let broken_id = Restorer.Id.public "broken" in
@@ -559,7 +560,7 @@ let test_store switch =
   (* Try creating a file *)
   let file = Store.create_file store in
   Store.File.set file "Hello" >>= fun () ->
-  Store.File.save file >>= fun file_sr ->
+  Persistence.save_exn file >>= fun file_sr ->
   let file_sr = Vat.import_exn client file_sr in (* todo: get rid of this step *)
   (* Shut down server *)
   Lwt_switch.turn_off server_switch >>= fun () ->

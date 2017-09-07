@@ -20,6 +20,7 @@ See [LICENSE.md](LICENSE.md) for details.
 		* [Separate processes](#separate-processes)
 	* [Pipelining](#pipelining)
 	* [Hosting multiple sturdy refs](#hosting-multiple-sturdy-refs)
+	* [Implementing the persistence API](#implementing-the-persistence-api)
 	* [Creating and persisting sturdy refs dynamically](#creating-and-persisting-sturdy-refs-dynamically)
 	* [Summary](#summary)
 	* [Further reading](#further-reading)
@@ -718,17 +719,16 @@ For example, we can extend our example to provide sturdy refs for both the main 
 ```ocaml
 let serve config =
   Lwt_main.run begin
-    let services = Restorer.Table.create () in
+    let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+    let services = Restorer.Table.create make_sturdy in
     let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
     let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
     Restorer.Table.add services echo_id Echo.local;
     Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
     let restore = Restorer.of_table services in
-    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
-    let echo_sr = Capnp_rpc_unix.Vat.sturdy_uri vat echo_id in
-    let logger_sr = Capnp_rpc_unix.Vat.sturdy_uri vat logger_id in
-    Fmt.pr "echo service: %a@." Uri.pp_hum echo_sr;
-    Fmt.pr "logger service: %a@." Uri.pp_hum logger_sr;
+    Capnp_rpc_unix.serve config ~restore >>= fun _vat ->
+    Fmt.pr "echo service: %a@." Uri.pp_hum (make_sturdy echo_id);
+    Fmt.pr "logger service: %a@." Uri.pp_hum (make_sturdy logger_id);
     wait_forever
   end
 ```
@@ -749,6 +749,50 @@ let log_cmd =
 
 let cmds = [serve_cmd; connect_cmd; log_cmd]
 ```
+
+### Implementing the persistence API
+
+Cap'n Proto defines a standard [Persistence API][] which services can implement
+to allow clients to request their sturdy ref.
+
+On the client side, calling `Persistence.save_exn cap` will send a request to `cap`
+asking for its sturdy ref. For example, after connecting to the main echo service and
+getting a live capability to the logger, the client can request a sturdy ref like this:
+
+```ocaml
+    let callback = Echo.get_logger service in
+    Persistence.save_exn callback >>= fun uri ->
+    Fmt.pr "The server's logger's URI is %a.@." Uri.pp_hum uri;
+```
+
+If successful, the client can use this sturdy ref to connect directly to the logger in future.
+
+If you try the above, it will fail with `Unimplemented: Unknown interface 17004856819305483596UL`.
+To add support on the server side, we must tell each logger instance what its public address is
+and have it implement the persistence interface.
+The simplest way to do this is to wrap the `Callback.local` call with `Persistence.with_sturdy_ref`:
+
+```ocaml
+module Callback = struct
+  ...
+  let local sr fn =
+    let module Callback = Api.Service.Callback in
+    Persistence.with_sturdy_ref sr Callback.local @@ object
+      ...
+    end
+```
+
+Then pass the `sr` argument when creating the logger:
+
+```ocaml
+  let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
+  let logger_sr = Restorer.Table.sturdy_ref services logger_id in
+  let service_logger = Echo.service_logger logger_sr in
+  Restorer.Table.add services logger_id service_logger;
+```
+
+After restarting the server, the client should now display the logger's URI,
+which you can then use with `demo.exe log URI MSG`.
 
 ### Creating and persisting sturdy refs dynamically
 
@@ -813,7 +857,7 @@ end = struct
 
   let make_sturdy t = t.make_sturdy
 
-  let load t _sr digest =
+  let load t sr digest =
     match Store.load t.store ~digest with
     | None -> Lwt.return Restorer.unknown_service_id
     | Some saved_service ->
@@ -822,7 +866,8 @@ end = struct
       let callback msg =
         Fmt.pr "%s: %S@." label msg
       in
-      Lwt.return @@ Restorer.grant @@ Callback.local callback
+      let sr = Sturdy_ref.cast sr in
+      Lwt.return @@ Restorer.grant @@ Callback.local sr callback
 
   let save t ~digest label =
     let open Api.Builder in
@@ -859,25 +904,48 @@ let serve config =
   (* Add the fixed services *)
   let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
   let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
-  Restorer.Table.add services echo_id (Echo.local ~restore db);
-  Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
+  let logger_sr = Restorer.Table.sturdy_ref services logger_id in
+  let service_logger = Echo.service_logger logger_sr in
+  Restorer.Table.add services echo_id (Echo.local ~service_logger ~restore db);
+  Restorer.Table.add services logger_id service_logger;
   (* Run the server *)
   Lwt_main.run begin
     ...
 ```
 
-As a quick test, you can modify the `serve` function to create a new sturdy ref on startup and display it:
+Add a method to let clients create new loggers:
 
-```ocaml
-  let id = Echo.DB.save_new db ~label:"Alice" in
-  let sr = Capnp_rpc_unix.Vat_config.sturdy_uri config id in
-  Fmt.pr "New logger: %a@." Uri.pp_hum sr;
+```capnp
+interface Echo {
+  ping         @0 (msg :Text) -> (reply :Text);
+  heartbeat    @1 (msg :Text, callback :Callback) -> ();
+  getLogger    @2 () -> (callback :Callback);
+  createLogger @3 (label: Text) -> (callback :Callback);
+}
 ```
 
-Run the server once to create the logger, then remove the code and restart it.
-You should be able to use `demo.exe log URI MSG` to make the restarted server log messages with the prefix `Alice`.
+The server implementation of the method gets the label from the parameters,
+adds a saved logger to the database,
+and then "restores" the saved service to a live instance and returns it:
 
-In a real system, you'd probably want to expose a method for creating new loggers, e.g. TODO
+```ocaml
+    method create_logger_impl params release_params =
+      let open Echo.CreateLogger in
+      let label = Params.label_get params in
+      release_params ();
+      let id = DB.save_new db ~label in
+      Service.return_lwt @@ fun () ->
+      Restorer.restore restore id >|= function
+      | Error e -> Error (`Exception e)
+      | Ok logger ->
+        let response, results = Service.Response.create Results.init_pointer in
+        Results.callback_set results (Some logger);
+        Ok response
+```
+
+The client can call `createLogger` and then use `Persistence.save` to get the sturdy ref for it.
+
+Exercise: add the client-side support for `createLogger` and test it. You should find that the new loggers still work after the server is restarted.
 
 ### Summary
 
@@ -1080,3 +1148,4 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [E-Order]: http://erights.org/elib/concurrency/partial-order.html
 [E Reference Mechanics]: http://www.erights.org/elib/concurrency/refmech.html
 [pycapnp]: http://jparyani.github.io/pycapnp/
+[Persistence API]: https://github.com/capnproto/capnproto/blob/master/c%2B%2B/src/capnp/persistent.capnp

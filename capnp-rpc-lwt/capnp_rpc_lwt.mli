@@ -177,14 +177,16 @@ module Sturdy_ref : sig
   (** [reader accessor] is a field accessor for reading a sturdy ref.
       e.g. if [sr_get] is a generated field accessor for an AnyPointer field, then
       [reader Reader.Struct.sr_get] is an accessor that treats it as a SturdyRef field.
-      todo: This should really return a sturdy ref, not a URI, but that's tricky as it
-      requires attaching the vat to the message. *)
+      todo: This should really return a sturdy ref, not a URI, but that requires a change
+      to the spec to add a sturdy ref cap-descriptor table entry type. *)
 
   val builder :
     ('a StructStorage.builder_t -> Capnp.MessageSig.rw Slice.t) ->
     'a StructStorage.builder_t -> _ t -> unit
   (** [builder setter] converts a generated AnyPointer field setter [setter] to a SturdyRef
       setter. Use it to add a SturdyRef to a message with [builder Params.sr_get params sr]. *)
+
+  val cast : 'a t -> 'b t
 end
 
 module Service : sig
@@ -329,8 +331,10 @@ module Restorer : sig
     type t
     (** A restorer that keeps a hashtable mapping IDs to capabilities in memory. *)
 
-    val create : unit -> t
-    (** [create ()] is a new in-memory-only table. *)
+    val create : (Id.t -> Uri.t) -> t
+    (** [create make_sturdy] is a new in-memory-only table.
+        [make_sturdy id] converts an ID to a full URI, by adding the
+        hosting vat's address and fingerprint. *)
 
     val of_loader : (module LOADER with type t = 'loader) -> 'loader -> t
     (** [of_loader (module Loader) l] is a new caching table that uses
@@ -339,6 +343,9 @@ module Restorer : sig
     val add : t -> Id.t -> 'a Capability.t -> unit
     (** [add t id cap] adds a mapping to [t].
         It takes ownership of [cap] (it will call [Capability.dec_ref cap] on [clear]). *)
+
+    val sturdy_ref : t -> Id.t -> 'a Sturdy_ref.t
+    (** [sturdy_ref t id] is a sturdy ref that can be used to restore service [id]. *)
 
     val remove : t -> Id.t -> unit
     (** [remove t id] removes [id] from [t].
@@ -392,4 +399,36 @@ module Untyped : sig
 
   val unknown_interface : interface_id:Uint64.t -> abstract_method_t
   val unknown_method : interface_id:Uint64.t -> method_id:int -> abstract_method_t
+end
+
+(**/**)
+
+module Persistence : sig
+  class type ['a] persistent = object
+    method save : ('a Sturdy_ref.t, Capnp_rpc.Exception.t) result Lwt.t
+  end
+
+  val with_persistence :
+    ('a #persistent) ->
+    ('impl -> 'a Capability.t) ->
+    (#Untyped.generic_service as 'impl) ->
+    'a Capability.t
+  (** [with_persistence persist Service.Foo.local obj] is like [Service.Foo.local obj], but the
+      resulting service also handles the Cap'n Proto persistence protocol, using [persist]. *)
+
+  val with_sturdy_ref :
+    'a Sturdy_ref.t ->
+    ('impl -> 'a Capability.t) ->
+    (#Untyped.generic_service as 'impl) ->
+    'a Capability.t
+  (** [with_sturdy_ref sr Service.Foo.local obj] is like [Service.Foo.local obj],
+      but responds to [save] calls by returning [sr]. *)
+
+  val save : 'a Capability.t -> (Uri.t, Capnp_rpc.Error.t) result Lwt.t
+  (** [save cap] calls the persistent [save] method on [cap].
+      Note that not all capabilities can be saved.
+      todo: this should return an ['a Sturdy_ref.t]; see {!Sturdy_ref.reader}. *)
+
+  val save_exn : 'a Capability.t -> Uri.t Lwt.t
+  (** [save_exn] is a wrapper for [save] that returns a failed thread on error. *)
 end
