@@ -10,7 +10,6 @@ See [LICENSE.md](LICENSE.md) for details.
 * [Status](#status)
 * [Installing](#installing)
 * [Structure of the library](#structure-of-the-library)
-* [Conceptual model](#conceptual-model)
 * [Tutorial](#tutorial)
 	* [A basic echo service](#a-basic-echo-service)
 	* [Passing capabilities](#passing-capabilities)
@@ -32,6 +31,7 @@ See [LICENSE.md](LICENSE.md) for details.
 	* [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
 	* [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
 * [Contributing](#contributing)
+	* [Conceptual model](#conceptual-model)
 	* [Building](#building)
 	* [Testing](#testing)
 	* [Fuzzing](#fuzzing)
@@ -60,16 +60,17 @@ This library should be used with the [capnp-ocaml][] schema compiler, which gene
 
 ## Status
 
-RPC Level 1 with two-party networking is complete, with encryption and authentication using TLS.
+RPC Level 2 is complete, with encryption and authentication using TLS and support for persistence.
 
 The library has been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
 
+The default network provided supports TCP and Unix-domain sockets, both with or without TLS.
 For two-party networking, you can provide any bi-directional byte stream (satisfying the Mirage flow signature)
 to the library to create a connection.
 You can also define your own network types.
-The default network provided supports TCP and Unix-domain sockets, both with or without TLS.
 
 Level 3 support is not implemented yet, so if host Alice has connections to hosts Bob and Carol and passes an object hosted at Bob to Carol, the resulting messages between Carol and Bob will be routed via Alice.
+Until that is implemented, Carol can ask Bob for a persistent reference (sturdy ref) and then connect directly to that.
 
 
 ## Installing
@@ -80,7 +81,7 @@ To install, you will need a platform with the capnproto package available (e.g. 
 
 ## Structure of the library
 
-The code is split into three libraries:
+The code is split into three packages:
 
 - `capnp-rpc` contains the logic of the [Cap'n Proto RPC Protocol][], but does not depend on any particular serialisation.
   The tests in the `test` directory test the logic using a simple representation where messages are OCaml data-structures
@@ -92,62 +93,6 @@ The code is split into three libraries:
 - `capnp-rpc-unix` adds helper functions for parsing command-line arguments and setting up connections over Unix sockets.
 
 Users of the library will normally want to use `capnp-rpc-lwt` and, in most cases, `capnp-rpc-unix`.
-
-## Conceptual model
-
-An RPC system contains multiple communicating actors (just ordinary OCaml objects).
-An actor can hold *capabilities* to other objects.
-A capability here is just a regular OCaml object pointer.
-
-Essentially, each object provides a `call` method, which takes:
-
-- some pure-data message content (typically an array of bytes created by the Cap'n Proto serialisation), and
-- an array of pointers to other objects (providing the same API).
-
-The data part of the message says which method to invoke and provides the arguments.
-Whenever an argument needs to refer to another object, it gives the index of a pointer in the pointers array.
-
-For example, a call to a method that transfers data between two stores might look something like this:
-
-```yaml
-- Content:
-  - InterfaceID: xxx
-  - MethodID: yyy
-  - Params:
-    - Source: 0
-    - Target: 1
-- Pointers:
-  - <source>
-  - <target>
-```
-
-A call also takes a *resolver*, which it will call with the answer when it's ready.
-The answer will also contain data and pointer parts.
-
-On top of this basic model the Cap'n Proto schema compiler ([capnp-ocaml]) generates a typed API, so that application code can only generate or attempt to consume messages that match the schema.
-Application code does not need to worry about interface or method IDs, for example.
-
-This might seem like a rather clumsy system, but it has the advantage that such messages can be sent not just within a process,
-like regular OCaml method calls, but also over the network to remote objects.
-
-The network is made up of communicating "vats" of objects.
-You can think of a Unix process as a single vat.
-The vats are peers - there is no difference between a "client" and a "server" at the protocol level.
-However, a vat may choose to offer a public object, called its "bootstrap" service, and you might like to think of such vats as servers.
-
-When a connection is established between two vats, each can choose to ask for the other's bootstrap object.
-The capability they get back is a proxy object that acts like a local service but forwards all calls over the network.
-When a message is sent that contains pointers, the RPC system holds onto the pointers and makes each object available over that network connection.
-Each vat only needs to expose at most a single bootstrap object,
-since the bootstrap object can provide methods to get access to any other required services.
-
-All shared objects are scoped to the network connection, and will be released if the connection is closed for any reason.
-
-The RPC system is smart enough that if you export a local object to a remote service and it later exports the same object back to you, it will switch to sending directly to the local service (once any pipelined messages in flight have been delivered).
-
-You can also export an object that you received from a third-party, and the receiver will be able to use it.
-Ideally, the receiver should be able to establish a direct connection to the third-party, but
-this isn't yet implemented and instead the RPC system will forward messages and responses in this case.
 
 ## Tutorial
 
@@ -236,8 +181,8 @@ There's a bit of ugly boilerplate here, but it's quite simple:
   In this case there aren't any, but remember that a client using some future
   version of this protocol might pass some optional capabilities, and so you
   should always free them anyway.
+- `Service.Response.create Results.init_pointer` creates a new response message, using `Ping.Results.init_pointer` to initialise the payload contents.
 - `response` is the complete message to be sent back, and `results` is the data part of it.
-- `Service.Response.create Results.init_pointer` creates a new response message, using `Results.init_pointer` to initialise the payload contents.
 - `Service.return` returns the results immediately (like `Lwt.return`).
 
 The client implementation is similar, but uses `Api.Client` instead of `Api.Service`.
@@ -286,7 +231,7 @@ If you're building with jbuilder, here's a suitable `jbuild` file:
 
 (executable (
   (name main)
-  (libraries (capnp-rpc-lwt capnp-rpc-unix))
+  (libraries (capnp-rpc-lwt capnp-rpc-unix logs.fmt))
   (flags (:standard -w -53-55))
 ))
 
@@ -339,25 +284,28 @@ The new `heartbeat_impl` method looks like this:
       match callback with
       | None -> Service.fail "No callback parameter!"
       | Some callback ->
-        Lwt.async (fun () -> notify callback msg);
-        Service.return_empty ()
+        Service.return_lwt @@ fun () ->
+        notify callback msg
 ```
 
 Note that all parameters in Cap'n Proto are optional, so we have to check for `callback` not being set
 (data parameters such as `msg` get a default value from the schema, which is
 `""` for strings if not set explicitly).
 
+`Service.return_lwt fn` runs `fn ()` and replies to the `heartbeat` call when it finishes.
+Here, the whole of the rest of the method is the argument to `return_lwt`, which is a common pattern.
+
 `notify callback msg` just sends a few messages to `callback` in a loop, and then releases it:
 
 ```ocaml
 let notify callback msg =
   let rec loop = function
-    | 0 -> Capability.dec_ref callback; Lwt.return_unit
+    | 0 ->
+      Capability.dec_ref callback;
+      Lwt.return @@ Ok (Service.Response.create_empty ())
     | i ->
       Callback.log callback msg >>= function
-      | Error ex ->
-        Fmt.epr "Callback failed: %a@." Capnp_rpc.Error.pp ex;
-        loop 0
+      | Error _ as e -> Capability.dec_ref callback; Lwt.return e
       | Ok () ->
         Lwt_unix.sleep 1.0 >>= fun () ->
         loop (i - 1)
@@ -365,7 +313,7 @@ let notify callback msg =
   loop 3
 ```
 
-Exercise: implement `Callback.log` (hint: it's very similar to `ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
+Exercise: implement the client-side `Callback.log` function (hint: it's very similar to `ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
 
 To write the client for `Echo.heartbeat`, we take a user-provided callback object
 and put it into the request:
@@ -399,7 +347,7 @@ let run_client service =
   let callback = Echo.Callback.local callback_fn in
   Echo.heartbeat service "foo" callback >>= fun () ->
   Capability.dec_ref callback;
-  fst (Lwt.wait ())
+  Lwt.return_unit
 
 let () =
   Lwt_main.run begin
@@ -448,7 +396,7 @@ let run_client service =
   let callback = Echo.Callback.local callback_fn in
   Echo.heartbeat service "foo" callback >>= fun () ->
   Capability.dec_ref callback;
-  fst (Lwt.wait ())
+  Lwt.return_unit
 
 let secret_key = `Ephemeral
 let listen_address = `TCP ("127.0.0.1", 7000)
@@ -458,14 +406,15 @@ let start_server () =
   let service_id = Capnp_rpc_unix.Vat_config.derived_id config in
   let restore = Restorer.single service_id Echo.local in
   Capnp_rpc_unix.serve config ~restore >|= fun vat ->
-  Capnp_rpc_unix.Vat.sturdy_ref vat service_id
+  Capnp_rpc_unix.Vat.sturdy_uri vat service_id
 
 let () =
   Lwt_main.run begin
-    start_server () >>= fun sr ->
+    start_server () >>= fun uri ->
+    Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
     let client_vat = Capnp_rpc_unix.client_only_vat () in
-    Fmt.pr "Connecting to echo service at: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
-    Capnp_rpc_unix.Vat.connect_exn client_vat sr >>= fun proxy_to_service ->
+    let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
+    Sturdy_ref.connect_exn sr >>= fun proxy_to_service ->
     run_client proxy_to_service
   end
 ```
@@ -530,12 +479,12 @@ In `start_server`:
 - `Capnp_rpc_unix.serve config ~restore` creates the service vat using the
   previous configuration items and starts it listening for incoming connections.
 
-- `Capnp_rpc_unix.Vat.sturdy_ref vat service_id` returns a sturdy ref ("capnp://" URL) for
+- `Capnp_rpc_unix.Vat.sturdy_uri vat service_id` returns a "capnp://" URI for
   the given service within the vat.
 
 #### The client side
 
-After starting the server and getting the sturdy ref, we create a client vat and connect to the sturdy ref.
+After starting the server and getting the sturdy URI, we create a client vat and connect to the sturdy ref.
 The result, `proxy_to_service`, is a proxy to the remote service via the network
 that can be used in exactly the same way as the direct reference we used before.
 
@@ -555,33 +504,36 @@ let () =
 let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
 
-let wait_forever = fst @@ Lwt.wait ()
+let run_client service =
+  let callback = Echo.Callback.local callback_fn in
+  Echo.heartbeat service "foo" callback >>= fun () ->
+  Capability.dec_ref callback;
+  Lwt.return_unit
 
 let serve config =
   Lwt_main.run begin
     let service_id = Capnp_rpc_unix.Vat_config.derived_id config in
     let restore = Restorer.single service_id Echo.local in
     Capnp_rpc_unix.serve config ~restore >>= fun vat ->
-    let sr = Capnp_rpc_unix.Vat.sturdy_ref vat service_id in
-    Fmt.pr "echo service running at: %a@." Capnp_rpc_unix.Sturdy_ref.pp_with_secrets sr;
-    wait_forever
+    let uri = Capnp_rpc_unix.Vat.sturdy_uri vat service_id in
+    Fmt.pr "echo service running at: %a@." Uri.pp_hum uri;
+    fst @@ Lwt.wait ()  (* Wait forever *)
   end
 
-let connect sr =
+let connect uri =
   Lwt_main.run begin
+    Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
     let client_vat = Capnp_rpc_unix.client_only_vat () in
-    Capnp_rpc_unix.Vat.connect_exn client_vat sr >>= fun service ->
-    let callback = Echo.Callback.local callback_fn in
-    Echo.heartbeat service "foo" callback >>= fun () ->
-    Capability.dec_ref callback;
-    wait_forever
+    let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
+    Sturdy_ref.connect_exn sr >>= fun proxy_to_service ->
+    run_client proxy_to_service
   end
 
 open Cmdliner
 
 let connect_addr =
   let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server (capnp://...)" in
-  Arg.(required @@ pos 0 (some (Capnp_rpc_unix.sturdy_ref ())) None i)
+  Arg.(required @@ pos 0 (some Capnp_rpc_unix.sturdy_uri) None i)
 
 let serve_cmd =
   Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
@@ -589,8 +541,8 @@ let serve_cmd =
   Term.info "serve" ~doc
 
 let connect_cmd =
-  Term.(const connect $ connect_addr),
   let doc = "run the client" in
+  Term.(const connect $ connect_addr),
   Term.info "connect" ~doc
 
 let default_cmd =
@@ -618,6 +570,7 @@ Then run the client, using the URL printed by the server:
 
 ```
 $ ./_build/default/main.exe connect capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
+Connecting to echo service at: capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
 Callback got "foo"
 Callback got "foo"
 Callback got "foo"
@@ -672,6 +625,7 @@ Doing it this way allows `call_for_caps` to release any unused capabilities in t
 We can test it as follows:
 
 ```ocaml
+let run_client service =
   let logger = Echo.get_logger service in
   Echo.Callback.log logger "Message from client" >|= function
   | Ok () -> ()
@@ -694,10 +648,11 @@ On the wire, the messages are sent together, and look like:
 Now, let's say we'd like the server to send heartbeats to itself:
 
 ```ocaml
-    let callback = Echo.get_logger service in
-    Echo.heartbeat service "foo" callback >>= fun () ->
-    Capability.dec_ref callback;
-    wait_forever
+let run_client service =
+  let callback = Echo.get_logger service in
+  Echo.heartbeat service "foo" callback >>= fun () ->
+  Capability.dec_ref callback;
+  Lwt.return_unit
 ```
 
 Here, we ask the server for its logger and then (without waiting for the reply), tell it to send heartbeat messages to the promised logger (you should see the messages appear in the server process's output).
@@ -706,6 +661,9 @@ Previously, when we exported our local `callback` object, it arrived at the serv
 But when we send the (promise of the) server's own logger back to it, the RPC system detects this and "shortens" the path;
 the capability reference that the `heartbeat` handler gets is a direct reference to its own logger, which
 it can call without using the network.
+
+These optimisations are very important because they allow us to build APIs like this with small functions that can be composed easily.
+Without pipelining, we would be tempted to clutter the protocol with specialised methods like `heartbeatToYourself` to avoid the extra round-trips most RPC protocols would otherwise require.
 
 ### Hosting multiple sturdy refs
 
@@ -718,24 +676,25 @@ For example, we can extend our example to provide sturdy refs for both the main 
 
 ```ocaml
 let serve config =
+  let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+  let services = Restorer.Table.create make_sturdy in
+  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
+  let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
+  Restorer.Table.add services echo_id Echo.local;
+  Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
+  let restore = Restorer.of_table services in
   Lwt_main.run begin
-    let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
-    let services = Restorer.Table.create make_sturdy in
-    let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
-    let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
-    Restorer.Table.add services echo_id Echo.local;
-    Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
-    let restore = Restorer.of_table services in
     Capnp_rpc_unix.serve config ~restore >>= fun _vat ->
     Fmt.pr "echo service: %a@." Uri.pp_hum (make_sturdy echo_id);
     Fmt.pr "logger service: %a@." Uri.pp_hum (make_sturdy logger_id);
-    wait_forever
+    fst @@ Lwt.wait ()  (* Wait forever *)
   end
 ```
 
 Note: the value of the `name` argument to `derived_id` doesn't matter - it just has to be unique so we generate a unique service ID. If not present, the default is `main`.
 
-Exercise: add a `log` command and use it to test the log service. Hint: parse the command-line with:
+Exercise: add a `log` command and use it to test the log service URI printed by the above code.
+Hint: parse the command-line with:
 
 ```ocaml
 let msg =
@@ -743,8 +702,8 @@ let msg =
   Arg.(required @@ pos 1 (some string) None i)
 
 let log_cmd =
-  Term.(const log_client $ connect_addr $ msg),
   let doc = "log a message" in
+  Term.(const log_client $ connect_addr $ msg),
   Term.info "log" ~doc
 
 let cmds = [serve_cmd; connect_cmd; log_cmd]
@@ -760,9 +719,11 @@ asking for its sturdy ref. For example, after connecting to the main echo servic
 getting a live capability to the logger, the client can request a sturdy ref like this:
 
 ```ocaml
-    let callback = Echo.get_logger service in
-    Persistence.save_exn callback >>= fun uri ->
-    Fmt.pr "The server's logger's URI is %a.@." Uri.pp_hum uri;
+let run_client service =
+  let callback = Echo.get_logger service in
+  Persistence.save_exn callback >>= fun uri ->
+  Fmt.pr "The server's logger's URI is %a.@." Uri.pp_hum uri;
+  Lwt.return_unit
 ```
 
 If successful, the client can use this sturdy ref to connect directly to the logger in future.
@@ -782,12 +743,13 @@ module Callback = struct
     end
 ```
 
-Then pass the `sr` argument when creating the logger:
+Then pass the `sr` argument when creating the logger (you'll need to make it an argument to `Echo.local` too):
 
 ```ocaml
   let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
   let logger_sr = Restorer.Table.sturdy_ref services logger_id in
-  let service_logger = Echo.service_logger logger_sr in
+  let service_logger = Echo.Callback.local logger_sr @@ Fmt.pr "Service log: %S@." in
+  Restorer.Table.add services echo_id (Echo.local ~service_logger);
   Restorer.Table.add services logger_id service_logger;
 ```
 
@@ -813,6 +775,20 @@ You can still use `Table.add` to register additional services, as before.
 
 Let's extend the ping service to support multiple callbacks with different labels.
 Then we can give each user a private sturdy ref to their own logger callback.
+Here's the interface for a `DB` module that loads and saves loggers:
+
+```ocaml
+module DB : sig
+  include Restorer.LOADER
+
+  val create : make_sturdy:(Restorer.Id.t -> Uri.t) -> string -> t
+  (** [create ~make_sturdy dir] is a database that persists services in [dir]. *)
+
+  val save_new : t -> label:string -> Restorer.Id.t
+  (** [save_new t ~label] adds a new logger with label [label] to the store and
+      returns its newly-generated ID. *)
+end
+```
 
 There is a `Capnp_rpc_unix.File_store` module that can persist Cap'n Proto structs to disk.
 First, define a suitable Cap'n Proto data structure to hold the information we need to store.
@@ -830,22 +806,10 @@ struct SavedService {
 
 Using Cap'n Proto for this makes it easy to add extra fields or service types later if needed
 (`SavedService.logger` can be upgraded to a union if we decide to add more service types later).
-Here's a `DB` module that loads and saves loggers using `File_store`:
+We can use this with `File_store` to implement `DB`:
 
 ```ocaml
-module DB : sig
-  include Restorer.LOADER
-
-  val create :
-    make_sturdy:(Restorer.Id.t -> Uri.t) ->
-    string ->
-    t
-  (** [create ~make_sturdy dir] is a database that persists services in [dir]. *)
-
-  val save_new : t -> label:string -> Restorer.Id.t
-  (** [save_new t ~label] adds a new logger with label [label] to the store and
-      returns its newly-generated ID. *)
-end = struct
+struct
   module Store = Capnp_rpc_unix.File_store
 
   type t = {
@@ -888,7 +852,7 @@ end = struct
 end
 ```
 
-Note: to avoid possible timing attacks, the load function is called with the digest of the service ID rather than with the ID itself. This means that even if the load function takes a different amount of time to respond depending on how much of a valid ID the client guessed, the client will only learn the digest (which is of no use to them), not the ID.
+Note: to avoid possible timing attacks, the `load` function is called with the digest of the service ID rather than with the ID itself. This means that even if the load function takes a different amount of time to respond depending on how much of a valid ID the client guessed, the client will only learn the digest (which is of no use to them), not the ID.
 The file store uses the digest as the filename, which avoids needing to check the ID the client gives for special characters, and also means that someone getting a copy of the store (e.g. an old backup) doesn't get the IDs (which would allow them to access the real service).
 
 The main `serve` function then uses `Echo.DB` to create the table:
@@ -906,7 +870,7 @@ let serve config =
   let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
   let logger_sr = Restorer.Table.sturdy_ref services logger_id in
   let service_logger = Echo.service_logger logger_sr in
-  Restorer.Table.add services echo_id (Echo.local ~service_logger ~restore db);
+  Restorer.Table.add services echo_id (Echo.local ~service_logger);
   Restorer.Table.add services logger_id service_logger;
   (* Run the server *)
   Lwt_main.run begin
@@ -940,12 +904,30 @@ and then "restores" the saved service to a live instance and returns it:
       | Ok logger ->
         let response, results = Service.Response.create Results.init_pointer in
         Results.callback_set results (Some logger);
+        Capability.dec_ref logger;
         Ok response
 ```
 
-The client can call `createLogger` and then use `Persistence.save` to get the sturdy ref for it.
+You'll need to pass `db` and `restore` to `Echo.local` too to make this work.
 
-Exercise: add the client-side support for `createLogger` and test it. You should find that the new loggers still work after the server is restarted.
+The client can call `createLogger` and then use `Persistence.save` to get the sturdy ref for it:
+
+```ocaml
+let run_client service =
+  let my_logger = Echo.create_logger service "Alice" in
+  let uri = Persistence.save_exn my_logger in
+  Echo.Callback.log_exn my_logger "Pipelined call to logger!" >>= fun () ->
+  uri >>= fun uri ->    (* Wait for results from [save] *)
+  Fmt.pr "The new logger's URI is %a.@." Uri.pp_hum uri;
+  Lwt.return_unit
+```
+
+Notice the pipelining here.
+The client sends three messages in quick succession: create the logger, get its sturdy ref, and log a message to it.
+The client receives the sturdy ref and prints it in a total of one network round-trip.
+
+Exercise: Implement `Echo.create_logger`. You should find that the new loggers still work after the server is restarted.
+
 
 ### Summary
 
@@ -984,7 +966,7 @@ promptly (but if the TCP connection is closed, all references on it will be free
 ### Can I get debug output?
 
 First, always make sure logging is enabled so you can at least see warnings.
-The `main.ml` examples in this file enable some basic logging.
+The `main.ml` examples in this document enable some basic logging.
 
 If you turn up the log level to `Info` (or even `Debug`), you'll see lots of information about what is going on.
 Turning on colour in the logs will help too - see `test-bin/calc.ml` for an example.
@@ -1072,6 +1054,64 @@ Note that calling `wait_forever` prevents further use of the session, however.
 
 ## Contributing
 
+### Conceptual model
+
+An RPC system contains multiple communicating actors (just ordinary OCaml objects).
+An actor can hold *capabilities* to other objects.
+A capability here is just a regular OCaml object pointer.
+
+Essentially, each object provides a `call` method, which takes:
+
+- some pure-data message content (typically an array of bytes created by the Cap'n Proto serialisation), and
+- an array of pointers to other objects (providing the same API).
+
+The data part of the message says which method to invoke and provides the arguments.
+Whenever an argument needs to refer to another object, it gives the index of a pointer in the pointers array.
+
+For example, a call to a method that transfers data between two stores might look something like this:
+
+```yaml
+- Content:
+  - InterfaceID: xxx
+  - MethodID: yyy
+  - Params:
+    - Source: 0
+    - Target: 1
+- Pointers:
+  - <source>
+  - <target>
+```
+
+A call also takes a *resolver*, which it will call with the answer when it's ready.
+The answer will also contain data and pointer parts.
+
+On top of this basic model the Cap'n Proto schema compiler ([capnp-ocaml]) generates a typed API, so that application code can only generate or attempt to consume messages that match the schema.
+Application code does not need to worry about interface or method IDs, for example.
+
+This might seem like a rather clumsy system, but it has the advantage that such messages can be sent not just within a process,
+like regular OCaml method calls, but also over the network to remote objects.
+
+The network is made up of communicating "vats" of objects.
+You can think of a Unix process as a single vat.
+The vats are peers - there is no difference between a "client" and a "server" at the protocol level.
+However, some vats may not be listening for incoming network connections, and you might like to think of such vats  as clients.
+
+When a connection is established between two vats, each can choose to ask the other for access to some service.
+Services are usually identified by a long random secret (a "Swiss number") so that only authorised clients can get access to them.
+The capability they get back is a proxy object that acts like a local service but forwards all calls over the network.
+When a message is sent that contains pointers, the RPC system holds onto the pointers and makes each object available over that network connection.
+Each vat only needs to expose at most a single bootstrap object,
+since the bootstrap object can provide methods to get access to any other required services.
+
+All shared objects are scoped to the network connection, and will be released if the connection is closed for any reason.
+
+The RPC system is smart enough that if you export a local object to a remote service and it later exports the same object back to you, it will switch to sending directly to the local service (once any pipelined messages in flight have been delivered).
+
+You can also export an object that you received from a third-party, and the receiver will be able to use it.
+Ideally, the receiver should be able to establish a direct connection to the third-party, but
+this isn't yet implemented and instead the RPC system will forward messages and responses in this case.
+
+
 ### Building
 
 To build:
@@ -1111,7 +1151,7 @@ In another terminal, run the client and connect to the address displayed by the 
 ./_build/default/test-bin/calc.bc connect capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket
 ```
 
-You can also use `--secret-key-type=none` if you prefer to run without encryption
+You can also use `--disable-tls` if you prefer to run without encryption
 (e.g. for interoperability with another Cap'n Proto implementation that doesn't support TLS).
 In that case, the client URL would be `capnp://insecure@/tmp/calc.socket`.
 

@@ -10,7 +10,7 @@ build: ["jbuilder" "build" "-p" name "-j" jobs]
 build-test: ["jbuilder" "runtest" "-p" name]
 
 depends: [
-  "capnp-rpc-lwt"
+  "capnp-rpc-lwt" { >= "0.2" }
   "mirage-flow-unix"
   "cmdliner"
   "cstruct-lwt"
@@ -19,4 +19,4 @@ depends: [
   "logs"
   "jbuilder" {build & >= "1.0+beta10" }
 ]
-available: [ocaml-version >= "4.02.0"]
+available: [ocaml-version >= "4.03.0"]

@@ -1,7 +1,3 @@
-(** A store of persistent files.
-    The user can create a new file, get and set its contents, and get a sturdy ref to it.
-    See [test_store] for an example using this. *)
-
 open Lwt.Infix
 open Capnp_rpc_lwt
 
@@ -49,6 +45,8 @@ end = struct
 end
 
 module File = struct
+  type t = Api.Client.File.t Capability.t
+
   let set t data =
     let open Api.Client.File.Set in
     let request, params = Capability.Request.create Params.init_pointer in
@@ -102,6 +100,8 @@ module File = struct
   let table ~make_sturdy db =
     Restorer.Table.of_loader (module Loader) {Loader.db; make_sturdy}
 end
+
+type t = Api.Client.Store.t Capability.t
 
 let create_file t =
   let open Api.Client.Store.CreateFile in

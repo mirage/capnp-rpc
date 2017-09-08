@@ -19,4 +19,4 @@ depends: [
   "alcotest" {test}
   "afl-persistent" {test}
 ]
-available: [ocaml-version >= "4.02.0"]
+available: [ocaml-version >= "4.03.0"]
