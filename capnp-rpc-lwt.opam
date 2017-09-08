@@ -11,7 +11,7 @@ build-test: ["jbuilder" "runtest" "-p" name]
 
 depends: [
   "capnp" { >= "3.0.0" }
-  "capnp-rpc"
+  "capnp-rpc" { >= "0.2" }
   "lwt"
   "astring"
   "fmt"
@@ -26,4 +26,4 @@ depends: [
   "jbuilder" {build & >= "1.0+beta10" }
   "alcotest" {test}
 ]
-available: [ocaml-version >= "4.02.0"]
+available: [ocaml-version >= "4.03.0"]
