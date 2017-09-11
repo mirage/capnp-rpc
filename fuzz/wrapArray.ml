@@ -45,8 +45,16 @@ let dump ~compare pp f t =
   Fmt.list ~sep:Fmt.cut pp f items
 let dump ~compare pp f = Fmt.fmt "[@[<v0>%a@]]" f (dump ~compare pp)
 
+let get t i = t.items.(i)
+
+(* Note: does NOT free the item *)
+let remove t i = t.items.(i) <- None
+
+let choose_i t =
+  Choose.int (Array.length t.items)
+
 let pop t =
-  let i = Choose.int (Array.length t.items) in
-  let v = t.items.(i) in
+  let i = choose_i t in
+  let v = get t i in
   t.items.(i) <- None;
   v

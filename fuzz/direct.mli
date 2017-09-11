@@ -24,6 +24,13 @@ val make_struct : unit -> struct_ref
 val cap : struct_ref -> int -> cap
 val return : struct_ref -> cap RO_array.t -> unit
 
+val return_tail : struct_ref -> src:struct_ref -> unit
+(** [return_tail x ~src] means that promise [x] has resolved to [src].
+    If [x] is cancelled (now or later), [src] will be cancelled too. *)
+
+val mark_cancelled : struct_ref -> unit
+val on_cancel : struct_ref -> (unit -> unit) -> unit
+
 val compare_cap : cap -> cap -> int
 val compare_sr : struct_ref -> struct_ref -> int
 

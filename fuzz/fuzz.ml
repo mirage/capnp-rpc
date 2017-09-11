@@ -111,8 +111,7 @@ module Msg = struct
     let cap_index _ i = Some i
 
     let mark_cancelled {contents; _} =
-      if contents.seq < contents.counters.next_expected then ()       (* Already delivered *)
-      else contents.counters.cancelled <- IntSet.add contents.seq contents.counters.cancelled
+      Direct.mark_cancelled contents.answer
 
     let with_attachments attachments x = {x with attachments}
     let attachments x = x.attachments
@@ -120,6 +119,12 @@ module Msg = struct
     let v ~target ~sender ~sending_step ~counters ~seq ~answer ~arg_ids =
       let contents = { target; sender; sending_step;
                        counters; seq; answer; arg_ids } in
+      Direct.on_cancel answer (fun () ->
+          if seq < counters.next_expected then ()       (* Already delivered *)
+          else (
+            counters.cancelled <- IntSet.add seq counters.cancelled;
+          )
+        );
       { contents; attachments = Capnp_rpc.S.No_attachments }
   end
 
@@ -427,29 +432,65 @@ module Vat = struct
       counters.next_to_send <- succ counters.next_to_send;
       cap#call resolver msg
 
+  let answer_type state =
+    let x = Choose.int 5 in
+    if x = 4 then (
+      let i = WrapArray.choose_i state.structs in
+      match WrapArray.get state.structs i with
+      | None -> `Return_error
+      | Some s -> `Return_struct (lazy (WrapArray.remove state.structs i; s))
+    ) else if x = 3 then `Return_error
+    else (
+      let n_args = x in
+      let args, arg_refs = n_caps state (n_args) in
+      `Return_results (args, arg_refs)
+    )
+
   (* Reply to a random question. *)
   let do_answer state () =
-    (* Choose args before popping question, in case we run out of random data in the middle. *)
-    let n_args = Choose.int 3 in
-    let args, arg_refs = n_caps state (n_args) in
+    (* Choose args before popping question, in case we run out of random data in the middle.
+       In that case, we need to leave the question around so it can be cleaned up. *)
+    let reply = answer_type state in
     match WrapArray.pop state.answers_needed with
     | None -> ()
     | Some (answer, answer_id, answer_var) ->
-      let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
-      RO_array.iter Core_types.inc_ref args;
-      Logs.info (fun f -> f ~tags:(tags state)
-                    "Return %a (%a)" (RO_array.pp Core_types.pp) args Direct.pp_struct answer_id);
-      Direct.return answer_id (RO_array.of_list arg_ids);
-      code (fun f ->
-          let pp_inc_var f x = Fmt.pf f "with_inc_ref %a" pp_var x in
-          Fmt.pf f "resolve_ok %a %S %a;"
-            pp_resolver answer_var
-            "reply"
-            (Fmt.Dump.list pp_inc_var) arg_refs
-        );
-      let reply = Msg.Response.v "reply" |> Core_types.Response_payload.with_caps args in
-      Core_types.resolve_ok answer reply
-      (* TODO: reply with another promise or with an error *)
+      match reply with
+      | `Return_struct (lazy s) ->
+        Logs.info (fun f -> f ~tags:(tags state)
+                      "Return struct %a (%a)" Struct_info.dump s Direct.pp_struct answer_id);
+        Direct.return_tail answer_id ~src:(s.Struct_info.direct);
+        code (fun f ->
+            Fmt.pf f "%a#resolve %a;"
+              pp_resolver answer_var
+              pp_struct s.Struct_info.var
+          );
+        answer#resolve s.Struct_info.sr
+      | `Return_error ->
+        Logs.info (fun f -> f ~tags:(tags state)
+                      "Return error (%a)" Direct.pp_struct answer_id);
+        Direct.return answer_id RO_array.empty;
+        let msg = "(simulated-failure)" in
+        code (fun f ->
+            Fmt.pf f "resolve_exn %a (Capnp_rpc.Exception.v %S);"
+              pp_resolver answer_var
+              msg
+          );
+        Core_types.resolve_exn answer (Capnp_rpc.Exception.v msg)
+      | `Return_results (args, arg_refs) ->
+        let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
+        RO_array.iter Core_types.inc_ref args;
+        Logs.info (fun f -> f ~tags:(tags state)
+                      "Return %a (%a)" (RO_array.pp Core_types.pp) args Direct.pp_struct answer_id);
+        Direct.return answer_id (RO_array.of_list arg_ids);
+        code (fun f ->
+            let pp_inc_var f x = Fmt.pf f "with_inc_ref %a" pp_var x in
+            Fmt.pf f "resolve_ok %a %S %a;"
+              pp_resolver answer_var
+              "reply"
+              (Fmt.Dump.list pp_inc_var) arg_refs
+          );
+        let reply = Msg.Response.v "reply" |> Core_types.Response_payload.with_caps args in
+        Core_types.resolve_ok answer reply
 
   let test_service ~target:self_id vat =
     object (self : test_service)
