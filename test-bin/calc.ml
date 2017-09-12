@@ -31,7 +31,7 @@ let reporter =
 
 let serve vat_config =
   Lwt_main.run begin
-    let service_id = Capnp_rpc_lwt.Restorer.Id.public "calculator" in
+    let service_id = Capnp_rpc_lwt.Restorer.Id.public "" in
     let restore = Capnp_rpc_lwt.Restorer.single service_id Examples.Calc.local in
     Capnp_rpc_unix.serve vat_config ~restore >>= fun vat ->
     let sr = Vat.sturdy_uri vat service_id in
