@@ -563,7 +563,10 @@ let test_store switch =
   Persistence.save_exn file >>= fun file_sr ->
   let file_sr = Vat.import_exn client file_sr in (* todo: get rid of this step *)
   (* Shut down server *)
-  Lwt_switch.turn_off server_switch >>= fun () ->
+  Lwt.async (fun () -> Lwt_switch.turn_off server_switch);
+  let broken, set_broken = Lwt.wait () in
+  Capability.when_broken (Lwt.wakeup set_broken) file;
+  broken >>= fun _ex ->
   assert (Capability.problem file <> None);
   (* Restart server *)
   start_server ~switch () >>= fun _server ->

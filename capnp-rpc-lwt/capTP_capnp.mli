@@ -19,6 +19,9 @@ module Make (N : S.NETWORK) : sig
   val disconnect : t -> Capnp_rpc.Exception.t -> unit Lwt.t
   (** [disconnect t reason] releases all resources used by the connection. *)
 
+  val disconnecting : t -> bool
+  (** [disconnecting t] the connection is shutting down (or has shut down). *)
+
   val dump : t Fmt.t
   (** [dump] dumps the state of the connection, for debugging. *)
 end
