@@ -17,6 +17,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     address : Network.Address.t option;
     restore : Restorer.t;
     tags : Logs.Tag.set;
+    connection_removed : unit Lwt_condition.t;   (* Fires when a connection is removed *)
     mutable connecting : connection_attempt ID_map.t; (* Out-going connections being attempted. *)
     mutable connections : CapTP.t ID_map.t;      (* Accepted connections *)
     mutable anon_connections : CapTP.t list;     (* Connections not using TLS. *)
@@ -29,6 +30,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
       address;
       restore;
       tags;
+      connection_removed = Lwt_condition.create ();
       connecting = ID_map.empty;
       connections = ID_map.empty;
       anon_connections = [];
@@ -54,7 +56,8 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
         | Some _        (* Already replaced by a new one? *)
         | None -> ()
         end;
-        CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off")
+        CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off") >|= fun () ->
+        Lwt_condition.broadcast t.connection_removed ()
       );
     conn
 
@@ -66,7 +69,8 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
       t.anon_connections <- conn :: t.anon_connections;
       Lwt_switch.add_hook (Some switch) (fun () ->
           t.anon_connections <- List.filter ((!=) conn) t.anon_connections;
-          CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off")
+          CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off") >|= fun () ->
+          Lwt_condition.broadcast t.connection_removed ()
         );
       Lwt.return conn
     ) else match ID_map.find peer_id t.connections with
@@ -154,11 +158,14 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     | Ok conn -> Ok (CapTP.bootstrap conn service)
     | Error _  as e -> e
 
-  let connect_auth t remote_id addr ~service =
+  let rec connect_auth t remote_id addr ~service =
     let my_id = Auth.Secret_key.digest ~hash (Lazy.force t.secret_key) in
     if Auth.Digest.equal remote_id my_id then
       Restorer.restore t.restore service
     else match ID_map.find remote_id t.connections with
+      | Some conn when CapTP.disconnecting conn ->
+        Lwt_condition.wait t.connection_removed >>= fun () ->
+        connect_auth t remote_id addr ~service
       | Some conn ->
         (* Already connected; use that. *)
         Lwt.return @@ Ok (CapTP.bootstrap conn service)

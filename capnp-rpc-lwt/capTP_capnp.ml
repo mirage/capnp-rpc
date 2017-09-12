@@ -89,6 +89,7 @@ module Make (Network : S.NETWORK) = struct
               f ~tags "<- %a" (Endpoint_types.In.pp_recv pp_msg) msg);
           begin match msg with
             | `Abort _ ->
+              t.disconnecting <- true;
               Conn.handle_msg t.conn msg;
               Endpoint.disconnect t.endpoint >>= fun () ->
               Lwt.return `Aborted
@@ -118,6 +119,8 @@ module Make (Network : S.NETWORK) = struct
     ) else (
       Lwt.return_unit
     )
+
+  let disconnecting t = t.disconnecting
 
   let connect ~restore ?(tags=Logs.Tag.empty) endpoint =
     let xmit_queue = Queue.create () in
