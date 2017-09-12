@@ -1211,7 +1211,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
                       Log.warn (fun f -> f "@[<v2>Reference GC'd with %a!@,%t@]"
                                    RC.pp x.rc self#pp);
                       x.rc <- RC.leaked;
-                      self#resolve released
+                      state <- Set released; (* Don't call resolve; rc is now invalid *)
+                      Queue.iter (fun f -> f released) x.on_set;
+                      Lazy.force release
                     )
                   );
               | Set _ -> ()
