@@ -126,7 +126,7 @@ let pp_result_lwt f x =
 let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t =
   let open Expr in function
   | Float f -> Value.local f
-  | Prev v -> v
+  | Prev v -> Capability.inc_ref v; v
   | Param p -> Value.local args.(p)
   | Call (f, params) ->
     let params = params |> Lwt_list.map_p (fun p ->

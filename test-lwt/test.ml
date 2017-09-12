@@ -211,6 +211,7 @@ let float = Alcotest.testable Fmt.float (=)
 
 let test_calculator switch =
   let open Calc in
+  Capability.inc_ref Calc.local;
   make_vats ~switch ~service:Calc.local () >>= fun cs ->
   get_bootstrap cs >>= fun c ->
   Calc.evaluate c (Float 1.) |> Value.final_read >|= Alcotest.check float "Simple calc" 1. >>= fun () ->
@@ -222,6 +223,29 @@ let test_calculator switch =
   let expr = Expr.(Call (remote_add, [Float 1.; Float 2.])) in
   Calc.evaluate c expr |> Value.final_read >|= Alcotest.check float "Complex with remote fn" 3. >>= fun () ->
   Capability.dec_ref remote_add;
+  Capability.dec_ref c;
+  Lwt.return ()
+
+let test_calculator2 switch =
+  let open Calc in
+  Capability.inc_ref Calc.local;
+  make_vats ~switch ~service:Calc.local () >>= fun cs ->
+  get_bootstrap cs >>= fun c ->
+  let remote_add = Calc.getOperator c `Add in
+  let remote_mul = Calc.getOperator c `Multiply in
+  let expr = Expr.(Call (remote_mul, [Float 4.; Float 6.])) in
+  let result = Calc.evaluate c expr in
+  let expr = Expr.(Call (remote_add, [Prev result; Float 3.])) in
+  let add3 = Calc.evaluate c expr |> Value.final_read in
+  let expr = Expr.(Call (remote_add, [Prev result; Float 5.])) in
+  let add5 = Calc.evaluate c expr |> Value.final_read in
+  add3 >>= fun add3 ->
+  add5 >>= fun add5 ->
+  Alcotest.check float "First" 27.0 add3;
+  Alcotest.check float "Second" 29.0 add5;
+  Capability.dec_ref result;
+  Capability.dec_ref remote_add;
+  Capability.dec_ref remote_mul;
   Capability.dec_ref c;
   Lwt.return ()
 
@@ -588,6 +612,7 @@ let rpc_tests = [
   "Resolve",    `Quick, run_lwt test_resolve;
   "Registry",   `Quick, run_lwt test_registry;
   "Calculator", `Quick, run_lwt test_calculator;
+  "Calculator 2", `Quick, run_lwt test_calculator2;
   "Cancel",     `Quick, run_lwt test_cancel;
   "Indexing",   `Quick, run_lwt test_indexing;
   "Options",    `Quick, test_options;
