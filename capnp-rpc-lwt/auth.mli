@@ -67,8 +67,13 @@ module Secret_key : sig
   val to_pem_data : t -> string
   (** [to_pem_data t] returns [t] as a PEM-encoded private key. *)
 
-  val certificates : t -> Tls.Config.own_cert
-  (** [certificates t] is the TLS certificate chain to use for a vat with secret key [t]. *)
+  val tls_client_config : t -> authenticator:X509.Authenticator.a -> Tls.Config.client
+  (** [tls_client_config t ~authenticator] is the TLS client configuration to
+      use for a vat with secret key [t], attempting to connect to a vat that
+      can be authenticated with [authenticator]. *)
+
+  val tls_server_config : t -> Tls.Config.server
+  (** [tls_server_config t] is the TLS server configuration to use for a vat with secret key [t]. *)
 
   val pp_fingerprint : hash -> t Fmt.t
   (** [pp_fingerprint hash] formats the hash of [t]'s public key. *)
