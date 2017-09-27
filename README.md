@@ -374,7 +374,7 @@ Note also a design choice here in the API: we could have made the `Echo.heartbea
 The advantage to doing it this way is that `main.ml` may one day want to pass a remote callback, as we'll see later.
 
 This still isn't very exciting, because we just stored an OCaml object pointer in a message and then pulled it out again.
-However, we can use the same code with the echo client and service in separate processes, commmunicating over the network...
+However, we can use the same code with the echo client and service in separate processes, communicating over the network...
 
 ### Networking
 
@@ -579,7 +579,7 @@ Callback got "foo"
 
 ### Pipelining
 
-Let's say the server also offers a logging service, which the client can get from the bootstrap service:
+Let's say the server also offers a logging service, which the client can get from the main echo service:
 
 ```capnp
 interface Echo {

@@ -94,11 +94,15 @@ module Secret_key = struct
   type t = {
     priv : Nocrypto.Rsa.priv;
     certificates : Tls.Config.own_cert;
+    tls_server_config : Tls.Config.server;
   }
 
   let equal a b = a.priv = b.priv
 
-  let certificates t = t.certificates
+  let tls_server_config t = t.tls_server_config
+
+  let tls_client_config t ~authenticator =
+    Tls.Config.client ~certificates:t.certificates ~authenticator ()
 
   let digest ?(hash=default_hash) t =
     let nc_hash = (hash :> Nocrypto.Hash.hash) in
@@ -128,7 +132,13 @@ module Secret_key = struct
   let of_priv priv =
     let cert = x509 priv in
     let certificates = `Single ([cert], priv) in
-    { priv; certificates }
+    (* We require a client cert to get the client's public key, although
+       we allow any client to connect. We just want to know they key so that
+       if we later need to resolve a sturdy ref hosted at the client, we can
+       reuse this connection. *)
+    let authenticator = X509.Authenticator.null in
+    let tls_server_config = Tls.Config.server ~certificates ~authenticator () in
+    { priv; certificates; tls_server_config }
 
   let generate () =
     Log.info (fun f -> f "Generating new private key...");

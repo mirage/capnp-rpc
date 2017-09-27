@@ -32,30 +32,24 @@ module Make (Underlying : Mirage_flow_lwt.S) = struct
     | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
     | Some key ->
       Log.info (fun f -> f "Doing TLS server-side handshake...");
-      let certificates = Secret_key.certificates key in
-      let client_cert = ref None in
-      let authenticator ?host:_ = function
-        | [] -> `Fail `EmptyCertificateChain
-        | client :: _ ->  (* First certificate is the client's own *)
-          client_cert := Some client;
-          `Ok None
-      in
-      let tls_config = Tls.Config.server ~certificates ~authenticator () in
+      let tls_config = Secret_key.tls_server_config key in
       Flow.server_of_flow tls_config flow >|= function
       | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
       | Ok flow ->
-        match !client_cert with
-        | None -> failwith "No client certificate after auth!"
-        | Some client_cert ->
-          let peer_id = Digest.of_certificate client_cert in
-          Ok (Endpoint.of_flow ~switch ~peer_id (module Flow) flow)
+        match Flow.epoch flow with
+        | Error () -> failwith "Unknown error getting TLS epoch data"
+        | Ok data ->
+          match data.Tls.Core.peer_certificate with
+          | None -> failwith "No client certificate found"
+          | Some client_cert ->
+            let peer_id = Digest.of_certificate client_cert in
+            Ok (Endpoint.of_flow ~switch ~peer_id (module Flow) flow)
 
   let connect_as_client ~switch flow secret_key auth =
     match Digest.authenticator auth with
     | None -> Lwt.return @@ Ok (plain_endpoint ~switch flow)
     | Some authenticator ->
-      let certificates = Secret_key.certificates (Lazy.force secret_key) in
-      let tls_config = Tls.Config.client ~certificates ~authenticator () in
+      let tls_config = Secret_key.tls_client_config ~authenticator (Lazy.force secret_key) in
       Log.info (fun f -> f "Doing TLS client-side handshake...");
       Flow.client_of_flow tls_config flow >|= function
       | Error e -> error "TLS connection failed: %a" Flow.pp_write_error e
