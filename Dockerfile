@@ -6,8 +6,9 @@ WORKDIR /home/opam/capnp-rpc/
 RUN opam pin add -ny capnp-rpc.dev . && \
     opam pin add -ny capnp-rpc-lwt.dev . && \
     opam pin add -ny capnp-rpc-unix.dev . && \
-    opam depext capnp-rpc-unix
-RUN opam install capnp-rpc-unix alcotest-lwt afl-persistent
+    opam pin add -ny capnp-rpc-mirage.dev . && \
+    opam depext capnp-rpc-unix capnp-rpc-mirage
+RUN opam install capnp-rpc-unix capnp-rpc-mirage alcotest-lwt afl-persistent io-page-unix tcpip mirage-vnetif
 ADD . /home/opam/capnp-rpc
 RUN sudo chown -R opam /home/opam/capnp-rpc
 RUN opam config exec -- make all test

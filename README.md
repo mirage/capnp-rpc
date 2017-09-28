@@ -30,6 +30,7 @@ See [LICENSE.md](LICENSE.md) for details.
 	* [How can I debug reference counting problems?](#how-can-i-debug-reference-counting-problems)
 	* [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
 	* [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
+	* [How can I use this with Mirage?](#how-can-i-use-this-with-mirage)
 * [Contributing](#contributing)
 	* [Conceptual model](#conceptual-model)
 	* [Building](#building)
@@ -81,7 +82,7 @@ To install, you will need a platform with the capnproto package available (e.g. 
 
 ## Structure of the library
 
-The code is split into three packages:
+The code is split into several packages:
 
 - `capnp-rpc` contains the logic of the [Cap'n Proto RPC Protocol][], but does not depend on any particular serialisation.
   The tests in the `test` directory test the logic using a simple representation where messages are OCaml data-structures
@@ -91,6 +92,8 @@ The code is split into three packages:
   The tests in `test-lwt` test this by sending Cap'n Proto messages over a Unix-domain socket.
 
 - `capnp-rpc-unix` adds helper functions for parsing command-line arguments and setting up connections over Unix sockets.
+
+- `capnp-rpc-mirage` is an alternative to `-unix` that works with [Mirage][] unikernels.
 
 Users of the library will normally want to use `capnp-rpc-lwt` and, in most cases, `capnp-rpc-unix`.
 
@@ -1052,6 +1055,57 @@ capnp.wait_forever()
 
 Note that calling `wait_forever` prevents further use of the session, however.
 
+### How can I use this with Mirage?
+
+Here is a suitable `config.ml`:
+
+```ocaml
+open Mirage
+
+let main =
+  foreign
+    ~packages:[package "capnp-rpc-mirage"; package "mirage-dns"]
+    ~deps:[abstract nocrypto]
+    "Unikernel.Make" (time @-> stackv4 @-> job)
+
+let stack = generic_stackv4 default_network
+
+let () =
+  register "test" [main $ default_time $ stack]
+```
+
+This should work as the `unikernel.ml`:
+
+```ocaml
+open Lwt.Infix
+
+open Capnp_rpc_lwt
+
+module Make (Time : Mirage_time_lwt.S) (Stack : Mirage_stack_lwt.V4) = struct
+  module Dns = Dns_resolver_mirage.Make (Time) (Stack)
+  module Mirage_capnp = Capnp_rpc_mirage.Make (Stack) (Dns)
+
+  let secret_key = `Ephemeral
+
+  let listen_address = `TCP 7000
+  let public_address = `TCP ("localhost", 7000)
+
+  let start () stack () =
+    let dns = Dns.create stack in
+    let net = Mirage_capnp.network ~dns stack in
+    let config = Mirage_capnp.Vat_config.create ~secret_key ~public_address listen_address in
+    let service_id = Mirage_capnp.Vat_config.derived_id config "main" in
+    let restore = Restorer.single service_id Echo.local in
+    Mirage_capnp.serve net config ~restore >>= fun vat ->
+    let uri = Mirage_capnp.Vat.sturdy_uri vat service_id in
+    Logs.app (fun f -> f "Main service: %a" Uri.pp_hum uri);
+    Lwt.wait () |> fst
+end
+```
+
+Note that only `mirage configure -t unix` works currently.
+This is because the `capnp` runtime library currently depends on `Unix` and `Core_kernel`.
+
 ## Contributing
 
 ### Conceptual model
@@ -1189,3 +1243,4 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [E Reference Mechanics]: http://www.erights.org/elib/concurrency/refmech.html
 [pycapnp]: http://jparyani.github.io/pycapnp/
 [Persistence API]: https://github.com/capnproto/capnproto/blob/master/c%2B%2B/src/capnp/persistent.capnp
+[Mirage]: https://mirage.io/
