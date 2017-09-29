@@ -9,6 +9,8 @@ module Types = struct
   type join_key_part
 end
 
+type t = unit
+
 let parse_third_party_cap_id _ = `Two_party_only
 
 let error fmt =
@@ -133,7 +135,7 @@ let connect_socket = function
     Unix.connect socket (Unix.ADDR_INET (addr_of_host host, port));
     socket
 
-let connect ~switch ~secret_key (addr, auth) =
+let connect () ~switch ~secret_key (addr, auth) =
   match connect_socket addr with
   | exception ex ->
     Lwt.return @@ error "@[<v2>Network connection for %a failed:@,%a@]" Socket_address.pp addr Fmt.exn ex

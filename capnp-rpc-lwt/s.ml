@@ -21,12 +21,15 @@ module type NETWORK = sig
     val pp : t Fmt.t
   end
 
+  type t
+
   val connect :
+    t ->
     switch:Lwt_switch.t ->
     secret_key:Auth.Secret_key.t Lazy.t ->
     Address.t ->
     (Endpoint.t, [> `Msg of string]) result Lwt.t
-  (** [connect ~switch ~secret_key address] connects to [address], proves ownership of
+  (** [connect t ~switch ~secret_key address] connects to [address], proves ownership of
       [secret_key] (if TLS is being used), and returns the resulting endpoint.
       Returns an error if no connection can be established or the target fails
       to authenticate itself.
@@ -96,8 +99,8 @@ module type VAT_NETWORK = sig
       ?restore:restorer ->
       ?address:Network.Address.t ->
       secret_key:Auth.Secret_key.t Lazy.t ->
-      unit -> t
-    (** [create ~switch ~restore ~address ~secret_key ()] is a new vat that
+      Network.t -> t
+    (** [create ~switch ~restore ~address ~secret_key network] is a new vat that
         uses [restore] to restore sturdy refs hosted at this vat to live
         capabilities for peers.
         The vat will suggest that other parties connect to it using [address].

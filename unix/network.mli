@@ -21,6 +21,7 @@ module Socket_address : sig
 end
 
 include Capnp_rpc_lwt.S.NETWORK with
+  type t = unit and
   type Address.t = Socket_address.t * Capnp_rpc_lwt.Auth.Digest.t
 
 val accept_connection :

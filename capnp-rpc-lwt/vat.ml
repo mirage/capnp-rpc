@@ -12,6 +12,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   type connection_attempt = (CapTP.t, Capnp_rpc.Exception.t) result Lwt.t
 
   type t = {
+    network : Network.t;
     switch : Lwt_switch.t option;
     secret_key : Auth.Secret_key.t Lazy.t;
     address : Network.Address.t option;
@@ -23,8 +24,9 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     mutable anon_connections : CapTP.t list;     (* Connections not using TLS. *)
   }
 
-  let create ?switch ?(tags=Logs.Tag.empty) ?(restore=Restorer.none) ?address ~secret_key () =
+  let create ?switch ?(tags=Logs.Tag.empty) ?(restore=Restorer.none) ?address ~secret_key network =
     let t = {
+      network;
       switch;
       secret_key;
       address;
@@ -137,7 +139,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
 
   let connect_anon t addr ~service =
     let switch = Lwt_switch.create () in
-    Network.connect ~switch ~secret_key:t.secret_key addr >>= function
+    Network.connect t.network ~switch ~secret_key:t.secret_key addr >>= function
     | Error (`Msg m) -> Lwt.return @@ Error (Capnp_rpc.Exception.v m)
     | Ok ep ->
       add_connection t ~switch ep ~mode:`Connect >|= fun conn ->
@@ -147,7 +149,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
     (* We need to start a new connection attempt. *)
     let switch = Lwt_switch.create () in
     let conn =
-      Network.connect ~switch ~secret_key:t.secret_key addr >>= function
+      Network.connect t.network ~switch ~secret_key:t.secret_key addr >>= function
       | Error (`Msg m) -> Lwt.return @@ Error (Capnp_rpc.Exception.v m)
       | Ok ep -> add_connection t ~switch ep ~mode:`Connect >|= fun conn -> Ok conn
     in
