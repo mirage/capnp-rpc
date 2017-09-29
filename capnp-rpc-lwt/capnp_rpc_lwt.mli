@@ -370,6 +370,8 @@ module Networking (N : S.NETWORK) (Flow : Mirage_flow_lwt.S) : S.VAT_NETWORK
        type service_id = Restorer.Id.t and
        type 'a sturdy_ref = 'a Sturdy_ref.t
 
+module Capnp_address = Capnp_address
+
 (**/**)
 
 module Untyped : sig

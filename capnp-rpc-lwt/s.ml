@@ -1,25 +1,27 @@
 (** Module signatures. *)
 
+module type ADDRESS = sig
+  type t
+  (** A network address at which a vat can be reached. *)
+
+  val parse_uri : Uri.t -> ((t * string), [> `Msg of string]) result
+  (** [parse_uri uri] extracts from a URI the network address and service ID. *)
+
+  val to_uri : t * string -> Uri.t
+  (** [to_uri (t, service_id)] is a URI that can be parsed back into [(t, service_id)] by [parse_uri]. *)
+
+  val equal : t -> t -> bool
+
+  val digest : t -> Auth.Digest.t
+  (** How to verify that the correct address has been reached. *)
+
+  val pp : t Fmt.t
+end
+
 module type NETWORK = sig
   module Types : Capnp_rpc.S.NETWORK_TYPES
 
-  module Address : sig
-    type t
-    (** A network address at which a vat can be reached. *)
-
-    val parse_uri : Uri.t -> ((t * string), [> `Msg of string]) result
-    (** [parse_uri uri] extracts from a URI the network address and service ID. *)
-
-    val to_uri : t * string -> Uri.t
-    (** [to_uri (t, service_id)] is a URI that can be parsed back into [(t, service_id)] by [parse_uri]. *)
-
-    val equal : t -> t -> bool
-
-    val digest : t -> Auth.Digest.t
-    (** How to verify that the correct address has been reached. *)
-
-    val pp : t Fmt.t
-  end
+  module Address : ADDRESS
 
   type t
 
