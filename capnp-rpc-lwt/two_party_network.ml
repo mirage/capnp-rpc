@@ -18,6 +18,8 @@ module Address = struct
   let digest _ = assert false
 end
 
+type t = unit
+
 let parse_third_party_cap_id _ = `Two_party_only
 
-let connect ~switch:_ ~secret_key:_ _ = assert false
+let connect () ~switch:_ ~secret_key:_ _ = assert false

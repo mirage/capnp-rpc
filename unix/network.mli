@@ -1,6 +1,6 @@
 (** A network using TCP and Unix-domain sockets. *)
 
-module Socket_address : sig
+module Location : sig
   type t = [
     | `Unix of string
     | `TCP of string * int
@@ -21,7 +21,8 @@ module Socket_address : sig
 end
 
 include Capnp_rpc_lwt.S.NETWORK with
-  type Address.t = Socket_address.t * Capnp_rpc_lwt.Auth.Digest.t
+  type t = unit and
+  type Address.t = Location.t * Capnp_rpc_lwt.Auth.Digest.t
 
 val accept_connection :
   switch:Lwt_switch.t ->

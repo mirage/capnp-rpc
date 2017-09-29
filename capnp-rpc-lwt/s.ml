@@ -1,32 +1,37 @@
 (** Module signatures. *)
 
+module type ADDRESS = sig
+  type t
+  (** A network address at which a vat can be reached. *)
+
+  val parse_uri : Uri.t -> ((t * string), [> `Msg of string]) result
+  (** [parse_uri uri] extracts from a URI the network address and service ID. *)
+
+  val to_uri : t * string -> Uri.t
+  (** [to_uri (t, service_id)] is a URI that can be parsed back into [(t, service_id)] by [parse_uri]. *)
+
+  val equal : t -> t -> bool
+
+  val digest : t -> Auth.Digest.t
+  (** How to verify that the correct address has been reached. *)
+
+  val pp : t Fmt.t
+end
+
 module type NETWORK = sig
   module Types : Capnp_rpc.S.NETWORK_TYPES
 
-  module Address : sig
-    type t
-    (** A network address at which a vat can be reached. *)
+  module Address : ADDRESS
 
-    val parse_uri : Uri.t -> ((t * string), [> `Msg of string]) result
-    (** [parse_uri uri] extracts from a URI the network address and service ID. *)
-
-    val to_uri : t * string -> Uri.t
-    (** [to_uri (t, service_id)] is a URI that can be parsed back into [(t, service_id)] by [parse_uri]. *)
-
-    val equal : t -> t -> bool
-
-    val digest : t -> Auth.Digest.t
-    (** How to verify that the correct address has been reached. *)
-
-    val pp : t Fmt.t
-  end
+  type t
 
   val connect :
+    t ->
     switch:Lwt_switch.t ->
     secret_key:Auth.Secret_key.t Lazy.t ->
     Address.t ->
     (Endpoint.t, [> `Msg of string]) result Lwt.t
-  (** [connect ~switch ~secret_key address] connects to [address], proves ownership of
+  (** [connect t ~switch ~secret_key address] connects to [address], proves ownership of
       [secret_key] (if TLS is being used), and returns the resulting endpoint.
       Returns an error if no connection can be established or the target fails
       to authenticate itself.
@@ -96,8 +101,8 @@ module type VAT_NETWORK = sig
       ?restore:restorer ->
       ?address:Network.Address.t ->
       secret_key:Auth.Secret_key.t Lazy.t ->
-      unit -> t
-    (** [create ~switch ~restore ~address ~secret_key ()] is a new vat that
+      Network.t -> t
+    (** [create ~switch ~restore ~address ~secret_key network] is a new vat that
         uses [restore] to restore sturdy refs hosted at this vat to live
         capabilities for peers.
         The vat will suggest that other parties connect to it using [address].

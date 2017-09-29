@@ -79,6 +79,7 @@ module Networking (N : S.NETWORK) (F : Mirage_flow_lwt.S) = struct
   module CapTP = Vat.CapTP
 end
 
+module Capnp_address = Capnp_address
 module Persistence = Persistence
 module Two_party_network = Two_party_network
 module Auth = Auth

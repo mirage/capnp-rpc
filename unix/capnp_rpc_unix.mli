@@ -17,10 +17,10 @@ module Vat_config : sig
 
   val create :
     ?backlog:int ->
-    ?public_address:Network.Socket_address.t ->
+    ?public_address:Network.Location.t ->
     secret_key:[< `File of string | `PEM of string | `Ephemeral] ->
     ?serve_tls:bool ->
-    Network.Socket_address.t -> t
+    Network.Location.t -> t
   (** [create ~secret_key listen_address] is the configuration for a server vat that
       listens on address [listen_address].
       [secret_key] may be one of:

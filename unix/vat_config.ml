@@ -4,7 +4,7 @@ module Auth = Capnp_rpc_lwt.Auth
 module Log = Capnp_rpc.Debug.Log
 
 module Listen_address = struct
-  include Network.Socket_address
+  include Network.Location
 
   let parse_tcp s =
     match String.cut ~sep:":" s with
@@ -47,8 +47,8 @@ type t = {
   backlog : int;
   secret_key : (Auth.Secret_key.t * Secret_hash.t) Lazy.t;
   serve_tls : bool;
-  listen_address : Network.Socket_address.t;
-  public_address : Network.Socket_address.t;
+  listen_address : Listen_address.t;
+  public_address : Network.Location.t;
 }
 
 let secret_key t = fst @@ Lazy.force t.secret_key
@@ -92,7 +92,7 @@ let create ?(backlog=5) ?public_address ~secret_key ?(serve_tls=true) listen_add
     | Some x -> x
     | None -> listen_address
   in
-  Network.Socket_address.validate_public public_address;
+  Network.Location.validate_public public_address;
   let secret_key = lazy (
     match secret_key with
     | `File path -> init_secret_key_file path
@@ -130,14 +130,14 @@ let pp f {backlog; secret_key; serve_tls; listen_address; public_address} =
     backlog
     (Auth.Secret_key.pp_fingerprint `SHA256) (fst @@ Lazy.force secret_key)
     serve_tls
-    Network.Socket_address.pp listen_address
-    Network.Socket_address.pp public_address
+    Listen_address.pp listen_address
+    Network.Location.pp public_address
 
 let equal {backlog; secret_key; serve_tls; listen_address; public_address} b =
   backlog = b.backlog &&
   serve_tls = serve_tls &&
-  Network.Socket_address.equal listen_address b.listen_address &&
-  Network.Socket_address.equal public_address b.public_address &&
+  Listen_address.equal listen_address b.listen_address &&
+  Network.Location.equal public_address b.public_address &&
   Auth.Secret_key.equal (fst @@ Lazy.force secret_key) (fst @@ Lazy.force b.secret_key)
 
 let public_address =

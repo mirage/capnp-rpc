@@ -24,6 +24,6 @@ depends: [
   "base64"
   "uri"
   "jbuilder" {build & >= "1.0+beta10" }
-  "alcotest" {test}
+  "alcotest-lwt" {test}
 ]
 available: [ocaml-version >= "4.03.0"]
