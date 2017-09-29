@@ -71,30 +71,18 @@ let make_vats ?(serve_tls=false) ~switch ~service () =
   }
 
 (* Generic Lwt running for Alcotest. *)
-let run_lwt ?(expected_warnings=0) fn () =
+let run_lwt name ?(expected_warnings=0) fn =
+  Alcotest_lwt.test_case name `Quick @@ fun sw () ->
   let warnings_at_start = Logs.(err_count () + warn_count ()) in
   Logs.info (fun f -> f "Start test-case");
-  let async_ex, async_waker = Lwt.wait () in
-  let handle_exn ex =
-    Logs.info (fun f -> f "Uncaught async exception: %a" Fmt.exn ex);
-    if Lwt.state async_ex = Lwt.Sleep then
-      Lwt.wakeup_exn async_waker ex
-  in
-  Lwt.async_exception_hook := handle_exn;
-  Lwt_main.run begin
-    Lwt_switch.with_switch (fun sw ->
-        let finished = ref false in
-        Lwt_switch.add_hook (Some sw) (fun () ->
-            if not !finished then handle_exn (Failure "Switch turned off early");
-            Lwt.return_unit
-          );
-        Lwt.pick [
-          async_ex;
-          fn sw >|= fun () -> finished := true;
-        ] >|= fun () ->
-        Gc.full_major ()
-      )
-  end;
+  let finished = ref false in
+  Lwt_switch.add_hook (Some sw) (fun () ->
+      if not !finished then !Lwt.async_exception_hook (Failure "Switch turned off early");
+      Lwt.return_unit
+    );
+  fn sw >>= fun () -> finished := true;
+  Lwt_switch.turn_off sw >|= fun () ->
+  Gc.full_major ();
   Lwt.wakeup_paused ();
   Gc.full_major ();
   Lwt.wakeup_paused ();
@@ -603,31 +591,33 @@ let test_store switch =
   Capability.dec_ref store;
   Lwt.return_unit
 
+let run name fn = Alcotest.test_case name `Quick fn
+
 let rpc_tests = [
-  "Simple",     `Quick, run_lwt (test_simple ~serve_tls:false);
-  "Crypto",     `Quick, run_lwt (test_simple ~serve_tls:true);
-  "Bad crypto", `Quick, run_lwt test_bad_crypto ~expected_warnings:1;
-  "Parallel",   `Quick, run_lwt test_parallel;
-  "Embargo",    `Quick, run_lwt test_embargo;
-  "Resolve",    `Quick, run_lwt test_resolve;
-  "Registry",   `Quick, run_lwt test_registry;
-  "Calculator", `Quick, run_lwt test_calculator;
-  "Calculator 2", `Quick, run_lwt test_calculator2;
-  "Cancel",     `Quick, run_lwt test_cancel;
-  "Indexing",   `Quick, run_lwt test_indexing;
-  "Options",    `Quick, test_options;
-  "Sturdy URI", `Quick, test_sturdy_uri;
-  "Sturdy self", `Quick, run_lwt test_sturdy_self;
-  "Table restorer", `Quick, run_lwt test_table_restorer;
-  "Fn restorer", `Quick, run_lwt test_fn_restorer;
-  "Broken ref", `Quick, run_lwt test_broken;
-  "Broken ref 2", `Quick, test_broken2;
-  "Broken ref 3", `Quick, test_broken3;
-  "Broken ref 4", `Quick, test_broken4;
-  "Parallel connect", `Quick, run_lwt test_parallel_connect;
-  "Parallel fails", `Quick, run_lwt test_parallel_fails;
-  "Crossed calls", `Quick, run_lwt test_crossed_calls;
-  "Store",      `Quick, run_lwt test_store;
+  run_lwt "Simple"              (test_simple ~serve_tls:false);
+  run_lwt "Crypto"              (test_simple ~serve_tls:true);
+  run_lwt "Bad crypto"          test_bad_crypto ~expected_warnings:1;
+  run_lwt "Parallel"            test_parallel;
+  run_lwt "Embargo"             test_embargo;
+  run_lwt "Resolve"             test_resolve;
+  run_lwt "Registry"            test_registry;
+  run_lwt "Calculator"          test_calculator;
+  run_lwt "Calculator 2"        test_calculator2;
+  run_lwt "Cancel"              test_cancel;
+  run_lwt "Indexing"            test_indexing;
+  run     "Options"             test_options;
+  run     "Sturdy URI"          test_sturdy_uri;
+  run_lwt "Sturdy self"         test_sturdy_self;
+  run_lwt "Table restorer"      test_table_restorer;
+  run_lwt "Fn restorer"         test_fn_restorer;
+  run_lwt "Broken ref"          test_broken;
+  run     "Broken ref 2"        test_broken2;
+  run     "Broken ref 3"        test_broken3;
+  run     "Broken ref 4"        test_broken4;
+  run_lwt "Parallel connect"    test_parallel_connect;
+  run_lwt "Parallel fails"      test_parallel_fails;
+  run_lwt "Crossed calls"       test_crossed_calls;
+  run_lwt "Store"               test_store;
 ]
 
 let () =
