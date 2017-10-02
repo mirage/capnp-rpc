@@ -67,12 +67,14 @@ module S = S
 
 module Restorer = Restorer
 
+module type VAT_NETWORK = S.VAT_NETWORK with
+  type 'a capability := 'a Capability.t and
+  type restorer := Restorer.t and
+  type service_id := Restorer.Id.t and
+  type 'a sturdy_ref := 'a Sturdy_ref.t
+
 module Networking (N : S.NETWORK) (F : Mirage_flow_lwt.S) = struct
   type flow = F.flow
-  type 'a capability = 'a Capability.t
-  type restorer = Restorer.t
-  type service_id = Restorer.Id.t
-  class type [+'a] sturdy_ref = ['a] Sturdy_ref.t
 
   module Network = N
   module Vat = Vat.Make (N) (F)

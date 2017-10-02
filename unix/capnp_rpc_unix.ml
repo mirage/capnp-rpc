@@ -7,17 +7,12 @@ module Unix_flow = Unix_flow
 let () = Nocrypto_entropy_unix.initialize ()
 
 type flow = Unix_flow.flow
-type 'a capability = 'a Capnp_rpc_lwt.Capability.t
-type restorer = Capnp_rpc_lwt.Restorer.t
 
 module CapTP = Vat_network.CapTP
 module Vat = Vat_network.Vat
 module Network = Network
 module Vat_config = Vat_config
 module File_store = File_store
-
-type service_id = Capnp_rpc_lwt.Restorer.Id.t
-type 'a sturdy_ref = 'a Capnp_rpc_lwt.Sturdy_ref.t
 
 let error fmt =
   fmt |> Fmt.kstrf @@ fun msg ->

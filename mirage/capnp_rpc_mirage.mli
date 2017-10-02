@@ -5,12 +5,8 @@ open Capnp_rpc_lwt
 module Location = Network.Location
 
 module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) : sig
-  include Capnp_rpc_lwt.S.VAT_NETWORK with
+  include Capnp_rpc_lwt.VAT_NETWORK with
     type flow = Stack.TCPV4.flow and
-    type 'a capability = 'a Capability.t and
-    type restorer = Restorer.t and
-    type service_id = Restorer.Id.t and
-    type 'a sturdy_ref = 'a Sturdy_ref.t and
     module Network = Network.Make(Stack)(Dns)
 
   module Vat_config : sig

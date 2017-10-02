@@ -10,14 +10,9 @@ module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) = struct
   module Vat_network = Capnp_rpc_lwt.Networking(Network)(Stack.TCPV4)
 
   type flow = Stack.TCPV4.flow
-  type 'a capability = 'a Capnp_rpc_lwt.Capability.t
-  type restorer = Capnp_rpc_lwt.Restorer.t
 
   module CapTP = Vat_network.CapTP
   module Vat = Vat_network.Vat
-
-  type service_id = Capnp_rpc_lwt.Restorer.Id.t
-  type 'a sturdy_ref = 'a Capnp_rpc_lwt.Sturdy_ref.t
 
   let network ~dns stack = {Network.dns; stack}
 

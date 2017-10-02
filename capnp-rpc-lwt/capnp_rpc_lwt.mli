@@ -362,13 +362,15 @@ module Restorer : sig
       You don't normally need to call this directly, as the Vat will do it automatically. *)
 end
 
-module Networking (N : S.NETWORK) (Flow : Mirage_flow_lwt.S) : S.VAT_NETWORK
-  with module Network = N and
-       type flow = Flow.flow and
-       type 'a capability = 'a Capability.t and
-       type restorer = Restorer.t and
-       type service_id = Restorer.Id.t and
-       type 'a sturdy_ref = 'a Sturdy_ref.t
+module type VAT_NETWORK = S.VAT_NETWORK with
+  type 'a capability := 'a Capability.t and
+  type restorer := Restorer.t and
+  type service_id := Restorer.Id.t and
+  type 'a sturdy_ref := 'a Sturdy_ref.t
+
+module Networking (N : S.NETWORK) (Flow : Mirage_flow_lwt.S) : VAT_NETWORK with
+  module Network = N and
+  type flow = Flow.flow
 
 module Capnp_address = Capnp_address
 
