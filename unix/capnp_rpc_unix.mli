@@ -4,12 +4,8 @@ open Capnp_rpc_lwt
 
 module Unix_flow = Unix_flow
 
-include Capnp_rpc_lwt.S.VAT_NETWORK with
+include Capnp_rpc_lwt.VAT_NETWORK with
   type flow = Unix_flow.flow and
-  type 'a capability = 'a Capability.t and
-  type restorer = Restorer.t and
-  type service_id = Restorer.Id.t and
-  type 'a sturdy_ref = 'a Sturdy_ref.t and
   module Network = Network
 
 module Vat_config : sig
