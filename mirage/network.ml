@@ -56,15 +56,18 @@ module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) = struct
   }
 
   let addr_of_host dns host =
-    Dns.gethostbyname dns host >|= function
-    | [] -> error "Unknown host %S" host
-    | addrs ->
-      let rec loop = function
-        | [] -> error "No IPv4 addresses found for %S" host
-        | Ipaddr.V4 x :: _ -> Ok x
-        | Ipaddr.V6 _ :: xs -> loop xs
-      in
-      loop addrs
+    match Ipaddr.V4.of_string host with
+    | Some ip -> Lwt.return @@ Ok ip
+    | None ->
+      Dns.gethostbyname dns host >|= function
+      | [] -> error "Unknown host %S" host
+      | addrs ->
+        let rec loop = function
+          | [] -> error "No IPv4 addresses found for %S" host
+          | Ipaddr.V4 x :: _ -> Ok x
+          | Ipaddr.V6 _ :: xs -> loop xs
+        in
+        loop addrs
 
   let ( >>*= ) x f =
     x >>= function
