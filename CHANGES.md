@@ -1,3 +1,57 @@
+### 0.3 Unikernels
+
+This release adds a new `capnp-rpc-mirage` package, which provides support for
+using the library within a MirageOS unikernel.
+See <https://github.com/mirage/capnp-rpc#how-can-i-use-this-with-mirage> for details.
+
+There are a few minor API changes:
+
+- `Capnp_rpc_unix.Vat_config.derived_id ?name config` is now
+  `Capnp_rpc_unix.Vat_config.derived_id config name`.
+  If you weren't passing a `~name` argument before, use `"main"` to get the same ID.
+
+- `Capnp_rpc_unix.Network`'s `Socket_address` module is now called `Location`.
+
+- There is an explicit network parameter in `Network.connect`, etc.
+  This is needed to support Mirage, where the network isn't a global.
+
+Bug fixes:
+
+- Fix race when reconnecting.
+  We notified the user that the capability had broken while
+  the old connection was still shutting down.
+  If they immediately tried to reconnect, we tried to reuse the old connection.
+  Now, we wait for it to be removed.
+
+- Fix handling of leaks in switchable.
+  If we detected the ref-count was invalid, we tried to resolve to an error,
+  but resolving now checks that the ref-count is valid first so this failed.
+
+Documentation and examples:
+
+- Fixed ref-counting bug in calculator example.
+  Also, changed the service ID to match what the C++ client expects.
+  With these changes, the C++ client's tests pass when used with the OCaml service.
+
+Fuzzing:
+
+- Also test answering questions with errors or with a promise from another question.
+
+Code cleanups:
+
+- Use a better way to get the client certificate from a TLS connection
+  (suggested by @hannesm).
+
+- Use `Alcotest_lwt` for unit-tests.
+
+- Move `capnp://` URI handling to `Capnp_rpc_lwt.Capnp_address`.
+  This allows it to be shared with the Mirage code.
+
+- Add `Capnp_rpc_lwt.VAT_NETWORK` with simpler signature than `S.VAT_NETWORK`.
+
+- The address sub-module of `S.NETWORK` is now available separately as `S.ADDRESS`.
+
+
 ### 0.2 Persistence, encryption and access control
 
 This release brings support for RPC Level 2.
