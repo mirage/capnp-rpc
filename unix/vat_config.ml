@@ -111,7 +111,7 @@ let secret_key_term =
   in
   Cmdliner.Term.(pure get $ secret_key_file)
 
-let derived_id ?(name="main") t =
+let derived_id t name =
   let secret = hashed_secret t in
   Capnp_rpc_lwt.Restorer.Id.derived ~secret name
 

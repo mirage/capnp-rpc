@@ -406,7 +406,7 @@ let listen_address = `TCP ("127.0.0.1", 7000)
 
 let start_server () =
   let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
-  let service_id = Capnp_rpc_unix.Vat_config.derived_id config in
+  let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
   let restore = Restorer.single service_id Echo.local in
   Capnp_rpc_unix.serve config ~restore >|= fun vat ->
   Capnp_rpc_unix.Vat.sturdy_uri vat service_id
@@ -472,9 +472,10 @@ let start_server () =
 
 In `start_server`:
 
-- `let service_id = Capnp_rpc_unix.Vat_config.derived_id config` creates the secret ID that
-  grants access to the service. `derived_id` generates the ID deterministically from the secret key.
-  This means that the ID will be stable as long as the server's key doesn't change.
+- `let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main"` creates the secret ID that
+  grants access to the service. `derived_id` generates the ID deterministically from the secret key
+  and the name. This means that the ID will be stable as long as the server's key doesn't change.
+  The name used ("main" here) isn't important - it just needs to be unique.
 
 - `let restore = Restorer.single service_id Echo.local` configures a simple "restorer" that
   answers requests for `service_id` with our `Echo.local` service.
@@ -515,7 +516,7 @@ let run_client service =
 
 let serve config =
   Lwt_main.run begin
-    let service_id = Capnp_rpc_unix.Vat_config.derived_id config in
+    let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
     let restore = Restorer.single service_id Echo.local in
     Capnp_rpc_unix.serve config ~restore >>= fun vat ->
     let uri = Capnp_rpc_unix.Vat.sturdy_uri vat service_id in
@@ -681,8 +682,8 @@ For example, we can extend our example to provide sturdy refs for both the main 
 let serve config =
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
-  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
-  let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
+  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
+  let logger_id = Capnp_rpc_unix.Vat_config.derived_id config "logger" in
   Restorer.Table.add services echo_id Echo.local;
   Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
   let restore = Restorer.of_table services in
@@ -693,8 +694,6 @@ let serve config =
     fst @@ Lwt.wait ()  (* Wait forever *)
   end
 ```
-
-Note: the value of the `name` argument to `derived_id` doesn't matter - it just has to be unique so we generate a unique service ID. If not present, the default is `main`.
 
 Exercise: add a `log` command and use it to test the log service URI printed by the above code.
 Hint: parse the command-line with:
@@ -749,7 +748,7 @@ module Callback = struct
 Then pass the `sr` argument when creating the logger (you'll need to make it an argument to `Echo.local` too):
 
 ```ocaml
-  let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
+  let logger_id = Capnp_rpc_unix.Vat_config.derived_id config "logger" in
   let logger_sr = Restorer.Table.sturdy_ref services logger_id in
   let service_logger = Echo.Callback.local logger_sr @@ Fmt.pr "Service log: %S@." in
   Restorer.Table.add services echo_id (Echo.local ~service_logger);
@@ -869,8 +868,8 @@ let serve config =
   let services = Restorer.Table.of_loader (module Echo.DB) db in
   let restore = Restorer.of_table services in
   (* Add the fixed services *)
-  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config in
-  let logger_id = Capnp_rpc_unix.Vat_config.derived_id ~name:"logger" config in
+  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
+  let logger_id = Capnp_rpc_unix.Vat_config.derived_id config "logger" in
   let logger_sr = Restorer.Table.sturdy_ref services logger_id in
   let service_logger = Echo.service_logger logger_sr in
   Restorer.Table.add services echo_id (Echo.local ~service_logger);

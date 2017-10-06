@@ -39,10 +39,10 @@ module Vat_config : sig
   (** [hashed_secret t] is the SHA256 digest of the secret key file.
       This is useful as an input to {!Restorer.Id.derived}. *)
 
-  val derived_id : ?name:string -> t -> Restorer.Id.t
-  (** [derived_id t] is a secret service ID derived from the vat's secret key
-      (using {!Restorer.Id.derived}). It won't change (unless the vat's key
-      changes). [name] defaults to ["main"]. *)
+  val derived_id : t -> string -> Restorer.Id.t
+  (** [derived_id t name] is a secret service ID derived from name and the
+      vat's secret key (using {!Restorer.Id.derived}). It won't change
+      (unless the vat's key changes). *)
 
   val sturdy_uri : t -> Restorer.Id.t -> Uri.t
   (** [sturdy_uri t id] is a sturdy URI for [id] at the vat that would be
