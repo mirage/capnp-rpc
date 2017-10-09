@@ -227,6 +227,10 @@ let () =
   end
 ```
 
+<p align='center'>
+  <img src="./diagrams/ping.svg"/>
+</p>
+
 If you're building with jbuilder, here's a suitable `jbuild` file:
 
 ```
@@ -359,6 +363,19 @@ let () =
   end
 ```
 
+<p align='center'>
+  <img src="./diagrams/callback1.svg"/>
+</p>
+
+<p align='center'>
+  <img src="./diagrams/callback2.svg"/>
+</p>
+
+<p align='center'>
+  <img src="./diagrams/callback3.svg"/>
+</p>
+
+
 Exercise: implement `Callback.local fn` (hint: it's similar to the original `ping` service, but pass the message to `fn` and return with `Service.return_empty ()`)
 
 And testing it should give (three times, at one second intervals):
@@ -421,6 +438,10 @@ let () =
     run_client proxy_to_service
   end
 ```
+
+<p align='center'>
+  <img src="./diagrams/vats.svg"/>
+</p>
 
 Running this will give something like:
 
@@ -635,6 +656,10 @@ let run_client service =
   | Ok () -> ()
   | Error err -> Fmt.epr "Server's logger failed: %a" Capnp_rpc.Error.pp err
 ```
+
+<p align='center'>
+  <img src="./diagrams/pipeline.svg"/>
+</p>
 
 This should print (in the server's output) something like:
 
