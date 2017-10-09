@@ -1,4 +1,4 @@
                  log
   Callback <------*--------.
                            |
-  Client   ------------> service
+  Client   ------------> Echo

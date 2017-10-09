@@ -1,8 +1,8 @@
                         .-Server vat-.
                        |              |
-                  .-.  |   Logger     |
- .-Client vat-.  |   | |     ^        |
-|              | |   v |     |        |
-|   Client ----+-*---*-+-> service    |
+                  .-.  |    Logger    |
+ .-Client vat-.  |   | |      ^       |
+|              | |   v |      |       |
+|   Client ----+-*---*-+---> Echo     |
 |              |       |              |
  '------------'         '------------'

@@ -363,13 +363,19 @@ let () =
   end
 ```
 
+Step 1: The client creates the callback:
+
 <p align='center'>
   <img src="./diagrams/callback1.svg"/>
 </p>
 
+Step 2: The client calls the `heartbeat` method, passing the callback as an argument:
+
 <p align='center'>
   <img src="./diagrams/callback2.svg"/>
 </p>
+
+Step 3: The service receives the callback and calls the `log` method on it:
 
 <p align='center'>
   <img src="./diagrams/callback3.svg"/>

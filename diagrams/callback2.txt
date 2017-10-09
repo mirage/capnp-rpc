@@ -1,4 +1,4 @@
   Callback <-----.
                  |
-  Client   ------*-----> service
+  Client   ------*-----> Echo
               heartbeat
