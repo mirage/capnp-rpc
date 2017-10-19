@@ -218,7 +218,12 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun _ ->
             match blocker with
             | None -> Some (self :> base_ref)
-            | Some x -> x#blocker
+            | Some x ->
+              match x#blocker with
+              | Some _ as b -> b
+              | None -> 
+                Debug.invariant_broken @@ fun f ->
+                Fmt.pf f "Proxy %t is blocked on non-blocked cap %t!" self#pp x#pp
           )
         ~forwarding:(fun x -> x#blocker)
 
