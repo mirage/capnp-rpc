@@ -6,6 +6,7 @@ See [LICENSE.md](LICENSE.md) for details.
 ## Contents
 
 <!-- vim-markdown-toc GFM -->
+
 * [Overview](#overview)
 * [Status](#status)
 * [Installing](#installing)
@@ -28,6 +29,7 @@ See [LICENSE.md](LICENSE.md) for details.
 	* [Can I create multiple instances of an interface dynamically?](#can-i-create-multiple-instances-of-an-interface-dynamically)
 	* [Can I get debug output?](#can-i-get-debug-output)
 	* [How can I debug reference counting problems?](#how-can-i-debug-reference-counting-problems)
+	* [How can I import a sturdy ref that I need to start my vat?](#how-can-i-import-a-sturdy-ref-that-i-need-to-start-my-vat)
 	* [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
 	* [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
 	* [How can I use this with Mirage?](#how-can-i-use-this-with-mirage)
@@ -1022,6 +1024,29 @@ If you try to use something after releasing it, you'll get an error.
 
 But the simple rule is: any time you create a local capability or extract a capability from a message,
 you must eventually call `Capability.dec_ref` on it.
+
+### How can I import a sturdy ref that I need to start my vat?
+
+Let's say you have a capnp service that internally requires the use of another capnp service:
+
+<p align='center'>
+  <img src="./diagrams/three_vats.svg"/>
+</p>
+
+Here, creating the `Frontend` service requires a sturdy ref for the `Backend` service.
+But this sturdy ref must be imported into the frontend vat.
+Creating the frontend vat requires passing a restorer, which needs `Frontend`!
+
+The solution here is to construct `Frontend` with a *promise* for the sturdy ref, e.g.
+
+```ocaml
+let run_frontend backend_uri =
+  let backend_promise, resolver = Lwt.wait () in
+  let frontend = Frontend.make backend_promise in
+  let restore = Restorer.single id frontend in
+  Capnp_rpc_unix.serve config ~restore >|= fun vat ->
+  Lwt.wakeup resolver (Capnp_rpc_unix.Vat.import_exn vat backend_uri)
+```
 
 ### How can I release other resources when my service is released?
 
