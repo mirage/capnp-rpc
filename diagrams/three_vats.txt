@@ -1,0 +1,5 @@
+ .-Client vat-.      .-Frontend vat-.      .-Backend vat-.
+|              |    |                |    |               |
+|   Client ----+----+--> Frontend ---+----+--> Backend    +
+|              |    |                |    |               |
+ '------------'      '--------------'      '-------------'
