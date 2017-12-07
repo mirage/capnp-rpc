@@ -23,7 +23,7 @@
 
 #$import "/capnp/c++.capnp".namespace("capnp");
 
-interface Persistent@0xc8cb212fcd9f5691(SturdyRef, Owner) {
+interface Persistent@0xc8cb212fcd9f5691 {
   # Interface implemented by capabilities that outlive a single connection. A client may save()
   # the capability, producing a SturdyRef. The SturdyRef can be stored to disk, then later used to
   # obtain a new reference to the capability on a future connection.
@@ -95,7 +95,7 @@ interface Persistent@0xc8cb212fcd9f5691(SturdyRef, Owner) {
   # this and which do not.
 
   struct SaveParams {
-    sealFor @0 :Owner;
+    sealFor @0 :AnyPointer;
     # Seal the SturdyRef so that it can only be restored by the specified Owner. This is meant
     # to mitigate damage when a SturdyRef is leaked. See comments above.
     #
@@ -104,36 +104,6 @@ interface Persistent@0xc8cb212fcd9f5691(SturdyRef, Owner) {
     # ref.
   }
   struct SaveResults {
-    sturdyRef @0 :SturdyRef;
+    sturdyRef @0 :AnyPointer;
   }
 }
-
-interface RealmGateway(InternalRef, ExternalRef, InternalOwner, ExternalOwner) {
-  # Interface invoked when a SturdyRef is about to cross realms. The RPC system supports providing
-  # a RealmGateway as a callback hook when setting up RPC over some VatNetwork.
-
-  import @0 (cap :Persistent(ExternalRef, ExternalOwner),
-             params :Persistent(InternalRef, InternalOwner).SaveParams)
-         -> Persistent(InternalRef, InternalOwner).SaveResults;
-  # Given an external capability, save it and return an internal reference. Used when someone
-  # inside the realm tries to save a capability from outside the realm.
-
-  export @1 (cap :Persistent(InternalRef, InternalOwner),
-             params :Persistent(ExternalRef, ExternalOwner).SaveParams)
-         -> Persistent(ExternalRef, ExternalOwner).SaveResults;
-  # Given an internal capability, save it and return an external reference. Used when someone
-  # outside the realm tries to save a capability from inside the realm.
-}
-
-annotation persistent(interface, field) :Void;
-# Apply this annotation to interfaces for objects that will always be persistent, instead of
-# extending the Persistent capability, since the correct type parameters to Persistent depend on
-# the realm, which is orthogonal to the interface type and therefore should not be defined
-# along-side it.
-#
-# You may also apply this annotation to a capability-typed field which will always contain a
-# persistent capability, but where the capability's interface itself is not already marked
-# persistent.
-#
-# Note that absence of the $persistent annotation doesn't mean a capability of that type isn't
-# persistent; it just means not *all* such capabilities are persistent.
