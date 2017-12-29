@@ -23,6 +23,8 @@ depends: [
   "mirage-clock"
   "base64"
   "uri" { >= "1.6.0" }
+  "ptime"
+  "asn1-combinators" {>= "0.2.0"}
   "jbuilder" {build & >= "1.0+beta10" }
 ]
 available: [ocaml-version >= "4.03.0"]

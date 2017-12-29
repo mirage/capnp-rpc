@@ -113,20 +113,24 @@ module Secret_key = struct
   let pp_fingerprint hash f t =
     Digest.pp f (digest ~hash t)
 
+  let date_time ~date ~time =
+    let tz_offset_s = 0 in
+    match Ptime.of_date_time (date, (time, tz_offset_s)) with
+    | Some dt -> dt
+    | None -> failwith "Invalid date_time!"
+
   let x509 t =
     let dn = [`CN "capnp"] in
     let csr = X509.CA.request dn (`RSA t) in
-    let valid_from = { Asn.Time.
-                       date = (1970, 1, 1);
-                       time = (1, 1, 1, 0.);
-                       tz = None;
-                     } in
+    let valid_from = date_time
+                       ~date:(1970, 1, 1)
+                       ~time:(1, 1, 1)
+    in
     (* RFC 5280 says expiration date should be GeneralizedTime value 99991231235959Z *)
-    let valid_until = { Asn.Time.
-                        date = (9999, 12, 31);
-                        time = (23, 59, 59, 0.);
-                        tz = None;
-                      } in
+    let valid_until = date_time
+                        ~date:(9999, 12, 31)
+                        ~time:(23, 59, 59)
+    in
     X509.CA.sign csr ~valid_from ~valid_until (`RSA t) dn
 
   let of_priv priv =
