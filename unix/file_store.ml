@@ -36,7 +36,8 @@ let load t ~digest =
   if Sys.file_exists path then (
     let ch = open_in path in
     let len = in_channel_length ch in
-    let segment = really_input_string ch len in
+    let segment = Bytes.create len in
+    really_input ch segment 0 len;
     close_in ch;
     let msg = Message.of_storage [segment] in
     let reader = ReaderOps.get_root_struct (Message.readonly msg) in
