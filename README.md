@@ -6,7 +6,6 @@ See [LICENSE.md](LICENSE.md) for details.
 ## Contents
 
 <!-- vim-markdown-toc GFM -->
-
 * [Overview](#overview)
 * [Status](#status)
 * [Installing](#installing)
@@ -80,7 +79,7 @@ Until that is implemented, Carol can ask Bob for a persistent reference (sturdy 
 
 To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
 
-    opam depext -i capnp-rpc-unix
+    opam depext -i capnp-rpc-unix conf-capnproto
 
 ## Structure of the library
 
@@ -253,7 +252,7 @@ If you're building with jbuilder, here's a suitable `jbuild` file:
 The service is now usable:
 
 ```bash
-$ opam install capnp-rpc-unix
+$ opam install capnp-rpc-unix conf-capnproto
 $ jbuilder build --dev main.exe
 $ ./_build/default/main.exe
 Got reply "echo:foo"
