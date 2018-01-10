@@ -1,3 +1,24 @@
+### 0.3.1
+
+- Updates for new `x509` API and for OCaml 4.06 (#143).
+
+- Add some diagrams to the tutorial (#134).
+
+- Add FAQ: how can I import a sturdy ref that I need to start my vat? (#137)
+
+Build updates:
+
+- Add build dependency on conf-capnproto (#146). Projects using the schema compiler themselves should also now add this dependency instead of relying on `capnp` to pull it in.
+
+- Remove generics from persistent.capnp (#141) so that it compiles on systems with older capnproto compilers (e.g. Ubuntu 14.04).
+
+- `unix/network.ml` uses `Fmt.failwith`, which requires fmt.0.8.4 (#139).
+
+- `capnp-rpc-lwt` requires `Uri.with_userinfo`, which is only in `uri` >= 1.6.0 (#138).
+
+- Move test-lwt to unix module (#133).
+
+
 ### 0.3 Unikernels
 
 This release adds a new `capnp-rpc-mirage` package, which provides support for
