@@ -23,3 +23,16 @@ test:
 	#./_build/default/test/test.bc test core -ev 36
 	#./_build/default/test-lwt/test.bc test lwt -ev 3
 	jbuilder build @runtest --dev --no-buffer -j 1
+
+REPO=../opam-repository
+PACKAGES=$(REPO)/packages
+# until we have https://github.com/ocaml/opam-publish/issues/38
+pkg-%:
+	topkg opam pkg -n $*
+	mkdir -p $(PACKAGES)/$*
+	cp -r _build/$*.* $(PACKAGES)/$*/
+	cd $(PACKAGES) && git add $*
+
+PKGS=$(basename $(wildcard *.opam))
+opam-pkg:
+	$(MAKE) $(PKGS:%=pkg-%)
