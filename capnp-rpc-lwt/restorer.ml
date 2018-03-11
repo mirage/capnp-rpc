@@ -95,6 +95,7 @@ module Table = struct
   let hash t id =
     Id.digest t.hash id
 
+  (* See spec/Restorer.tla for more details *)
   let resolve t id =
     let digest = hash t id in
     match Hashtbl.find t.cache digest with
@@ -105,7 +106,24 @@ module Table = struct
       begin res >>= function
         | Error _ as e -> Lwt.return e
         | Ok cap ->
+          (* There are two ways we can get here:
+             1. [res] was already resolved when we did the [Hashtbl.find].
+             2. [res] was a promise and has now resolved.
+
+             In the case of (1), we MUST call [inc_ref] immediately
+             (without letting another thread run between the [find] and here),
+             since otherwise it might now have a ref-count of zero.
+             This is ensured by the monad law `return x >>= f` = `f x`.
+             !!! THREAT OF CHANGE !!!
+
+             In the case of (2), the loader thread (which owns the initial ref-count)
+             cannot have finished its call to `Lwt.pause` yet.
+
+             In either case, the object is still alive and we can call [inc_ref] safely.
+           *)
           Core_types.inc_ref cap;
+          (* The pause on the next line is not really necessary,
+             but makes the algorithm easier to think about. *)
           Lwt.pause () >|= fun () ->
           Ok cap
       end
@@ -119,8 +137,16 @@ module Table = struct
              | Error _ -> Hashtbl.remove t.cache digest
              | Ok cap -> cap#when_released (fun () -> Hashtbl.remove t.cache digest)
            end;
-           (* Ensure all [inc_ref]s are done before handing over to the user. *)
+           (* Ensure all [inc_ref]s are done before handing over to the user.
+              We rely on the fact that when [cap] resolves, Lwt will run all the
+              queued callbacks before returning to the mainloop. Therefore, all
+              callers will have had a chance to run before this returns.
+              !!! THREAT OF CHANGE !!!
+            *)
            Lwt.pause () >|= fun () ->
+           (* At this point, every thread that expects to use the cap has
+              incremented the ref-count. We can therefore safely return it to
+              our caller (who may then free it). *)
            result
         )
         (fun ex ->
