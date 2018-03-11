@@ -802,6 +802,46 @@ let test_local_embargo_15 () =
   CS.flush c s;
   CS.check_finished c s
 
+let test_local_embargo_16 () =
+  let client_bs = Services.manual () in
+  let server_bs = Services.manual () in
+  let c, s = CS.create
+    ~client_tags:Test_utils.client_tags ~client_bs
+    ~server_tags:Test_utils.server_tags server_bs
+  in
+  let to_client = S.bootstrap s in
+  let to_server = C.bootstrap c in
+  CS.flush c s;
+  dec_ref @@ call to_client "q1" [];
+  let x2 = call_for_cap to_client "q2" [] in
+  let x3 = call_for_cap x2 "q3" [to_client] in
+  let x4 = call_for_cap x3 "q4" [x3] in
+  C.handle_msg c ~expect:"call:q1";
+  C.handle_msg c ~expect:"finish";
+  C.handle_msg c ~expect:"call:q2";
+  C.handle_msg c ~expect:"call:q3";
+  C.handle_msg c ~expect:"call:q4";
+  let a1 = client_bs#pop0 "q1" in
+  let a2 = client_bs#pop0 "q2" in
+  Core_types.resolve_exn a1 (Capnp_rpc.Exception.v "q1-failed");
+  resolve_ok a2 "reply" [to_server];
+  S.handle_msg s ~expect:"return:(cancelled)";
+  S.handle_msg s ~expect:"call:q3";
+  let to_to_client, a3 = server_bs#pop1 "q3" in
+  Logs.info (fun f -> f "to_to_client = %t, server_bs = %t" to_to_client#pp server_bs#pp);
+  CS.dump c s;
+  S.handle_msg s ~expect:"return:take-from-other";
+  Logs.info (fun f -> f "x3=%t, blocker=%b" x3#pp (x3#blocker <> None));
+  let _ = call x4 "m1" [x3] in  (* x3 gets exported as SenderHosted, despite being a promise *)
+  let _ = call to_to_client "m2" [x3] in
+  CS.flush c s;
+  resolve_ok a3 "reply" [to_to_client];
+  let cr_281, _resolver_280 = client_bs#pop1 "m2" in
+  dec_ref cr_281;
+  CS.dump c s;
+  CS.flush c s;
+  CS.check_finished c s
+
 (* The field must still be useable after the struct is released. *)
 let test_fields () =
   let c, s = CS.create ~client_tags:Test_utils.client_tags ~server_tags:Test_utils.server_tags (Services.echo_service ()) in
@@ -1536,6 +1576,7 @@ let tests = [
   "Local embargo 13", `Quick, test_local_embargo_13;
   "Local embargo 14", `Quick, test_local_embargo_14;
   "Local embargo 15", `Quick, test_local_embargo_15;
+  "Local embargo 16", `Quick, test_local_embargo_16;
   "Shared cap", `Quick, test_share_cap;
   "Fields", `Quick, test_fields;
   "Cancel", `Quick, test_cancel;
