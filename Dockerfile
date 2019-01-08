@@ -1,6 +1,6 @@
 FROM ocaml/opam2@sha256:507d4e2786904e3d19ca6db6f6a482af131c9fe6b2597ba62add762305d5c0fb
 #FROM ocaml/opam2:debian-9-ocaml-4.07
-RUN apt-get update
+RUN sudo apt-get update
 RUN cd opam-repository && git fetch && git reset --hard 7a2c776e4d7760fbc0a6bb500aaef20a6fe98e34 && opam update
 ADD *.opam /home/opam/capnp-rpc/
 WORKDIR /home/opam/capnp-rpc/
