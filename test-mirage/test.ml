@@ -25,7 +25,7 @@ module Stack = struct
   module V = Vnetif.Make(B)
   module E = Ethif.Make(V)
   module A = Arpv4.Make(E)(Time)(Time)
-  module I = Static_ipv4.Make(E)(A)
+  module I = Static_ipv4.Make(Random)(Time)(E)(A)
   module U = Udp.Make(I)(Random)
   module T = Tcp.Flow.Make(I)(Time)(Time)(Random)
   module Icmp = Icmpv4.Make(I)
@@ -37,12 +37,11 @@ module Stack = struct
     V.connect backend >>= fun v ->
     E.connect v >>= fun e ->
     A.connect e () >>= fun a ->
-    I.connect ~ip ~network:Ipaddr.V4.Prefix.private_10 e a >>= fun i ->
+    I.connect ~ip ~network:Ipaddr.V4.Prefix.private_10 () e a >>= fun i ->
     U.connect i >>= fun u ->
     T.connect i () >>= fun t ->
     Icmp.connect i >>= fun icmp ->
-    let config = { Mirage_stack_lwt.name = "test-stack"; interface = v } in
-    connect config e a i icmp u t
+    connect v e a i icmp u t
 end
 module Mirage = Capnp_rpc_mirage.Make(Stack)(Dns_resolver_mirage.Static)
 module Vat = Mirage.Vat
