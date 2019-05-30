@@ -1,29 +1,29 @@
-opam-version: "1.2"
-maintainer:   "Thomas Leonard <thomas.leonard@docker.com>"
-authors:      "Thomas Leonard <thomas.leonard@docker.com>"
-license:      "Apache"
-homepage:     "https://github.com/mirage/capnp-rpc"
-bug-reports:  "https://github.com/mirage/capnp-rpc/issues"
-dev-repo:     "https://github.com/mirage/capnp-rpc.git"
-
-build: ["dune" "build" "-p" name "-j" jobs]
-build-test: ["dune" "runtest" "-p" name "-j" jobs]
-
+opam-version: "2.0"
+synopsis:
+  "Cap'n Proto is a capability-based RPC system with bindings for many languages"
+maintainer: "Thomas Leonard <thomas.leonard@docker.com>"
+authors: "Thomas Leonard <thomas.leonard@docker.com>"
+license: "Apache"
+homepage: "https://github.com/mirage/capnp-rpc"
+bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 depends: [
-  "capnp" { >= "3.1.0" }
-  "capnp-rpc-lwt" { >= "0.3" }
+  "ocaml" {>= "4.03.0"}
+  "capnp" {>= "3.1.0"}
+  "capnp-rpc-lwt" {>= "0.3"}
   "astring"
   "fmt"
   "logs"
   "arp-mirage"
   "mirage-dns"
   "mirage-stack-lwt"
-  "alcotest-lwt" {test}
-  "io-page-unix" {test}
-  "tcpip" {test}
-  "mirage-vnetif" {test}
-  "dune" {build & >= "1.0" }
+  "alcotest-lwt" {with-test}
+  "io-page-unix" {with-test}
+  "tcpip" {with-test}
+  "mirage-vnetif" {with-test}
+  "dune" {build & >= "1.0"}
 ]
-available: [ocaml-version >= "4.03.0"]
-synopsis:
-  "Cap'n Proto is a capability-based RPC system with bindings for many languages"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
+]
+dev-repo: "git+https://github.com/mirage/capnp-rpc.git"
