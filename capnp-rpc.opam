@@ -6,8 +6,8 @@ homepage:     "https://github.com/mirage/capnp-rpc"
 bug-reports:  "https://github.com/mirage/capnp-rpc/issues"
 dev-repo:     "https://github.com/mirage/capnp-rpc.git"
 
-build: ["jbuilder" "build" "-p" name "-j" jobs]
-build-test: ["jbuilder" "runtest" "-p" name]
+build: ["dune" "build" "-p" name "-j" jobs]
+build-test: ["dune" "runtest" "-p" name "-j" jobs]
 
 depends: [
   "uint"
@@ -15,7 +15,7 @@ depends: [
   "fmt"
   "logs"
   "asetmap"
-  "jbuilder" {build & >= "1.0+beta10" }
+  "dune" {build & >= "1.0" }
   "alcotest" {test}
   "afl-persistent" {test}
 ]

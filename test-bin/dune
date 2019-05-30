@@ -1,0 +1,3 @@
+(executable
+ (name calc)
+ (libraries examples cmdliner astring logs.fmt fmt.tty capnp-rpc-unix))
