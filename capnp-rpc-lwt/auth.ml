@@ -27,7 +27,7 @@ module Digest = struct
 
   let insecure = `Insecure
 
-  let alphabet = B64.uri_safe_alphabet
+  let alphabet = Base64.uri_safe_alphabet
 
   let string_of_hash = function
     | `SHA256 -> "sha-256"
@@ -37,8 +37,7 @@ module Digest = struct
     | x -> error "Unknown hash type %S" x
 
   let parse_digest s =
-    try Ok (B64.decode ~alphabet s)
-    with ex -> error "Bad base64 digest %S: %a" s Fmt.exn ex
+    B64.decode ~alphabet ~pad:false s
 
   let parse hash digest =
     parse_hash hash >>= fun hash ->

@@ -9,8 +9,9 @@ type 'a t = {
 let create dir = { dir }
 
 let path_of_digest t digest =
-  let filename = B64.encode ~alphabet:B64.uri_safe_alphabet ~pad:false digest in
-  Filename.concat t.dir filename
+  match Base64.encode ~alphabet:Base64.uri_safe_alphabet ~pad:false digest with
+  | Ok filename -> Filename.concat t.dir filename
+  | Error (`Msg m) -> failwith m  (* Encoding can't really fail *)
 
 let segments_of_reader = function
   | None -> []

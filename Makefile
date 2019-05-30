@@ -5,7 +5,7 @@ default: test build-fuzz
 all:
 	dune build @install test/test.bc test-lwt/test.bc test-bin/calc.exe test-mirage/test.bc
 	rm -rf _build/_tests
-	dune runtest --dev --no-buffer -j 1
+	dune runtest --no-buffer -j 1
 
 build-fuzz:
 	dune build fuzz/fuzz.exe

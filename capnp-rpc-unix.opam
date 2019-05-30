@@ -21,3 +21,5 @@ depends: [
   "alcotest-lwt" {test & >= "0.8.0"}
 ]
 available: [ocaml-version >= "4.03.0"]
+synopsis:
+  "Cap'n Proto is a capability-based RPC system with bindings for many languages"

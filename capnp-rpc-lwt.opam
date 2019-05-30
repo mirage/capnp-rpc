@@ -22,10 +22,12 @@ depends: [
   "tls" { >= "0.8.0" }
   "mirage-kv-lwt"
   "mirage-clock"
-  "base64"
+  "base64" { >= "3.0.0" }
   "uri" { >= "1.6.0" }
   "ptime"
   "asn1-combinators" {>= "0.2.0"}
   "dune" {build & >= "1.0" }
 ]
 available: [ocaml-version >= "4.03.0"]
+synopsis:
+  "Cap'n Proto is a capability-based RPC system with bindings for many languages"

@@ -20,3 +20,5 @@ depends: [
   "afl-persistent" {test}
 ]
 available: [ocaml-version >= "4.03.0"]
+synopsis:
+  "Cap'n Proto is a capability-based RPC system with bindings for many languages"

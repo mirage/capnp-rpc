@@ -1,8 +1,8 @@
 (executable
  (name test)
  (libraries io-page-unix capnp-rpc-lwt capnp-rpc-mirage alcotest-lwt examples
-   logs.fmt testbed tcpip.ipv4 tcpip.stack-direct mirage-vnetif tcpip.ethif
-   tcpip.arpv4 tcpip.tcp tcpip.icmpv4))
+   logs.fmt testbed tcpip.ipv4 tcpip.stack-direct mirage-vnetif ethernet
+   arp-mirage tcpip.tcp tcpip.icmpv4))
 
 (alias
  (name runtest)

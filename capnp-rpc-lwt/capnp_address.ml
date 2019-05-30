@@ -25,13 +25,10 @@ type t = Location.t * Auth.Digest.t
 
 let digest = snd
 
-let alphabet = B64.uri_safe_alphabet
+let alphabet = Base64.uri_safe_alphabet
 
-let b64encode s = B64.encode ~alphabet ~pad:false s
-
-let b64decode s =
-  try Ok (B64.decode ~alphabet s)
-  with ex -> error "Bad base64 digest %S: %a" s Fmt.exn ex
+let b64encode = B64.encode ~alphabet ~pad:false
+let b64decode = B64.decode ~alphabet ~pad:false
 
 let to_uri ((addr, auth), service_id) =
   let service_id = b64encode service_id in
