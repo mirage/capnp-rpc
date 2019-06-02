@@ -1,0 +1,3 @@
+(executables
+ (names fuzz)
+ (libraries capnp-rpc alcotest logs.fmt testbed afl-persistent))

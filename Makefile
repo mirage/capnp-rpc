@@ -3,12 +3,12 @@
 default: test build-fuzz
 
 all:
-	jbuilder build --dev @install test/test.bc test-lwt/test.bc test-bin/calc.exe test-mirage/test.bc
+	dune build @install test/test.bc test-lwt/test.bc test-bin/calc.exe test-mirage/test.bc
 	rm -rf _build/_tests
-	jbuilder runtest --dev --no-buffer -j 1
+	dune runtest --no-buffer -j 1
 
 build-fuzz:
-	jbuilder build --dev fuzz/fuzz.exe
+	dune build fuzz/fuzz.exe
 
 fuzz: build-fuzz
 	# TODO: remove -d
@@ -19,10 +19,10 @@ clean:
 
 test:
 	rm -rf _build/_tests
-	jbuilder build --dev test/test.bc test-lwt/test.bc test-bin/calc.bc test-mirage/test.bc
+	dune build test/test.bc test-lwt/test.bc test-bin/calc.bc test-mirage/test.bc
 	#./_build/default/test/test.bc test core -ev 36
 	#./_build/default/test-lwt/test.bc test lwt -ev 3
-	jbuilder build @runtest --dev --no-buffer -j 1
+	dune build @runtest --no-buffer -j 1
 
 REPO=../opam-repository
 PACKAGES=$(REPO)/packages

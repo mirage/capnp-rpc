@@ -1,0 +1,21 @@
+(library
+ (name capnp_rpc_lwt)
+ (public_name capnp-rpc-lwt)
+ (ocamlc_flags :standard -w -55-53)
+ (ocamlopt_flags :standard -w -55-53)
+ (libraries astring capnp capnp-rpc fmt logs mirage-flow-lwt nocrypto.lwt
+   tls.mirage base64 uri ptime))
+
+(rule
+ (targets rpc_schema.ml rpc_schema.mli)
+ (deps
+  (:< rpc_schema.capnp))
+ (action
+  (run capnpc -o ocaml %{<})))
+
+(rule
+ (targets persistent.ml persistent.mli)
+ (deps
+  (:< persistent.capnp))
+ (action
+  (run capnpc -o ocaml %{<})))

@@ -1,15 +1,10 @@
-FROM ocaml/opam2@sha256:507d4e2786904e3d19ca6db6f6a482af131c9fe6b2597ba62add762305d5c0fb
+FROM ocaml/opam2@sha256:d76c296ff72d775c47b089555eca67b2a1d737498e4e5fdb8b73b6ba0630a1a4
 #FROM ocaml/opam2:debian-9-ocaml-4.07
 RUN sudo apt-get update
-RUN git fetch && git reset --hard 7a2c776e4d7760fbc0a6bb500aaef20a6fe98e34 && opam update
-ADD *.opam /home/opam/capnp-rpc/
+RUN git fetch && git reset --hard fdea4dff37bc45a45472473b6fac82ac7989b997 && opam update
+RUN opam depext -i capnp afl-persistent conf-capnproto tls mirage-flow-lwt mirage-kv-lwt mirage-clock ptime cmdliner mirage-dns
+ADD --chown=opam *.opam /home/opam/capnp-rpc/
 WORKDIR /home/opam/capnp-rpc/
-RUN opam pin add -ny capnp-rpc.dev . && \
-    opam pin add -ny capnp-rpc-lwt.dev . && \
-    opam pin add -ny capnp-rpc-unix.dev . && \
-    opam pin add -ny capnp-rpc-mirage.dev . && \
-    opam depext capnp-rpc-unix capnp-rpc-mirage
-RUN opam install capnp-rpc-unix capnp-rpc-mirage alcotest-lwt afl-persistent io-page-unix tcpip mirage-vnetif
-ADD . /home/opam/capnp-rpc
-RUN sudo chown -R opam /home/opam/capnp-rpc
+RUN opam install --deps-only -t .
+ADD --chown=opam . /home/opam/capnp-rpc
 RUN opam config exec -- make all test

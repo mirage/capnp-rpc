@@ -1,22 +1,24 @@
-opam-version: "1.2"
-maintainer:   "Thomas Leonard <thomas.leonard@docker.com>"
-authors:      "Thomas Leonard <thomas.leonard@docker.com>"
-license:      "Apache"
-homepage:     "https://github.com/mirage/capnp-rpc"
-bug-reports:  "https://github.com/mirage/capnp-rpc/issues"
-dev-repo:     "https://github.com/mirage/capnp-rpc.git"
-
-build: ["jbuilder" "build" "-p" name "-j" jobs]
-build-test: ["jbuilder" "runtest" "-p" name]
-
+opam-version: "2.0"
+synopsis:
+  "Cap'n Proto is a capability-based RPC system with bindings for many languages"
+maintainer: "Thomas Leonard <thomas.leonard@docker.com>"
+authors: "Thomas Leonard <thomas.leonard@docker.com>"
+license: "Apache"
+homepage: "https://github.com/mirage/capnp-rpc"
+bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 depends: [
+  "ocaml" {>= "4.03.0"}
   "uint"
   "astring"
   "fmt"
   "logs"
   "asetmap"
-  "jbuilder" {build & >= "1.0+beta10" }
-  "alcotest" {test}
-  "afl-persistent" {test}
+  "dune" {build & >= "1.0"}
+  "alcotest" {with-test}
+  "afl-persistent" {with-test}
 ]
-available: [ocaml-version >= "4.03.0"]
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
+]
+dev-repo: "git+https://github.com/mirage/capnp-rpc.git"
