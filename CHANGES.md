@@ -1,3 +1,16 @@
+### v0.3.2
+
+- Update for various upstream API changes, switch to the opam 2 metadata
+  format, and convert from jbuilder to dune (@talex5, #152).
+
+- Adjust to mirage-stack / mirage-protocols changes (Nick Betteridge, #151).
+  * adjust to mirage-stack / mirage-protocols changes
+  * update mirage/network for upgraded Ipaddr
+  * update Dockerfile to use opam2, apt-get update, and newer opam-repository
+
+- Update dependencies from opam-repository (@talex5, #148).
+
+
 ### 0.3.1
 
 - Updates for new `x509` API and for OCaml 4.06 (#143).
