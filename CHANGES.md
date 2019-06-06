@@ -4,12 +4,10 @@
   format, and convert from jbuilder to dune (@talex5, #152).
 
 - Adjust to mirage-stack / mirage-protocols changes (Nick Betteridge, #151).
-  * adjust to mirage-stack / mirage-protocols changes
   * update mirage/network for upgraded Ipaddr
   * update Dockerfile to use opam2, apt-get update, and newer opam-repository
 
 - Update dependencies from opam-repository (@talex5, #148).
-
 
 ### 0.3.1
 
