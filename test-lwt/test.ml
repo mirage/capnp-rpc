@@ -20,6 +20,10 @@ type cs = {
   server_switch : Lwt_switch.t;
 }
 
+let ensure_removed path =
+  try Unix.unlink path
+  with Unix.Unix_error(Unix.ENOENT, _, _) -> ()
+
 (* Have the client ask the server for its bootstrap object, and return the
    resulting client-side proxy to it. *)
 let get_bootstrap cs =
@@ -54,7 +58,8 @@ let make_vats ?(serve_tls=false) ~switch ~service () =
   let id = Restorer.Id.public "" in
   let restore = Restorer.single id service in
   let server_config =
-    let socket_path = Filename.concat (Sys.getcwd ()) "server" in
+    let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) "capnp-rpc-test-server" in
+    Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
     Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem ~serve_tls (`Unix socket_path)
   in
   let server_switch = Lwt_switch.create () in
@@ -523,7 +528,9 @@ let test_crossed_calls switch =
     let restore = Restorer.(single id) service in
     let config =
       let secret_key = `PEM (Auth.Secret_key.to_pem_data secret_key) in
-      let socket_path = Filename.concat (Sys.getcwd ()) addr in
+      let name = Fmt.strf "capnp-rpc-test-%s" addr in
+      let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) name in
+      Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
       Capnp_rpc_unix.Vat_config.create ~secret_key (`Unix socket_path)
     in
     Capnp_rpc_unix.serve ~switch ~tags ~restore config >>= fun vat ->
@@ -549,7 +556,8 @@ let test_crossed_calls switch =
 let test_store switch =
   (* Persistent server configuration *)
   let db = Store.DB.create () in
-  let socket_path = Filename.concat (Sys.getcwd ()) "server" in
+  let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) "capnp-rpc-test-server" in
+  Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
   let config = Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem (`Unix socket_path) in
   let main_id = Restorer.Id.generate () in
   let start_server ~switch () =
