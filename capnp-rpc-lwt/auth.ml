@@ -46,7 +46,7 @@ module Digest = struct
 
   let of_certificate cert : t =
     let hash = default_hash in
-    let digest = X509.key_fingerprint ~hash (X509.public_key cert) in
+    let digest = X509.Public_key.fingerprint ~hash (X509.Certificate.public_key cert) in
     `Fingerprint (hash, Cstruct.to_string digest)
 
   let add_to_uri t uri =
@@ -80,7 +80,8 @@ module Digest = struct
       (* todo: [server_key_fingerprint] insists on checking the DN, so this must match
          the one in [Secret_key.x509]. Maybe we should make our own authenticator in case
          other implementations use other names. *)
-      let fingerprints = ["capnp", Cstruct.of_string digest] in
+      let domain = Domain_name.of_string_exn "capnp" in
+      let fingerprints = [domain, Cstruct.of_string digest] in
       Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprints ?time:None)
 
   module Map = Map.Make(struct
@@ -106,7 +107,7 @@ module Secret_key = struct
   let digest ?(hash=default_hash) t =
     let nc_hash = (hash :> Nocrypto.Hash.hash) in
     let pub = Nocrypto.Rsa.pub_of_priv t.priv in
-    let value = X509.key_fingerprint ~hash:nc_hash (`RSA pub) |> Cstruct.to_string in
+    let value = X509.Public_key.fingerprint ~hash:nc_hash (`RSA pub) |> Cstruct.to_string in
     `Fingerprint (hash, value)
 
   let pp_fingerprint hash f t =
@@ -119,8 +120,8 @@ module Secret_key = struct
     | None -> failwith "Invalid date_time!"
 
   let x509 t =
-    let dn = [`CN "capnp"] in
-    let csr = X509.CA.request dn (`RSA t) in
+    let dn = X509.Distinguished_name.(singleton CN) "capnp" in
+    let csr = X509.Signing_request.create dn (`RSA t) in
     let valid_from = date_time
                        ~date:(1970, 1, 1)
                        ~time:(1, 1, 1)
@@ -130,7 +131,7 @@ module Secret_key = struct
                         ~date:(9999, 12, 31)
                         ~time:(23, 59, 59)
     in
-    X509.CA.sign csr ~valid_from ~valid_until (`RSA t) dn
+    X509.Signing_request.sign csr ~valid_from ~valid_until (`RSA t) dn
 
   let of_priv priv =
     let cert = x509 priv in
@@ -151,9 +152,10 @@ module Secret_key = struct
     t
 
   let of_pem_data data =
-    match X509.Encoding.Pem.Private_key.of_pem_cstruct1 (Cstruct.of_string data) with
-    | `RSA priv -> of_priv priv
+    match X509.Private_key.decode_pem (Cstruct.of_string data) with
+    | Ok (`RSA priv) -> of_priv priv
+    | Error (`Msg msg) -> Fmt.failwith "Failed to parse secret key!@ %s" msg
 
   let to_pem_data t =
-    X509.Encoding.Pem.Private_key.to_pem_cstruct1 (`RSA t.priv) |> Cstruct.to_string
+    X509.Private_key.encode_pem (`RSA t.priv) |> Cstruct.to_string
 end
