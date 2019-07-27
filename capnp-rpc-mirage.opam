@@ -19,6 +19,7 @@ depends: [
   "arp-mirage"
   "mirage-dns"
   "mirage-stack-lwt"
+  "base64" {>= "3.0.0"}
   "alcotest-lwt" {with-test}
   "io-page-unix" {with-test}
   "tcpip" {with-test}
