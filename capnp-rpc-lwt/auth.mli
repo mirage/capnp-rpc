@@ -39,7 +39,7 @@ module Digest : sig
       matches [t]. Returns [None] if [t] is [insecure].
       Note: it currently also requires the DN field to be "capnp". *)
 
-  val of_certificate : X509.t -> t
+  val of_certificate : X509.Certificate.t -> t
   (** [of_certificate cert] is a digest of [cert]'s public key. *)
 
   val equal : t -> t -> bool
@@ -67,7 +67,7 @@ module Secret_key : sig
   val to_pem_data : t -> string
   (** [to_pem_data t] returns [t] as a PEM-encoded private key. *)
 
-  val tls_client_config : t -> authenticator:X509.Authenticator.a -> Tls.Config.client
+  val tls_client_config : t -> authenticator:X509.Authenticator.t -> Tls.Config.client
   (** [tls_client_config t ~authenticator] is the TLS client configuration to
       use for a vat with secret key [t], attempting to connect to a vat that
       can be authenticated with [authenticator]. *)
