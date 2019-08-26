@@ -1,3 +1,10 @@
+### v0.3.3
+
+- Update uint.uint32 to uint (@Cjen1, #159).
+- Update to new x509 API (@talex5, #158).
+- Require base64 >= 3.0.0 for capnp-rpc-mirage too (@talex5, #157).
+- Put test sockets in temporary directory (@talex5, #156).
+
 ### v0.3.2
 
 - Update for various upstream API changes, switch to the opam 2 metadata
