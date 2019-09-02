@@ -5,8 +5,8 @@ description: """
 This package contains the core protocol.
 Users will normally want to use `capnp-rpc-lwt` and, in most cases,
 `capnp-rpc-unix` rather than using this one directly."""
-maintainer: "Thomas Leonard <thomas.leonard@docker.com>"
-authors: "Thomas Leonard <thomas.leonard@docker.com>"
+maintainer: "Thomas Leonard <talex5@gmail.com>"
+authors: "Thomas Leonard <talex5@gmail.com>"
 license: "Apache"
 homepage: "https://github.com/mirage/capnp-rpc"
 bug-reports: "https://github.com/mirage/capnp-rpc/issues"
@@ -18,7 +18,7 @@ depends: [
   "fmt"
   "logs"
   "asetmap"
-  "dune" {build & >= "1.0"}
+  "dune" {>= "1.0"}
   "alcotest" {with-test}
   "afl-persistent" {with-test}
 ]

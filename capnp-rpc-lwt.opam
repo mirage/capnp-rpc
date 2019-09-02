@@ -4,8 +4,8 @@ synopsis:
 description: """
 This package provides a version of the Cap'n Proto RPC system using the Cap'n
 Proto serialisation format and Lwt for concurrency."""
-maintainer: "Thomas Leonard <thomas.leonard@docker.com>"
-authors: "Thomas Leonard <thomas.leonard@docker.com>"
+maintainer: "Thomas Leonard <talex5@gmail.com>"
+authors: "Thomas Leonard <talex5@gmail.com>"
 license: "Apache"
 homepage: "https://github.com/mirage/capnp-rpc"
 bug-reports: "https://github.com/mirage/capnp-rpc/issues"
@@ -29,7 +29,7 @@ depends: [
   "ptime"
   "asn1-combinators" {>= "0.2.0"}
   "x509" {>= "0.7.0"}
-  "dune" {build & >= "1.0"}
+  "dune" {>= "1.0"}
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]
