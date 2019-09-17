@@ -6,6 +6,7 @@ See [LICENSE.md](LICENSE.md) for details.
 ## Contents
 
 <!-- vim-markdown-toc GFM -->
+
 * [Overview](#overview)
 * [Status](#status)
 * [Installing](#installing)
@@ -232,29 +233,26 @@ let () =
   <img src="./diagrams/ping.svg"/>
 </p>
 
-If you're building with jbuilder, here's a suitable `jbuild` file:
+Here's a suitable `dune` file to compile the schema file and then the generated OCaml files
+(which you can now delete from your source directory):
 
 ```
-(jbuild_version 1)
-
-(executable (
-  (name main)
-  (libraries (capnp-rpc-lwt capnp-rpc-unix logs.fmt))
-  (flags (:standard -w -53-55))
-))
+(executable
+ (name main)
+ (libraries capnp-rpc-lwt capnp-rpc-unix logs.fmt)
+ (flags (:standard -w -53-55)))
 
 (rule
- ((targets (echo_api.ml echo_api.mli))
-  (deps (echo_api.capnp))
-  (action (run capnpc -o ocaml ${<}))))
+ (targets echo_api.ml echo_api.mli)
+ (deps    echo_api.capnp)
+ (action (run capnpc -o ocaml %{deps})))
 ```
 
 The service is now usable:
 
 ```bash
-$ opam install capnp-rpc-unix conf-capnproto
-$ jbuilder build --dev main.exe
-$ ./_build/default/main.exe
+$ opam depext -i capnp-rpc-unix conf-capnproto
+$ dune exec ./main.exe
 Got reply "echo:foo"
 ```
 
@@ -277,9 +275,6 @@ interface Echo {
 
 This version of the protocol adds a `heartbeat` method.
 Instead of returning the text directly, it will send it to a callback at regular intervals.
-
-Run `capnp compile` again to update the generated files
-(if you're using the jbuild file then this will happen automatically and you should delete the generated `echo_api.ml` and `echo_api.mli` files from the source directory instead).
 
 The new `heartbeat_impl` method looks like this:
 
