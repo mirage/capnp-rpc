@@ -275,7 +275,7 @@ let config_result = cmd_result vat_config
 let test_options () =
   let term = (Capnp_rpc_unix.Vat_config.cmd, Cmdliner.Term.info "main") in
   let config = Cmdliner.Term.eval
-      ~argv:[| "main"; "--secret-key-file=key.pem"; "--listen-address"; "unix:/run/socket" |] term in
+      ~argv:[| "main"; "--capnp-secret-key-file=key.pem"; "--capnp-listen-address"; "unix:/run/socket" |] term in
   let expected = `Ok (Capnp_rpc_unix.Vat_config.create
                         ~secret_key:(`File "key.pem")
                         (`Unix "/run/socket")
@@ -287,9 +287,9 @@ let test_options () =
                        (`TCP ("0.0.0.0", 7000))
                      ) in
   Cmdliner.Term.eval ~argv:[| "main";
-                              "--secret-key-file=key.pem";
-                              "--public-address"; "tcp:1.2.3.4:7001";
-                              "--listen-address"; "tcp:0.0.0.0:7000" |] term
+                              "--capnp-secret-key-file=key.pem";
+                              "--capnp-public-address"; "tcp:1.2.3.4:7001";
+                              "--capnp-listen-address"; "tcp:0.0.0.0:7000" |] term
   |> Alcotest.check config_result "Using TCP" expected
 
 let expect_ok = function
