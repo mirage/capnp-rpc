@@ -98,3 +98,7 @@ val client_only_vat :
   ?restore:Restorer.t ->
   unit -> Vat.t
 (** [client_only_vat ()] is a new vat that does not listen for incoming connections. *)
+
+val manpage_capnp_options : string
+(** [manpage_capnp_options] is the title of the section of the man-page containing the Cap'n Proto options.
+    This can be used to control where these options appear in the page (e.g. to put them below the other options). *)

@@ -1,5 +1,7 @@
 open Astring
 
+let docs = "CAP'N PROTO OPTIONS"
+
 module Auth = Capnp_rpc_lwt.Auth
 module Log = Capnp_rpc.Debug.Log
 
@@ -27,7 +29,7 @@ module Listen_address = struct
   let addr_conv = Arg.conv (of_string, pp)
 
   let cmd =
-    let i = Arg.info ["listen-address"] ~docv:"ADDR" ~doc:"Address to listen on, e.g. $(b,unix:/run/my.socket)." in
+    let i = Arg.info ~docs ["capnp-listen-address"] ~docv:"ADDR" ~doc:"Address to listen on, e.g. $(b,unix:/run/my.socket)." in
     Arg.(required @@ opt (some addr_conv) None i)
 end
 
@@ -57,7 +59,7 @@ let hashed_secret t = Secret_hash.to_string @@ snd @@ Lazy.force t.secret_key
 
 let secret_key_file =
   let open Cmdliner in
-  let i = Arg.info ["secret-key-file"] ~docv:"PATH"
+  let i = Arg.info ~docs ["capnp-secret-key-file"] ~docv:"PATH"
       ~doc:"File in which to store secret key (or \"\" for an ephemeral key)." in
   Arg.(required @@ opt (some string) None i)
 
@@ -141,11 +143,11 @@ let equal {backlog; secret_key; serve_tls; listen_address; public_address} b =
   Auth.Secret_key.equal (fst @@ Lazy.force secret_key) (fst @@ Lazy.force b.secret_key)
 
 let public_address =
-  let i = Arg.info ["public-address"] ~docv:"ADDR" ~doc:"Address to tell others to connect on." in
+  let i = Arg.info ~docs ["capnp-public-address"] ~docv:"ADDR" ~doc:"Address to tell others to connect on." in
   Arg.(value @@ opt (some Listen_address.addr_conv) None i)
 
 let disable_tls =
-  let i = Arg.info ["disable-tls"] ~doc:"Do not use TLS for incoming connections." in
+  let i = Arg.info ~docs ["capnp-disable-tls"] ~doc:"Do not use TLS for incoming connections." in
   Arg.(value @@ flag i)
 
 let cmd =

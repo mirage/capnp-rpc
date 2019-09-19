@@ -589,7 +589,7 @@ based on command-line arguments provided by the user.
 To test, start the server running:
 
 ```
-$ ./_build/default/main.exe serve --secret-key-file=key.pem --listen-address tcp:127.0.0.1:7000
+$ ./_build/default/main.exe serve --capnp-secret-key-file=key.pem --capnp-listen-address tcp:127.0.0.1:7000
 echo service running at: capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
 ```
 
@@ -1251,8 +1251,8 @@ Start the server with:
 
 ```
 $ ./_build/default/test-bin/calc.bc serve \
-    --listen-address unix:/tmp/calc.socket \
-    --secret-key-file=key.pem
+    --capnp-listen-address unix:/tmp/calc.socket \
+    --capnp-secret-key-file=key.pem
 Waiting for incoming connections at:
 capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket
 ```
@@ -1265,7 +1265,7 @@ In another terminal, run the client and connect to the address displayed by the 
 ./_build/default/test-bin/calc.bc connect capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket
 ```
 
-You can also use `--disable-tls` if you prefer to run without encryption
+You can also use `--capnp-disable-tls` if you prefer to run without encryption
 (e.g. for interoperability with another Cap'n Proto implementation that doesn't support TLS).
 In that case, the client URL would be `capnp://insecure@/tmp/calc.socket`.
 
