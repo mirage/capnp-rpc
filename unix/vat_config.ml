@@ -71,7 +71,7 @@ let read_whole_file path =
   data
 
 let write_whole_file path data =
-  let oc = open_out_gen [Open_wronly; Open_creat; Open_excl; Open_binary] 0o700 path in
+  let oc = open_out_gen [Open_wronly; Open_creat; Open_excl; Open_binary] 0o600 path in
   output_string oc data;
   close_out oc
 
