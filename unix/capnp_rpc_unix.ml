@@ -26,17 +26,49 @@ let parse_uri s =
     | Ok _ -> Ok uri    (* (just check it parses) *)
     | Error _ as e -> e
 
-let sturdy_uri =
-  let of_string s =
-    if String.is_prefix s ~affix:"capnp://" then parse_uri s
-    else if Sys.file_exists s then (
-      let ch = open_in s in
+module Cap_file = struct
+  let load_uri path =
+    try
+      let ch = open_in path in
       let len = in_channel_length ch in
       let data = really_input_string ch len in
       close_in ch;
-      parse_uri data
-    ) else error "Expected a URI starting with \"capnp://\" \
-                  or the path to a file containing such a URI, but got %S." s
+      parse_uri (String.trim data)
+    with ex ->
+      if Sys.file_exists path then
+        error "Error loading %S: %a" path Fmt.exn ex
+      else
+        error "File %S does not exist" path
+
+  let load vat path =
+    match load_uri path with
+    | Ok uri -> Vat.import vat uri
+    | Error _ as e -> e
+
+  let save_uri uri path =
+    try
+      let data = Uri.to_string uri ^ "\n" in
+      let oc = open_out_gen [Open_wronly; Open_creat; Open_trunc; Open_binary] 0o600 path in
+      output_string oc data;
+      close_out oc;
+      Ok ()
+    with ex ->
+      error "Error saving to %S: %a" path Fmt.exn ex
+
+  let save_sturdy vat sr path =
+    save_uri (Vat.export vat sr) path
+
+  let save_service vat id path =
+    let uri = Vat.sturdy_uri vat id in
+    save_uri uri path
+end
+
+let sturdy_uri =
+  let of_string s =
+    if String.is_prefix s ~affix:"capnp://" then parse_uri s
+    else if Sys.file_exists s then Cap_file.load_uri s
+    else error "Expected a URI starting with \"capnp://\" \
+                or the path to a file containing such a URI, but got %S." s
   in
   Cmdliner.Arg.conv (of_string, Uri.pp_hum)
 

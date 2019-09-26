@@ -79,6 +79,18 @@ module File_store : sig
   (** [remove t ~digest] removes the stored data for [digest]. *)
 end
 
+module Cap_file : sig
+  val load : Vat.t -> string -> (_ Sturdy_ref.t, [> `Msg of string]) result
+  (** [load vat path] loads the contents of [path] as a capability URI. *)
+
+  val save_sturdy : Vat.t -> _ Sturdy_ref.t -> string -> (unit, [> `Msg of string]) result
+  (** [save_sturdy vat sr path] saves [sr] to [path], with a mode of [0o600]. *)
+
+  val save_service : Vat.t -> Capnp_rpc_lwt.Restorer.Id.t -> string ->
+    (unit, [> `Msg of string]) result
+  (** [save_service vat id path] saves [vat/id] to [path], with a mode of [0o600]. *)
+end
+
 val sturdy_uri : Uri.t Cmdliner.Arg.conv
 (** A cmdliner argument converter for a "capnp://" URI (or the path of a file containing such a URI). *)
 

@@ -131,7 +131,7 @@ module type VAT_NETWORK = sig
     val sturdy_uri : t -> service_id -> Uri.t
     (** [sturdy_uri t id] is [sturdy_ref t id |> export t]. *)
 
-    val import : t -> Uri.t -> ('a sturdy_ref, [`Msg of string]) result
+    val import : t -> Uri.t -> ('a sturdy_ref, [> `Msg of string]) result
     (** [import t uri] parses [uri] as a "capnp://" URI. *)
 
     val import_exn : t -> Uri.t -> 'a sturdy_ref
