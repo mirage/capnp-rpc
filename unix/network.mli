@@ -18,6 +18,10 @@ module Location : sig
 
   val tcp : host:string -> port:int -> t
   (** [tcp ~host port] is [`TCP (host, port)]. *)
+
+  val of_string : string -> (t, [> `Msg of string]) result
+
+  val cmdliner_conv : t Cmdliner.Arg.conv
 end
 
 include Capnp_rpc_lwt.S.NETWORK with

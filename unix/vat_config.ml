@@ -1,5 +1,3 @@
-open Astring
-
 let docs = "CAP'N PROTO OPTIONS"
 
 module Auth = Capnp_rpc_lwt.Auth
@@ -8,29 +6,11 @@ module Log = Capnp_rpc.Debug.Log
 module Listen_address = struct
   include Network.Location
 
-  let parse_tcp s =
-    match String.cut ~sep:":" s with
-    | None -> Error (`Msg "Missing :PORT in listen address")
-    | Some (host, port) ->
-      match String.to_int port with
-      | None -> Error (`Msg "PORT must be an integer")
-      | Some port ->
-        Ok (tcp ~host ~port)
-
-  let of_string s =
-    match String.cut ~sep:":" s with
-    | Some ("unix", path) -> Ok (unix path)
-    | Some ("tcp", tcp) -> parse_tcp tcp
-    | None -> Error (`Msg "Missing ':'")
-    | Some _ -> Error (`Msg "Only tcp:HOST:PORT and unix:PATH addresses are currently supported")
-
   open Cmdliner
-
-  let addr_conv = Arg.conv (of_string, pp)
 
   let cmd =
     let i = Arg.info ~docs ["capnp-listen-address"] ~docv:"ADDR" ~doc:"Address to listen on, e.g. $(b,unix:/run/my.socket)." in
-    Arg.(required @@ opt (some addr_conv) None i)
+    Arg.(required @@ opt (some cmdliner_conv) None i)
 end
 
 module Secret_hash : sig
@@ -144,7 +124,7 @@ let equal {backlog; secret_key; serve_tls; listen_address; public_address} b =
 
 let public_address =
   let i = Arg.info ~docs ["capnp-public-address"] ~docv:"ADDR" ~doc:"Address to tell others to connect on." in
-  Arg.(value @@ opt (some Listen_address.addr_conv) None i)
+  Arg.(value @@ opt (some Network.Location.cmdliner_conv) None i)
 
 let disable_tls =
   let i = Arg.info ~docs ["capnp-disable-tls"] ~doc:"Do not use TLS for incoming connections." in
