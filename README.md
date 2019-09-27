@@ -245,7 +245,7 @@ Here's a suitable `dune` file to compile the schema file and then the generated 
 (rule
  (targets echo_api.ml echo_api.mli)
  (deps    echo_api.capnp)
- (action (run capnpc -o ocaml %{deps})))
+ (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
 ```
 
 The service is now usable:

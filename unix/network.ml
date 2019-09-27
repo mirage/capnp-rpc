@@ -2,6 +2,8 @@ module Log = Capnp_rpc.Debug.Log
 module Tls_wrapper = Capnp_rpc_lwt.Tls_wrapper.Make(Unix_flow)
 
 module Location = struct
+  open Astring
+
   include Capnp_rpc_lwt.Capnp_address.Location
 
   let abs_path p =
@@ -15,6 +17,24 @@ module Location = struct
 
   let unix x = `Unix (abs_path x)
   let tcp ~host ~port = `TCP (host, port)
+
+  let parse_tcp s =
+    match String.cut ~sep:":" s with
+    | None -> Error (`Msg "Missing :PORT in listen address")
+    | Some (host, port) ->
+      match String.to_int port with
+      | None -> Error (`Msg "PORT must be an integer")
+      | Some port ->
+        Ok (tcp ~host ~port)
+
+  let of_string s =
+    match String.cut ~sep:":" s with
+    | Some ("unix", path) -> Ok (unix path)
+    | Some ("tcp", tcp) -> parse_tcp tcp
+    | None -> Error (`Msg "Missing ':'")
+    | Some _ -> Error (`Msg "Only tcp:HOST:PORT and unix:PATH addresses are currently supported")
+
+  let cmdliner_conv = Cmdliner.Arg.conv (of_string, pp)
 end
 
 module Address
