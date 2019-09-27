@@ -19,7 +19,7 @@ type ('a, 'b) method_t = 'a -> (unit -> unit) -> Core_types.struct_ref
 let pp_method = Capnp.RPC.Registry.pp_method
 
 class type generic = object
-  method dispatch : interface_id:Uint64.t -> method_id:int -> abstract_method_t
+  method dispatch : interface_id:Stdint.Uint64.t -> method_id:int -> abstract_method_t
   method release : unit
   method pp : Format.formatter -> unit
 end

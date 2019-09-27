@@ -109,7 +109,7 @@ module Response = struct
     let msg = B.Message.init_root () in
     let ret = B.Message.return_init msg in
     let p = B.Return.results_init ret in
-    B.Payload.content_set_interface p (Some Uint32.zero);   (* Cap index 0 *)
+    B.Payload.content_set_interface p (Some Stdint.Uint32.zero);   (* Cap index 0 *)
     Builder ret
 
   let of_builder x = Builder x

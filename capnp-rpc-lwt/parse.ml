@@ -138,7 +138,7 @@ module Make_basic
   let parse_release x =
     let open Reader in
     let export_id = Release.id_get x |> ExportId.of_uint32 in
-    let ref_count = Release.reference_count_get x |> Uint32.to_int in
+    let ref_count = Release.reference_count_get x |> Stdint.Uint32.to_int in
     `Release (export_id, ref_count)
 
   (* Parse a message received from our peer. Returns [`Not_implemented`] if we couldn't understand it. *)

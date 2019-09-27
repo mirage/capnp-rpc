@@ -41,21 +41,21 @@ module Untyped = struct
     x (StructStorage.cast_reader req) release
 
   let get_cap a i =
-    Core_types.Attachments.cap (Uint32.to_int i) (Msg.unwrap_attachments a)
+    Core_types.Attachments.cap (Stdint.Uint32.to_int i) (Msg.unwrap_attachments a)
 
   let add_cap a cap =
-    Core_types.Attachments.add_cap (Msg.unwrap_attachments a) cap |> Uint32.of_int
+    Core_types.Attachments.add_cap (Msg.unwrap_attachments a) cap |> Stdint.Uint32.of_int
 
   let clear_cap a i =
-    Core_types.Attachments.clear_cap (Msg.unwrap_attachments a) (Uint32.to_int i)
+    Core_types.Attachments.clear_cap (Msg.unwrap_attachments a) (Stdint.Uint32.to_int i)
 
   let unknown_interface ~interface_id _req release_params =
     release_params ();
-    Core_types.fail ~ty:`Unimplemented "Unknown interface %a" Uint64.printer interface_id
+    Core_types.fail ~ty:`Unimplemented "Unknown interface %a" Stdint.Uint64.printer interface_id
 
   let unknown_method ~interface_id ~method_id _req release_params =
     release_params ();
-    Core_types.fail ~ty:`Unimplemented "Unknown method %a.%d" Uint64.printer interface_id method_id
+    Core_types.fail ~ty:`Unimplemented "Unknown method %a.%d" Stdint.Uint64.printer interface_id method_id
 
   class type generic_service = Service.generic
 end

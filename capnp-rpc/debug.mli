@@ -6,7 +6,7 @@ module Log : Logs.LOG
 val src : Logs.src
 (** Control the log level for [Log]. *)
 
-val qid_tag : Uint32.t Logs.Tag.def
+val qid_tag : Stdint.Uint32.t Logs.Tag.def
 (** [qid_tag] is used in log reports to tag the question (or answer) ID in the call. *)
 
 exception Invariant_broken of (Format.formatter -> unit)
