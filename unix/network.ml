@@ -75,6 +75,7 @@ let connect_socket = function
   | `TCP (host, port) ->
     Logs.info (fun f -> f "Connecting to %s:%d..." host port);
     let socket = Unix.(socket PF_INET SOCK_STREAM 0) in
+    Unix.setsockopt socket Unix.SO_KEEPALIVE true;
     Unix.connect socket (Unix.ADDR_INET (addr_of_host host, port));
     socket
 
