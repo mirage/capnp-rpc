@@ -8,7 +8,7 @@ module Calc = Examples.Calc
 let pp_qid f = function
   | None -> ()
   | Some x ->
-    let s = Uint32.to_string x in
+    let s = Stdint.Uint32.to_string x in
     Fmt.(styled `Magenta (fun f x -> Fmt.pf f " (qid=%s)" x)) f s
 
 let reporter =

@@ -6,7 +6,7 @@ let pp f = function
 
 let to_cap_index = function
   | None -> None
-  | Some i -> Some (Uint32.to_int i)
+  | Some i -> Some (Stdint.Uint32.to_int i)
 
 (* [walk ss x xs] is the interface cap index at path [x :: xs] within struct storage [ss]. *)
 let rec walk ss x = function

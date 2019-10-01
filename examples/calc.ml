@@ -24,7 +24,7 @@ module Expr = struct
     | Expression.Literal f -> Float f
     | Expression.PreviousResult None -> failwith "PreviousResult but no cap!"
     | Expression.PreviousResult (Some v) -> Prev v
-    | Expression.Parameter p -> Param (Uint32.to_int p)
+    | Expression.Parameter p -> Param (Stdint.Uint32.to_int p)
     | Expression.Call c ->
       let fn_obj = Expression.Call.function_get c |> or_fail "Missing fn" in
       let params = Expression.Call.params_get_list c |> List.map parse in
@@ -48,7 +48,7 @@ let rec write_expr b expr =
   match expr with
   | Float f -> Expression.literal_set b f
   | Prev v -> Expression.previous_result_set b (Some v)
-  | Param i -> Expression.parameter_set b (Uint32.of_int i)
+  | Param i -> Expression.parameter_set b (Stdint.Uint32.of_int i)
   | Call (f, args) ->
     let c = Expression.call_init b in
     Expression.Call.function_set c (Some f);

@@ -1365,7 +1365,7 @@ module Level0 = struct
 
   let send t m = Queue.add m t.to_server
 
-  let qid_of_int x = S.EP.In.QuestionId.of_uint32 (Uint32.of_int x)
+  let qid_of_int x = S.EP.In.QuestionId.of_uint32 (Stdint.Uint32.of_int x)
 
   let init ~bootstrap =
     let from_server = Queue.create () in

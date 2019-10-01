@@ -1106,18 +1106,8 @@ Note that calling `wait_forever` prevents further use of the session, however.
 
 ### How can I use this with Mirage?
 
-`capnp` uses the `uint` library, which has C stubs and does not work on most Mirage backends.
-As a quick hack, you can do:
-
-```
-opam pin add uint 'https://github.com/talex5/ocaml-uint.git#dummy'
-```
-
-This allows it to compile and run as a unikernel, by defining `type Uint64.t = Int64.t`, etc.
-However, this changes the behaviour of unsigned integers, so you should be careful with it.
-In particular, OCaml's built-in polymorphic comparison operators (`>`, etc) may give incorrect
-results.
-Ideally, someone would add proper Mirage support to the `uint` library.
+Note: `capnp` uses the `stdint` library, which has C stubs and
+[might need patching](https://github.com/mirage/mirage/issues/885) to work with the Xen backend.
 <https://github.com/ocaml/ocaml/pull/1201#issuecomment-333941042> explains why OCaml doesn't have unsigned integer support.
 
 Here is a suitable `config.ml`:

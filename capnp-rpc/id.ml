@@ -1,5 +1,7 @@
 (** Unique identifiers. *)
 
+open Stdint
+
 module type S = sig
   type t = private Uint32.t
   val zero : t
