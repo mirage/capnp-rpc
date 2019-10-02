@@ -150,6 +150,10 @@ module Capability : sig
       peer. Any time you extract a capability from a struct or struct promise,
       it must eventually be freed by calling [dec_ref] on it. *)
 
+  val with_ref : 'a t -> ('a t -> 'b Lwt.t) -> 'b Lwt.t
+  (** [with_ref t fn] runs [fn t] and then calls [dec_ref t] (whether [fn]
+      succeeds or not). *)
+
   val pp : 'a t Fmt.t
 end
 
