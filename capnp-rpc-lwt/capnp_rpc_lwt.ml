@@ -8,6 +8,7 @@ module Log = Capnp_rpc.Debug.Log
 module RO_array = Capnp_rpc.RO_array
 
 module Capability = Capability
+
 module StructRef = struct
   type 'a t = Core_types.struct_ref
 

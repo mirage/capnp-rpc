@@ -138,11 +138,10 @@ let test_registry switch =
   let registry_impl = Registry.local () in
   make_vats ~switch ~service:registry_impl () >>= fun cs ->
   get_bootstrap cs >>= fun registry ->
-  let echo_service = Registry.echo_service registry in
+  Capability.with_ref (Registry.echo_service registry) @@ fun echo_service ->
   Registry.unblock registry >>= fun () ->
   Echo.ping echo_service "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
   Capability.dec_ref registry;
-  Capability.dec_ref echo_service;
   Lwt.return ()
 
 let test_embargo switch =

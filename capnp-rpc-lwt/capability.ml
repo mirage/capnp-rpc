@@ -12,6 +12,12 @@ module Request = Request
 
 let inc_ref = Core_types.inc_ref
 let dec_ref = Core_types.dec_ref
+
+let with_ref t fn =
+  Lwt.finalize
+    (fun () -> fn t)
+    (fun () -> dec_ref t; Lwt.return_unit)
+
 let pp f x = x#pp f
 
 let broken = Core_types.broken_cap
