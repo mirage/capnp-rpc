@@ -47,6 +47,15 @@ let ping t ?(slow=false) msg =
   Params.msg_set p msg;
   Capability.call_for_value_exn t method_id req >|= Results.reply_get
 
+let ping_result t ?(slow=false) msg =
+  let open Echo.Ping in
+  let req, p = Capability.Request.create Params.init_pointer in
+  Params.slow_set p slow;
+  Params.msg_set p msg;
+  Capability.call_for_value t method_id req >|= function
+  | Ok x -> Ok (Results.reply_get x)
+  | Error _ as e -> e
+
 let unblock t =
   let open Echo.Unblock in
   let req = Capability.Request.create_no_args () in
