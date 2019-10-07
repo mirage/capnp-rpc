@@ -546,11 +546,43 @@ let test_crossed_calls switch =
   to_server >>= fun to_server ->
   Logs.info (fun f -> f ~tags:Test_utils.client_tags "%a" Capnp_rpc_unix.Vat.dump client);
   Logs.info (fun f -> f ~tags:Test_utils.server_tags "%a" Capnp_rpc_unix.Vat.dump server);
-  Echo.ping to_client "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
-  Echo.ping to_server "ping" >|= Alcotest.(check string) "Ping response" "got:0:ping" >>= fun () ->
+  let s_got = Echo.ping_result to_client "ping" in
+  let c_got = Echo.ping_result to_server "ping" in
+  s_got >>= fun s_got ->
+  c_got >>= fun c_got ->
+  begin match c_got, s_got with
+    | Ok x, Ok y -> Lwt.return (x, y)
+    | Ok x, Error _ ->
+      (* Server got an error. Try client again. *)
+      Sturdy_ref.connect_exn sr_to_client >>= fun to_client ->
+      Capability.with_ref to_client @@ fun to_client ->
+      Echo.ping to_client "ping" >|= fun s_got -> (x, s_got)
+    | Error _, Ok y ->
+      (* Client got an error. Try server again. *)
+      Sturdy_ref.connect_exn sr_to_server >>= fun to_server ->
+      Capability.with_ref to_server @@ fun to_server ->
+      Echo.ping to_server "ping" >|= fun c_got -> (c_got, y)
+    | Error e1, Error e2 ->
+      Fmt.failwith "@[<v>Both connections failed!@,%a@,%a@]"
+        Capnp_rpc.Error.pp e1
+        Capnp_rpc.Error.pp e2
+  end >>= fun (c_got, s_got) ->
+  Alcotest.(check string) "Client's ping response" "got:0:ping" c_got;
+  Alcotest.(check string) "Server's ping response" "got:0:ping" s_got;
   Capability.dec_ref to_client;
   Capability.dec_ref to_server;
   Lwt.return_unit
+
+(* Run test_crossed_calls several times to try to trigger the various behaviours. *)
+let test_crossed_calls _switch =
+  let rec aux i =
+    if i = 0 then Lwt.return_unit
+    else (
+      Lwt_switch.with_switch test_crossed_calls >>= fun () ->
+      aux (i - 1)
+    )
+  in
+  aux 10
 
 let test_store switch =
   (* Persistent server configuration *)

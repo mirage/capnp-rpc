@@ -141,6 +141,8 @@ let serve ?switch ?tags ?restore config =
           | Lwt.Canceled -> Lwt.return_unit
           | ex -> Lwt.fail ex
         )
+      >>= fun () ->
+      Lwt_unix.close lwt_socket
     );
   Lwt.return vat
 
