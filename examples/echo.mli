@@ -9,7 +9,7 @@ val ping : t -> ?slow:bool -> string -> string Lwt.t
 (** [ping t msg] sends [msg] to [t] and returns its response.
     If [slow] is given, the service will wait until [unblock] is called before replying. *)
 
-val ping_result : t -> ?slow:bool -> string -> (string, Capnp_rpc.Error.t) Lwt_result.t
+val ping_result : t -> ?slow:bool -> string -> (string, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
 (** [ping t msg] sends [msg] to [t] and returns its response.
     If [slow] is given, the service will wait until [unblock] is called before replying. *)
 

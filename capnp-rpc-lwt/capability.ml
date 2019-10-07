@@ -64,7 +64,7 @@ let call_and_wait cap (m : ('t, 'a, 'b StructStorage.reader_t) method_t) req =
   let finish = lazy (Core_types.dec_ref result) in
   Lwt.on_cancel p (fun () -> Lazy.force finish);
   result#when_resolved (function
-      | Error _ as e -> Lwt.wakeup r e
+      | Error e -> Lwt.wakeup r (Error (`Capnp e))
       | Ok resp ->
         Lazy.force finish;
         let payload = Msg.Response.readable resp in
@@ -84,7 +84,7 @@ let call_for_value cap m req =
 let call_for_value_exn cap m req =
   call_for_value cap m req >>= function
   | Ok x -> Lwt.return x
-  | Error e ->
+  | Error (`Capnp e) ->
     let msg = Fmt.strf "Error calling %t(%a): %a"
         cap#pp
         Capnp.RPC.MethodID.pp m

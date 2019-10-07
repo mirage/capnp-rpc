@@ -88,7 +88,7 @@ module Capability : sig
       instead for a simpler interface). *)
 
   val call_and_wait : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
-    'a Request.t -> ('b StructStorage.reader_t * (unit -> unit)) or_error Lwt.t
+    'a Request.t -> (('b StructStorage.reader_t * (unit -> unit)), [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
   (** [call_and_wait t m req] does [call t m req] and waits for the response.
       This is simpler than using [call], but doesn't support pipelining
       (you can't use any capabilities in the response in another message until the
@@ -102,7 +102,7 @@ module Capability : sig
       for remote calls. *)
 
   val call_for_value : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
-    'a Request.t -> 'b StructStorage.reader_t or_error Lwt.t
+    'a Request.t -> ('b StructStorage.reader_t, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
   (** [call_for_value t m req] is similar to [call_and_wait], but automatically
       releases any capabilities in the response before returning. Use this if
       you aren't expecting any capabilities in the response. *)
@@ -112,7 +112,7 @@ module Capability : sig
   (** Wrapper for [call_for_value] that turns errors into Lwt failures. *)
 
   val call_for_unit : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
-    'a Request.t -> unit or_error Lwt.t
+    'a Request.t -> (unit, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
   (** Wrapper for [call_for_value] that ignores the result. *)
 
   val call_for_unit_exn : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
@@ -432,7 +432,7 @@ module Persistence : sig
   (** [with_sturdy_ref sr Service.Foo.local obj] is like [Service.Foo.local obj],
       but responds to [save] calls by returning [sr]. *)
 
-  val save : 'a Capability.t -> (Uri.t, Capnp_rpc.Error.t) result Lwt.t
+  val save : 'a Capability.t -> (Uri.t, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
   (** [save cap] calls the persistent [save] method on [cap].
       Note that not all capabilities can be saved.
       todo: this should return an ['a Sturdy_ref.t]; see {!Sturdy_ref.reader}. *)
