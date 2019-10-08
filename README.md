@@ -443,7 +443,7 @@ let () =
 Running this will give something like:
 
 ```
-$ dune exec ./main.ex
+$ dune exec ./main.exe
 Connecting to echo service at: capnp://sha-256:3Tj5y5Q2qpqN3Sbh0GRPxgORZw98_NtrU2nLI0-Tn6g@127.0.0.1:7000/eBIndzZyoVDxaJdZ8uh_xBx5V1lfXWTJCDX-qEkgNZ4
 Callback got "foo"
 Callback got "foo"

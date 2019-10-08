@@ -1,3 +1,61 @@
+### v0.4.0
+
+Breaking changes:
+
+- Wrap errors with the `` `Capnp`` tag to make it easier to compose with other types of error (#172, #173).
+
+- Prefix all command-line options with `capnp-` (#163).
+  e.g. `--listen-address` is now `--capnp-listen-address`.
+  The old names were confusing for applications that supported other protocols too (e.g. a web server).
+
+New features:
+
+- Add `Capability.with_ref` convenience function (#170).
+  This automatically calls `dec_ref` when done.
+
+- Add Unix `Cap_file` module to load and save `Sturdy_refs` (#165).
+  In particular, this ensures that saved cap files get a mode of `0o600`, since they contain secrets.
+
+- Export cmdliner network address parsing (#165).
+  This is useful if you don't want to use the default option parsing.
+  For example, if you want to make Cap'n Proto an optional feature of your program.
+
+- Upgrade from `uint` (which is deprecated) to the newer `stdint` (#166, #168).
+  The latest version of `uint` is just a wrapper around `stdint`,
+  so this shouldn't break anything if you are using the latest version.
+
+- Put cmdliner options in their own man-page section (#163).
+  Use `Capnp_rpc_unix.manpage_capnp_options` to control where in your man-page
+  they appear.
+
+- Enable `SO_KEEPALIVE` for TCP connections (#167).
+  For use with Docker's libnetwork, try something like this in your `stack.yml`:
+
+  ```
+  sysctls:
+    - 'net.ipv4.tcp_keepalive_time=60'
+  ```
+
+Bug fixes:
+
+- Close listening socket when shutting down a vat (#171).
+
+- Don't mark secret keys as executable (#164).
+
+- Update README example to use dune (#162).
+
+Build changes:
+
+- Replace topkg with dune-release (#169)
+
+- Update opam email address and fix missing bound (#161).
+
+- Update the `dune` files to allow duniverse / vendored builds (#165).
+
+- Fix the crossed-calls unit test (#171).
+
+- Force all capnp-rpc subpackages to have the same version (#173).
+
 ### v0.3.3
 
 - Update uint.uint32 to uint (@Cjen1, #159).
