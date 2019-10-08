@@ -65,7 +65,8 @@ This library should be used with the [capnp-ocaml][] schema compiler, which gene
 
 RPC Level 2 is complete, with encryption and authentication using TLS and support for persistence.
 
-The library has been only lightly used in real systems, but has unit tests and AFL fuzz tests that cover most of the core logic.
+The library has unit tests and AFL fuzz tests that cover most of the core logic.
+It is used as the RPC system in [ocaml-ci][].
 
 The default network provided supports TCP and Unix-domain sockets, both with or without TLS.
 For two-party networking, you can provide any bi-directional byte stream (satisfying the Mirage flow signature)
@@ -80,7 +81,7 @@ Until that is implemented, Carol can ask Bob for a persistent reference (sturdy 
 
 To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
 
-    opam depext -i capnp-rpc-unix conf-capnproto
+    opam depext -i capnp-rpc-unix
 
 ## Structure of the library
 
@@ -251,7 +252,7 @@ Here's a suitable `dune` file to compile the schema file and then the generated 
 The service is now usable:
 
 ```bash
-$ opam depext -i capnp-rpc-unix conf-capnproto
+$ opam depext -i capnp-rpc-unix
 $ dune exec ./main.exe
 Got reply "echo:foo"
 ```
@@ -288,7 +289,7 @@ The new `heartbeat_impl` method looks like this:
       | None -> Service.fail "No callback parameter!"
       | Some callback ->
         Service.return_lwt @@ fun () ->
-        notify callback msg
+        Capability.with_ref callback (notify ~msg)
 ```
 
 Note that all parameters in Cap'n Proto are optional, so we have to check for `callback` not being set
@@ -301,17 +302,16 @@ Here, the whole of the rest of the method is the argument to `return_lwt`, which
 `notify callback msg` just sends a few messages to `callback` in a loop, and then releases it:
 
 ```ocaml
-let notify callback msg =
+let (>>!=) = Lwt_result.bind		(* Return errors *)
+
+let notify callback ~msg =
   let rec loop = function
     | 0 ->
-      Capability.dec_ref callback;
       Lwt.return @@ Ok (Service.Response.create_empty ())
     | i ->
-      Callback.log callback msg >>= function
-      | Error _ as e -> Capability.dec_ref callback; Lwt.return e
-      | Ok () ->
-        Lwt_unix.sleep 1.0 >>= fun () ->
-        loop (i - 1)
+      Callback.log callback msg >>!= fun () ->
+      Lwt_unix.sleep 1.0 >>= fun () ->
+      loop (i - 1)
   in
   loop 3
 ```
@@ -336,7 +336,6 @@ let heartbeat t msg callback =
 In `main.ml`, we can now wrap a regular OCaml function as the callback:
 
 ```ocaml
-open Lwt.Infix
 open Capnp_rpc_lwt
 
 let () =
@@ -347,10 +346,8 @@ let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
 
 let run_client service =
-  let callback = Echo.Callback.local callback_fn in
-  Echo.heartbeat service "foo" callback >>= fun () ->
-  Capability.dec_ref callback;
-  Lwt.return_unit
+  Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
+  Echo.heartbeat service "foo" callback
 
 let () =
   Lwt_main.run begin
@@ -415,10 +412,8 @@ let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
 
 let run_client service =
-  let callback = Echo.Callback.local callback_fn in
-  Echo.heartbeat service "foo" callback >>= fun () ->
-  Capability.dec_ref callback;
-  Lwt.return_unit
+  Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
+  Echo.heartbeat service "foo" callback
 
 let secret_key = `Ephemeral
 let listen_address = `TCP ("127.0.0.1", 7000)
@@ -448,7 +443,7 @@ let () =
 Running this will give something like:
 
 ```
-$ ./_build/default/main.exe
+$ dune exec ./main.ex
 Connecting to echo service at: capnp://sha-256:3Tj5y5Q2qpqN3Sbh0GRPxgORZw98_NtrU2nLI0-Tn6g@127.0.0.1:7000/eBIndzZyoVDxaJdZ8uh_xBx5V1lfXWTJCDX-qEkgNZ4
 Callback got "foo"
 Callback got "foo"
@@ -518,7 +513,56 @@ that can be used in exactly the same way as the direct reference we used before.
 #### Separate processes
 
 The example above runs the client and server in a single process.
-To run them in separate processes we just need to add some command-line parsing to let the user choose whether to run as a server or as a client:
+To run them in separate processes we just need to split `main.ml` into separate files
+and add some command-line parsing to let the user pass the URL.
+Here's a suitable `server.ml`:
+
+```ocaml
+open Lwt.Infix
+open Capnp_rpc_lwt
+
+let () =
+  Logs.set_level (Some Logs.Warning);
+  Logs.set_reporter (Logs_fmt.reporter ())
+
+let cap_file = "echo.cap"
+
+let serve config =
+  Lwt_main.run begin
+    let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
+    let restore = Restorer.single service_id Echo.local in
+    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
+    match Capnp_rpc_unix.Cap_file.save_service vat service_id cap_file with
+    | Error `Msg m -> failwith m
+    | Ok () ->
+      Fmt.pr "Server running. Connect using %S.@." cap_file;
+      fst @@ Lwt.wait ()  (* Wait forever *)
+  end
+
+open Cmdliner
+
+let serve_cmd =
+  Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
+  let doc = "run the server" in
+  Term.info "serve" ~doc
+
+let () =
+  Term.eval serve_cmd |> Term.exit
+```
+
+The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable `Vat_config`
+based on command-line arguments provided by the user.
+
+To test, start the server running:
+
+```
+$ dune exec -- ./server.exe \
+    --capnp-secret-key-file key.pem \
+    --capnp-listen-address tcp:localhost:7000
+Server running. Connect using "echo.cap".
+```
+
+And here's the corresponding `client.ml`:
 
 ```ocaml
 open Lwt.Infix
@@ -532,20 +576,8 @@ let callback_fn msg =
   Fmt.pr "Callback got %S@." msg
 
 let run_client service =
-  let callback = Echo.Callback.local callback_fn in
-  Echo.heartbeat service "foo" callback >>= fun () ->
-  Capability.dec_ref callback;
-  Lwt.return_unit
-
-let serve config =
-  Lwt_main.run begin
-    let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-    let restore = Restorer.single service_id Echo.local in
-    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
-    let uri = Capnp_rpc_unix.Vat.sturdy_uri vat service_id in
-    Fmt.pr "echo service running at: %a@." Uri.pp_hum uri;
-    fst @@ Lwt.wait ()  (* Wait forever *)
-  end
+  Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
+  Echo.heartbeat service "foo" callback
 
 let connect uri =
   Lwt_main.run begin
@@ -562,47 +594,24 @@ let connect_addr =
   let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server (capnp://...)" in
   Arg.(required @@ pos 0 (some Capnp_rpc_unix.sturdy_uri) None i)
 
-let serve_cmd =
-  Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
-  let doc = "run the server" in
-  Term.info "serve" ~doc
-
 let connect_cmd =
   let doc = "run the client" in
   Term.(const connect $ connect_addr),
   Term.info "connect" ~doc
 
-let default_cmd =
-  let doc = "capnp-rpc demo app" in
-  Term.(ret (const (`Help (`Pager, None)))),
-  Term.info "demo" ~version:"v0.1" ~doc
-
-let cmds = [serve_cmd; connect_cmd]
-
 let () =
-  Term.eval_choice default_cmd cmds |> Term.exit
+  Term.eval connect_cmd |> Term.exit
 ```
 
-The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable `Vat_config`
-based on command-line arguments provided by the user.
-
-To test, start the server running:
+With the server still running in another window, run the client using the `echo.cap` file generated by the server:
 
 ```
-$ ./_build/default/main.exe serve --capnp-secret-key-file=key.pem --capnp-listen-address tcp:127.0.0.1:7000
-echo service running at: capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
-```
-
-Then run the client, using the URL printed by the server:
-
-```
-$ ./_build/default/main.exe connect capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
+$ dune exec ./client.exe echo.cap
 Connecting to echo service at: capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
 Callback got "foo"
 Callback got "foo"
 Callback got "foo"
 ```
-
 
 ### Pipelining
 
@@ -656,7 +665,8 @@ let run_client service =
   let logger = Echo.get_logger service in
   Echo.Callback.log logger "Message from client" >|= function
   | Ok () -> ()
-  | Error err -> Fmt.epr "Server's logger failed: %a" Capnp_rpc.Error.pp err
+  | Error (`Capnp err) ->
+    Fmt.epr "Server's logger failed: %a" Capnp_rpc.Error.pp err
 ```
 
 <p align='center'>
@@ -680,10 +690,8 @@ Now, let's say we'd like the server to send heartbeats to itself:
 
 ```ocaml
 let run_client service =
-  let callback = Echo.get_logger service in
-  Echo.heartbeat service "foo" callback >>= fun () ->
-  Capability.dec_ref callback;
-  Lwt.return_unit
+  Capability.with_ref (Echo.get_logger service) @@ fun callback ->
+  Echo.heartbeat service "foo" callback
 ```
 
 Here, we ask the server for its logger and then (without waiting for the reply), tell it to send heartbeat messages to the promised logger (you should see the messages appear in the server process's output).
@@ -706,6 +714,11 @@ To do this, we can use `Restorer.Table`.
 For example, we can extend our example to provide sturdy refs for both the main echo service and the logger service:
 
 ```ocaml
+let write_cap vat service_id cap_file =
+  match Capnp_rpc_unix.Cap_file.save_service vat service_id cap_file with
+  | Error (`Msg m) -> failwith m
+  | Ok () -> Fmt.pr "Wrote %S.@." cap_file
+
 let serve config =
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
@@ -715,28 +728,14 @@ let serve config =
   Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
   let restore = Restorer.of_table services in
   Lwt_main.run begin
-    Capnp_rpc_unix.serve config ~restore >>= fun _vat ->
-    Fmt.pr "echo service: %a@." Uri.pp_hum (make_sturdy echo_id);
-    Fmt.pr "logger service: %a@." Uri.pp_hum (make_sturdy logger_id);
+    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
+    write_cap vat echo_id "echo.cap";
+    write_cap vat logger_id "logger.cap";
     fst @@ Lwt.wait ()  (* Wait forever *)
   end
 ```
 
-Exercise: add a `log` command and use it to test the log service URI printed by the above code.
-Hint: parse the command-line with:
-
-```ocaml
-let msg =
-  let i = Arg.info [] ~docv:"MESSAGE" ~doc:"Message to log" in
-  Arg.(required @@ pos 1 (some string) None i)
-
-let log_cmd =
-  let doc = "log a message" in
-  Term.(const log_client $ connect_addr $ msg),
-  Term.info "log" ~doc
-
-let cmds = [serve_cmd; connect_cmd; log_cmd]
-```
+Exercise: add a `log.exe` client and use it to test the `logger.cap` printed by the above code.
 
 ### Implementing the persistence API
 
@@ -783,7 +782,7 @@ Then pass the `sr` argument when creating the logger (you'll need to make it an 
 ```
 
 After restarting the server, the client should now display the logger's URI,
-which you can then use with `demo.exe log URI MSG`.
+which you can then use with `log.exe log URI MSG`.
 
 ### Creating and persisting sturdy refs dynamically
 
@@ -929,7 +928,7 @@ and then "restores" the saved service to a live instance and returns it:
       let id = DB.save_new db ~label in
       Service.return_lwt @@ fun () ->
       Restorer.restore restore id >|= function
-      | Error e -> Error (`Exception e)
+      | Error e -> Error (`Capnp (`Exception e))
       | Ok logger ->
         let response, results = Service.Response.create Results.init_pointer in
         Results.callback_set results (Some logger);
@@ -991,6 +990,7 @@ For more complex types, it may be more convenient to define the structure elsewh
 Yes. e.g. in the example above we can use `Callback.local fn` many times to create multiple loggers.
 Just remember to call `Capability.dec_ref` on them when you're finished so that they can be released
 promptly (but if the TCP connection is closed, all references on it will be freed anyway).
+Using `Capability.with_ref` makes it easier to ensure that `dec_ref` gets called in all cases.
 
 ### Can I get debug output?
 
@@ -1294,3 +1294,4 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [pycapnp]: http://jparyani.github.io/pycapnp/
 [Persistence API]: https://github.com/capnproto/capnproto/blob/master/c%2B%2B/src/capnp/persistent.capnp
 [Mirage]: https://mirage.io/
+[ocaml-ci]: https://github.com/ocaml-ci/ocaml-ci

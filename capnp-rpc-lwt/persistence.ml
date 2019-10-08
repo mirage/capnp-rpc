@@ -18,7 +18,7 @@ let with_persistence
       release_params ();
       Service.return_lwt @@ fun () ->
       persistent#save >|= function
-      | Error e -> Error (`Exception e)
+      | Error e -> Error (`Capnp (`Exception e))
       | Ok sr ->
         let resp, results = Service.Response.create Results.init_pointer in
         Sturdy_ref.builder Results.sturdy_ref_get results sr;

@@ -14,7 +14,7 @@ depends: [
   "ocaml" {>= "4.03.0"}
   "conf-capnproto" {build}
   "capnp" {>= "3.4.0"}
-  "capnp-rpc" {>= "0.3"}
+  "capnp-rpc" {= version}
   "lwt"
   "astring"
   "fmt"

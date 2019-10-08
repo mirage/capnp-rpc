@@ -4,8 +4,6 @@ open Capnp.RPC
 
 include (module type of Capnp.BytesMessage)
 
-type 'a or_error = ('a, Capnp_rpc.Error.t) result
-
 module StructRef : sig
   (** A promise for a response structure.
       You can use the generated [_get_pipelined] functions on a promise to get
@@ -224,7 +222,7 @@ module Service : sig
   val return_empty : unit -> 'a StructRef.t
   (** [return_empty ()] is a promise for a response with no payload. *)
 
-  val return_lwt : (unit -> 'a Response.t or_error Lwt.t) -> 'a StructRef.t
+  val return_lwt : (unit -> ('a Response.t, [< `Capnp of Capnp_rpc.Error.t]) Lwt_result.t) -> 'a StructRef.t
   (** [return_lwt fn] is a local promise for the result of Lwt thread [fn ()].
       If [fn ()] fails, the error is logged and an "Internal error" returned to the caller.
       If it returns an [Error] value then that error is returned to the caller.
