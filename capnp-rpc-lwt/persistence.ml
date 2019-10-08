@@ -52,5 +52,5 @@ let save cap =
 
 let save_exn cap =
   save cap >>= function
-  | Error e -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Error.pp e)
+  | Error (`Capnp e) -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Error.pp e)
   | Ok x -> Lwt.return x

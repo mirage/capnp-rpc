@@ -562,7 +562,7 @@ let test_crossed_calls switch =
       Sturdy_ref.connect_exn sr_to_server >>= fun to_server ->
       Capability.with_ref to_server @@ fun to_server ->
       Echo.ping to_server "ping" >|= fun c_got -> (c_got, y)
-    | Error e1, Error e2 ->
+    | Error (`Capnp e1), Error (`Capnp e2) ->
       Fmt.failwith "@[<v>Both connections failed!@,%a@,%a@]"
         Capnp_rpc.Error.pp e1
         Capnp_rpc.Error.pp e2
