@@ -70,7 +70,7 @@ let return_lwt fn =
       Lwt.catch (fun () ->
           fn () >|= function
           | Ok resp      -> Core_types.resolve_ok resolver @@ Response.finish resp;
-          | Error _ as e -> Core_types.resolve_payload resolver e
+          | Error (`Capnp e) -> Core_types.resolve_payload resolver (Error e)
         )
         (fun ex ->
            Log.warn (fun f -> f "Uncaught exception: %a" Fmt.exn ex);

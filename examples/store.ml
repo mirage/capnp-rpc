@@ -122,7 +122,7 @@ let local ~restore db =
       let id = DB.add db in
       Service.return_lwt @@ fun () ->
       Restorer.restore restore id >|= function
-      | Error e -> Error (`Exception e)
+      | Error e -> Error (`Capnp (`Exception e))
       | Ok x ->
         let resp, results = Service.Response.create Results.init_pointer in
         Results.file_set results (Some x);

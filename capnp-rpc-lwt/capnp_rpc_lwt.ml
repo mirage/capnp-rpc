@@ -2,8 +2,6 @@ open Capnp_core
 
 include Capnp.Message.BytesMessage
 
-type 'a or_error = ('a, Capnp_rpc.Error.t) result
-
 module Log = Capnp_rpc.Debug.Log
 module RO_array = Capnp_rpc.RO_array
 
