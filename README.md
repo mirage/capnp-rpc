@@ -80,7 +80,7 @@ Until that is implemented, Carol can ask Bob for a persistent reference (sturdy 
 
 To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
 
-    opam depext -i capnp-rpc-unix conf-capnproto
+    opam depext -i capnp-rpc-unix
 
 ## Structure of the library
 
