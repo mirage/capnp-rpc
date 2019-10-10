@@ -120,7 +120,9 @@ module Secret_key = struct
     | None -> failwith "Invalid date_time!"
 
   let x509 t =
-    let dn = X509.Distinguished_name.(singleton CN) "capnp" in
+    let dn =
+      [ X509.Distinguished_name.(Relative_distinguished_name.singleton (CN "capnp")) ]
+    in
     let csr = X509.Signing_request.create dn (`RSA t) in
     let valid_from = date_time
                        ~date:(1970, 1, 1)
