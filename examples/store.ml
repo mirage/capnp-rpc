@@ -1,5 +1,6 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
+open Capnp_rpc_net
 
 type digest = string
 
@@ -20,7 +21,7 @@ module DB : sig
   val get : t -> digest -> string
   val mem : t -> digest -> bool
 end = struct
-  let hash : Capnp_rpc_lwt.Auth.hash = `SHA256
+  let hash : Capnp_rpc_net.Auth.hash = `SHA256
 
   type t = (digest, string) Hashtbl.t
 

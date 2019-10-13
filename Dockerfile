@@ -4,6 +4,11 @@ RUN cd ~/opam-repository && git fetch && git reset --hard ca18b54339548dc8143045
 RUN opam depext -i capnp afl-persistent conf-capnproto tls mirage-flow-lwt mirage-kv-lwt mirage-clock ptime cmdliner mirage-dns
 ADD --chown=opam *.opam /home/opam/capnp-rpc/
 WORKDIR /home/opam/capnp-rpc/
+RUN opam pin add -yn capnp-rpc.dev . && \
+    opam pin add -yn capnp-rpc-lwt.dev . && \
+    opam pin add -yn capnp-rpc-net.dev . && \
+    opam pin add -yn capnp-rpc-unix.dev . && \
+    opam pin add -yn capnp-rpc-mirage.dev . 
 RUN opam install --deps-only -t .
 ADD --chown=opam . /home/opam/capnp-rpc
 RUN opam config exec -- make all test

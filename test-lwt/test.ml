@@ -2,13 +2,14 @@ open Astring
 open Examples
 open Lwt.Infix
 open Capnp_rpc_lwt
+open Capnp_rpc_net
 
 module Test_utils = Testbed.Test_utils
 
 module Vat = Capnp_rpc_unix.Vat
 module CapTP = Capnp_rpc_unix.CapTP
 module Unix_flow = Capnp_rpc_unix.Unix_flow
-module Tls_wrapper = Capnp_rpc_lwt.Tls_wrapper.Make(Unix_flow)
+module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Unix_flow)
 module Exception = Capnp_rpc.Exception
 
 type cs = {

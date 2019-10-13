@@ -153,7 +153,7 @@ let serve ?switch ?tags ?restore config =
   Lwt.return vat
 
 let client_only_vat ?switch ?tags ?restore () =
-  let secret_key = lazy (Capnp_rpc_lwt.Auth.Secret_key.generate ()) in
+  let secret_key = lazy (Capnp_rpc_net.Auth.Secret_key.generate ()) in
   Vat.create ?switch ?tags ?restore ~secret_key ()
 
 let manpage_capnp_options = Vat_config.docs

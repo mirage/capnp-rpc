@@ -1,6 +1,6 @@
 let docs = "CAP'N PROTO OPTIONS"
 
-module Auth = Capnp_rpc_lwt.Auth
+module Auth = Capnp_rpc_net.Auth
 module Log = Capnp_rpc.Debug.Log
 
 module Listen_address = struct
@@ -95,15 +95,15 @@ let secret_key_term =
 
 let derived_id t name =
   let secret = hashed_secret t in
-  Capnp_rpc_lwt.Restorer.Id.derived ~secret name
+  Capnp_rpc_net.Restorer.Id.derived ~secret name
 
 let auth t =
-  if t.serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (secret_key t)
-  else Capnp_rpc_lwt.Auth.Digest.insecure
+  if t.serve_tls then Capnp_rpc_net.Auth.Secret_key.digest (secret_key t)
+  else Capnp_rpc_net.Auth.Digest.insecure
 
 let sturdy_uri t service =
   let address = (t.public_address, auth t) in
-  Network.Address.to_uri (address, Capnp_rpc_lwt.Restorer.Id.to_string service)
+  Network.Address.to_uri (address, Capnp_rpc_net.Restorer.Id.to_string service)
 
 open Cmdliner
 

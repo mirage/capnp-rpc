@@ -1,4 +1,5 @@
 open Lwt.Infix
+open Capnp_rpc_lwt
 
 module Log = Capnp_rpc.Debug.Log
 
@@ -181,17 +182,19 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
           | Error _ as e -> e
 
   let make_sturdy_ref t sr =
-    object
+    Cast.sturdy_of_raw @@ object (_ : Private.Capnp_core.sturdy_ref)
       method connect =
         let (addr, service) = sr in
         let remote_id = Network.Address.digest addr in
-        if remote_id = Auth.Digest.insecure then connect_anon t addr ~service
-        else connect_auth t remote_id addr ~service
+        Lwt_result.map Cast.cap_to_raw (
+          if remote_id = Auth.Digest.insecure then connect_anon t addr ~service
+          else connect_auth t remote_id addr ~service
+        )
 
       method to_uri_with_secrets = Network.Address.to_uri sr
     end
 
-  let sturdy_ref t service : Capnp_core.sturdy_ref =
+  let sturdy_ref t service : 'a Sturdy_ref.t =
     match t.address with
     | None -> failwith "sturdy_ref: vat was not configured with an address"
     | Some address -> make_sturdy_ref t (address, service)
@@ -199,7 +202,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
   let export _t sr =
     (* [t] isn't used currently. However, requiring it does emphasise that importing/exporting
        is a somewhat privileged operation (as it reveals the secret tokens in the sturdy ref). *)
-    sr#to_uri_with_secrets
+    (Cast.sturdy_to_raw sr)#to_uri_with_secrets
 
   let sturdy_uri t id = sturdy_ref t id |> export t
 

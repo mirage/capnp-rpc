@@ -1,3 +1,5 @@
+open Capnp_rpc_lwt.Private
+
 module EmbargoId = Capnp_rpc.Message_types.EmbargoId
 module Log = Capnp_rpc.Debug.Log
 module Builder = Schema.Builder

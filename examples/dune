@@ -1,6 +1,6 @@
 (library
  (name examples)
- (libraries astring capnp-rpc-lwt)
+ (libraries astring capnp-rpc-lwt capnp-rpc-net)
  (flags :standard -w -53-55))
 
 (rule

@@ -1,10 +1,11 @@
 (** Helpers for using {!Capnp_rpc_lwt} on traditional operating systems. *)
 
 open Capnp_rpc_lwt
+open Capnp_rpc_net
 
 module Unix_flow = Unix_flow
 
-include Capnp_rpc_lwt.VAT_NETWORK with
+include Capnp_rpc_net.VAT_NETWORK with
   type flow = Unix_flow.flow and
   module Network = Network
 
@@ -86,7 +87,7 @@ module Cap_file : sig
   val save_sturdy : Vat.t -> _ Sturdy_ref.t -> string -> (unit, [> `Msg of string]) result
   (** [save_sturdy vat sr path] saves [sr] to [path], with a mode of [0o600]. *)
 
-  val save_service : Vat.t -> Capnp_rpc_lwt.Restorer.Id.t -> string ->
+  val save_service : Vat.t -> Capnp_rpc_net.Restorer.Id.t -> string ->
     (unit, [> `Msg of string]) result
   (** [save_service vat id path] saves [vat/id] to [path], with a mode of [0o600]. *)
 end

@@ -1,7 +1,5 @@
 (** Provides the RPC layer on top of some network. *)
 
-open Capnp_core.Core_types
-
 module Make (N : S.NETWORK) : sig
   type t
   (** A Cap'n Proto RPC protocol handler. *)
@@ -12,7 +10,7 @@ module Make (N : S.NETWORK) : sig
       [restore] is used to respond to "Bootstrap" messages.
       If the connection fails then [endpoint] will be disconnected. *)
 
-  val bootstrap : t -> string -> cap
+  val bootstrap : t -> string -> 'a Capnp_rpc_lwt.Capability.t
   (** [bootstrap t object_id] is the peer's bootstrap object [object_id], if any.
       Use [object_id = ""] for the main, public object. *)
 

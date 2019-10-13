@@ -1,6 +1,7 @@
 open Lwt.Infix
+open Capnp_rpc_lwt
 
-module Core_types = Capnp_core.Core_types
+module Core_types = Private.Capnp_core.Core_types
 module Log = Capnp_rpc.Debug.Log
 
 module Id = struct
@@ -37,7 +38,7 @@ end
 
 type t = Id.t -> resolution Lwt.t
 
-let grant x = Ok x
+let grant x : resolution = Ok (Cast.cap_to_raw x)
 let reject ex = Error ex
 
 let unknown_service_id = reject (Capnp_rpc.Exception.v "Unknown persistent service ID")
@@ -55,12 +56,13 @@ let fn (r:t) =
           )
       )
 
-let restore (f:t) x = f x
+let restore (f:t) x = f x |> Lwt_result.map Cast.cap_of_raw
 
 let none : t = fun _ ->
   Lwt.return @@ Error (Capnp_rpc.Exception.v "This vat has no restorer")
 
 let single id cap =
+  let cap = Cast.cap_to_raw cap in
   (* Hash the ID to prevent timing attacks. *)
   let id = Nocrypto.Hash.digest `SHA256 (Cstruct.of_string id) in
   fun requested_id ->
@@ -132,21 +134,22 @@ module Table = struct
     let hash = (L.hash loader :> Nocrypto.Hash.hash) in
     let cache = Hashtbl.create 53 in
     let rec load id digest =
-      let sr : Capnp_core.sturdy_ref = object
+      let sr : Private.Capnp_core.sturdy_ref = object
         method connect = resolve t id
         method to_uri_with_secrets = L.make_sturdy loader id
       end in
-      L.load loader sr digest
+      L.load loader (Cast.sturdy_of_raw sr) digest
     and t = { hash; cache; load; make_sturdy = L.make_sturdy loader } in
     t
 
   let add t id cap =
+    let cap = Cast.cap_to_raw cap in
     let id = hash t id in
     assert (not (Hashtbl.mem t.cache id));
     Hashtbl.add t.cache id (Manual cap)
 
   let sturdy_ref t id =
-    object
+    Cast.sturdy_of_raw @@ object
       method connect = resolve t id
       method to_uri_with_secrets = t.make_sturdy id
     end
