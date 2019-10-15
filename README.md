@@ -316,7 +316,7 @@ let notify callback ~msg =
   loop 3
 ```
 
-Exercise: implement the client-side `Callback.log` function (hint: it's very similar to `ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
+Exercise: create a `Callback` submodule in `echo.ml` and implement the client-side `Callback.log` function (hint: it's very similar to `ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
 
 To write the client for `Echo.heartbeat`, we take a user-provided callback object
 and put it into the request:
