@@ -40,7 +40,7 @@ module Make (Underlying : Mirage_flow_lwt.S) = struct
         | Error () -> failwith "Unknown error getting TLS epoch data"
         | Ok data ->
           match data.Tls.Core.peer_certificate with
-          | None -> failwith "No client certificate found"
+          | None -> error "No client certificate found"
           | Some client_cert ->
             let peer_id = Digest.of_certificate client_cert in
             Ok (Endpoint.of_flow ~switch ~peer_id (module Flow) flow)
