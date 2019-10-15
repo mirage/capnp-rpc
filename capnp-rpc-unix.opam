@@ -12,7 +12,6 @@ doc: "https://mirage.github.io/capnp-rpc/"
 depends: [
   "ocaml" {>= "4.03.0"}
   "capnp-rpc-lwt" {= version}
-  "mirage-flow-unix"
   "cmdliner"
   "cstruct-lwt"
   "astring"
