@@ -73,15 +73,21 @@ let sturdy_uri =
   Cmdliner.Arg.conv (of_string, Uri.pp_hum)
 
 let handle_connection ?tags ~secret_key vat client =
-  let switch = Lwt_switch.create () in
-  let raw_flow = Unix_flow.connect ~switch client in
-  Network.accept_connection ~switch ~secret_key raw_flow >>= function
-  | Error (`Msg msg) ->
-    Log.warn (fun f -> f ?tags "Rejecting new connection: %s" msg);
-    Lwt.return_unit
-  | Ok ep ->
-    Vat.add_connection vat ~switch ~mode:`Accept ep >|= fun (_ : CapTP.t) ->
-    ()
+  Lwt.catch (fun () ->
+      let switch = Lwt_switch.create () in
+      let raw_flow = Unix_flow.connect ~switch client in
+      Network.accept_connection ~switch ~secret_key raw_flow >>= function
+      | Error (`Msg msg) ->
+        Log.warn (fun f -> f ?tags "Rejecting new connection: %s" msg);
+        Lwt.return_unit
+      | Ok ep ->
+        Vat.add_connection vat ~switch ~mode:`Accept ep >|= fun (_ : CapTP.t) ->
+        ()
+    )
+    (fun ex ->
+       Log.err (fun f -> f "Uncaught exception handling connection: %a" Fmt.exn ex);
+       Lwt.return_unit
+    )
 
 let addr_of_host host =
   match Unix.gethostbyname host with
