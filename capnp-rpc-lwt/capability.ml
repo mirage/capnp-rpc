@@ -22,6 +22,7 @@ let pp f x = x#pp f
 
 let broken = Core_types.broken_cap
 let when_broken = Core_types.when_broken
+let when_released (x:Core_types.cap) f = x#when_released f
 let problem x = x#problem
 
 let wait_until_settled x =

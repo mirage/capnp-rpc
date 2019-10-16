@@ -1,6 +1,8 @@
+open Capnp_rpc_lwt
+
 module EmbargoId = Capnp_rpc.Message_types.EmbargoId
 module RO_array = Capnp_rpc.RO_array
-module Reader = Schema.Reader
+module Reader = Private.Schema.Reader
 module Log = Capnp_rpc.Debug.Log
 
 (* A parser for the basic messages (excluding Unimplemented, which has a more complicated type). *)
@@ -15,7 +17,7 @@ module Make_basic
     let open Reader.PromisedAnswer.Op in
     match get x with
     | Noop -> []
-    | GetPointerField y -> [Xform.Field y]
+    | GetPointerField y -> [Private.Xform.Field y]
     | Undefined _ -> failwith "Unknown transform type"
 
   let parse_promised_answer pa =
@@ -63,7 +65,7 @@ module Make_basic
       match Return.get return with
       | Return.Results results ->
         let descs = parse_descs (Payload.cap_table_get_list results |> RO_array.of_list) in
-        `Results (Msg.Response.of_reader return, descs)
+        `Results (Private.Msg.Response.of_reader return, descs)
       | Return.Exception ex -> `Exception (parse_exn ex)
       | Return.Canceled -> `Cancelled
       | Return.ResultsSentElsewhere -> `ResultsSentElsewhere
@@ -95,7 +97,7 @@ module Make_basic
     let descs = parse_descs (Payload.cap_table_get_list p |> RO_array.of_list) in
     (* Get target *)
     let target = parse_target (Call.target_get call) in
-    let msg = Msg.Request.of_reader call in
+    let msg = Private.Msg.Request.of_reader call in
     let results_to =
       let r = Call.send_results_to_get call in
       let open Call.SendResultsTo in
@@ -110,7 +112,7 @@ module Make_basic
   let parse_bootstrap boot =
     let open Reader in
     let qid = Bootstrap.question_id_get boot |> AnswerId.of_uint32 in
-    let object_id = Bootstrap.deprecated_object_id_get boot |> Schema.ReaderOps.string_of_pointer in
+    let object_id = Bootstrap.deprecated_object_id_get boot |> Private.Schema.ReaderOps.string_of_pointer in
     `Bootstrap (qid, object_id)
 
   let parse_disembargo x =
@@ -165,7 +167,7 @@ module Make_basic
 end
 
 module Make
-    (EP : Capnp_core.ENDPOINT)
+    (EP : Private.Capnp_core.ENDPOINT)
     (Network : S.NETWORK with module Types = EP.Network_types)
 = struct
   module Parse_in = Make_basic(EP.Core_types)(Network)(EP.Table)

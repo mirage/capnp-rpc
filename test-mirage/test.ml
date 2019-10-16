@@ -1,5 +1,6 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
+open Capnp_rpc_net
 open Examples
 
 module Time = struct

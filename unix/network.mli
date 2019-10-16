@@ -24,15 +24,15 @@ module Location : sig
   val cmdliner_conv : t Cmdliner.Arg.conv
 end
 
-include Capnp_rpc_lwt.S.NETWORK with
+include Capnp_rpc_net.S.NETWORK with
   type t = unit and
-  type Address.t = Location.t * Capnp_rpc_lwt.Auth.Digest.t
+  type Address.t = Location.t * Capnp_rpc_net.Auth.Digest.t
 
 val accept_connection :
   switch:Lwt_switch.t ->
-  secret_key:Capnp_rpc_lwt.Auth.Secret_key.t option ->
+  secret_key:Capnp_rpc_net.Auth.Secret_key.t option ->
   Unix_flow.flow ->
-  (Capnp_rpc_lwt.Endpoint.t, [> `Msg of string]) result Lwt.t
+  (Capnp_rpc_net.Endpoint.t, [> `Msg of string]) result Lwt.t
 (** [accept_connection ~switch ~secret_key flow] is a new endpoint for [flow].
     If [secret_key] is not [None], it is used to perform a TLS server-side handshake.
     Otherwise, the connection is not encrypted. *)

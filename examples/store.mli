@@ -3,6 +3,7 @@
     See [test_store] for an example using this. *)
 
 open Capnp_rpc_lwt
+open Capnp_rpc_net
 
 module DB : sig
   type t

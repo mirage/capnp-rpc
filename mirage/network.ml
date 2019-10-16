@@ -12,18 +12,18 @@ module Location = struct
 
   let tcp ~host ~port = `TCP (host, port)
 
-  let pp f x = Capnp_rpc_lwt.Capnp_address.(Location.pp f (x :> Location.t))
+  let pp f x = Capnp_rpc_net.Capnp_address.(Location.pp f (x :> Location.t))
 
   let equal = ( = )
 end
 
 module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) = struct
-  module Tls_wrapper = Capnp_rpc_lwt.Tls_wrapper.Make(Stack.TCPV4)
+  module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Stack.TCPV4)
 
   module Address = struct
-    module Full = Capnp_rpc_lwt.Capnp_address
+    module Full = Capnp_rpc_net.Capnp_address
 
-    type t = Location.t * Capnp_rpc_lwt.Auth.Digest.t
+    type t = Location.t * Capnp_rpc_net.Auth.Digest.t
 
     let digest t = Full.digest (t :> Full.t)
     let to_uri (t, id) = Full.to_uri ((t :> Full.t), id)
@@ -38,7 +38,7 @@ module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) = struct
 
     let equal (addr, auth) (addr_b, auth_b) =
       Location.equal addr addr_b &&
-      Capnp_rpc_lwt.Auth.Digest.equal auth auth_b
+      Capnp_rpc_net.Auth.Digest.equal auth auth_b
   end
 
   module Types = struct

@@ -1,11 +1,11 @@
 (** Helpers for using {!Capnp_rpc_lwt} with MirageOS. *)
 
-open Capnp_rpc_lwt
+open Capnp_rpc_net
 
 module Location = Network.Location
 
 module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) : sig
-  include Capnp_rpc_lwt.VAT_NETWORK with
+  include Capnp_rpc_net.VAT_NETWORK with
     type flow = Stack.TCPV4.flow and
     module Network = Network.Make(Stack)(Dns)
 

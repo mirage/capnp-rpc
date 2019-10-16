@@ -1,14 +1,15 @@
+open Capnp_rpc_lwt
 open Lwt.Infix
 
 module Log = Capnp_rpc.Debug.Log
 
-module Builder = Schema.Builder
-module Reader = Schema.Reader
+module Builder = Private.Schema.Builder
+module Reader = Private.Schema.Reader
 
 module Table_types = Capnp_rpc.Message_types.Table_types ( )
 
 module Make (Network : S.NETWORK) = struct
-  module Endpoint_types = Capnp_rpc.Message_types.Endpoint(Capnp_core.Core_types)(Network.Types)(Table_types)
+  module Endpoint_types = Capnp_rpc.Message_types.Endpoint(Private.Capnp_core.Core_types)(Network.Types)(Table_types)
   module Conn = Capnp_rpc.CapTP.Make(Endpoint_types)
   module Parse = Parse.Make(Endpoint_types)(Network)
   module Serialise = Serialise.Make(Endpoint_types)
@@ -20,7 +21,7 @@ module Make (Network : S.NETWORK) = struct
     mutable disconnecting : bool;
   }
 
-  let bootstrap t = Conn.bootstrap t.conn
+  let bootstrap t id = Conn.bootstrap t.conn id |> Cast.cap_of_raw
 
   let async_tagged label fn =
     Lwt.async
@@ -34,7 +35,7 @@ module Make (Network : S.NETWORK) = struct
 
   let pp_msg f call =
     let open Reader in
-    let call = Msg.Request.readable call in
+    let call = Private.Msg.Request.readable call in
     let interface_id = Call.interface_id_get call in
     let method_id = Call.method_id_get call in
     Capnp.RPC.Registry.pp_method f (interface_id, method_id)

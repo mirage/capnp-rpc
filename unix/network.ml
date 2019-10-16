@@ -1,10 +1,10 @@
 module Log = Capnp_rpc.Debug.Log
-module Tls_wrapper = Capnp_rpc_lwt.Tls_wrapper.Make(Unix_flow)
+module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Unix_flow)
 
 module Location = struct
   open Astring
 
-  include Capnp_rpc_lwt.Capnp_address.Location
+  include Capnp_rpc_net.Capnp_address.Location
 
   let abs_path p =
     if Filename.is_relative p then
@@ -38,8 +38,8 @@ module Location = struct
 end
 
 module Address
-  : Capnp_rpc_lwt.S.ADDRESS with type t = Location.t * Capnp_rpc_lwt.Auth.Digest.t
-  = Capnp_rpc_lwt.Capnp_address
+  : Capnp_rpc_net.S.ADDRESS with type t = Location.t * Capnp_rpc_net.Auth.Digest.t
+  = Capnp_rpc_net.Capnp_address
 
 module Types = struct
   type provision_id

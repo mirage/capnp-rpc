@@ -1,4 +1,4 @@
-module Auth = Capnp_rpc_lwt.Auth
+module Auth = Capnp_rpc_net.Auth
 module Log = Capnp_rpc.Debug.Log
 
 module Secret_hash : sig
@@ -13,7 +13,7 @@ end = struct
   let to_string x = x
 end
 
-module Make (N : Capnp_rpc_lwt.S.NETWORK with type Address.t = Network.Location.t * Auth.Digest.t) = struct
+module Make (N : Capnp_rpc_net.S.NETWORK with type Address.t = Network.Location.t * Auth.Digest.t) = struct
   module Listen_address = struct
     type t = [`TCP of int]
 
@@ -45,13 +45,13 @@ module Make (N : Capnp_rpc_lwt.S.NETWORK with type Address.t = Network.Location.
 
   let derived_id t name =
     let secret = hashed_secret t in
-    Capnp_rpc_lwt.Restorer.Id.derived ~secret name
+    Capnp_rpc_net.Restorer.Id.derived ~secret name
 
   let auth t =
-    if t.serve_tls then Capnp_rpc_lwt.Auth.Secret_key.digest (secret_key t)
-    else Capnp_rpc_lwt.Auth.Digest.insecure
+    if t.serve_tls then Capnp_rpc_net.Auth.Secret_key.digest (secret_key t)
+    else Capnp_rpc_net.Auth.Digest.insecure
 
   let sturdy_uri t service =
     let address = (t.public_address, auth t) in
-    N.Address.to_uri (address, Capnp_rpc_lwt.Restorer.Id.to_string service)
+    N.Address.to_uri (address, Capnp_rpc_net.Restorer.Id.to_string service)
 end

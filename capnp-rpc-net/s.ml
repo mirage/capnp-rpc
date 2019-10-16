@@ -1,5 +1,7 @@
 (** Module signatures. *)
 
+open Capnp_rpc_lwt
+
 module type ADDRESS = sig
   type t
   (** A network address at which a vat can be reached. *)
@@ -37,7 +39,7 @@ module type NETWORK = sig
       to authenticate itself.
       If [switch] is turned off, the connection should be terminated. *)
 
-  val parse_third_party_cap_id : Schema.Reader.pointer_t -> Types.third_party_cap_id
+  val parse_third_party_cap_id : Private.Schema.Reader.pointer_t -> Types.third_party_cap_id
 end
 
 module type VAT_NETWORK = sig

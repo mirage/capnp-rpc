@@ -31,8 +31,8 @@ let reporter =
 
 let serve vat_config =
   Lwt_main.run begin
-    let service_id = Capnp_rpc_lwt.Restorer.Id.public "" in
-    let restore = Capnp_rpc_lwt.Restorer.single service_id Examples.Calc.local in
+    let service_id = Capnp_rpc_net.Restorer.Id.public "" in
+    let restore = Capnp_rpc_net.Restorer.single service_id Examples.Calc.local in
     Capnp_rpc_unix.serve vat_config ~restore >>= fun vat ->
     let sr = Vat.sturdy_uri vat service_id in
     Fmt.pr "Waiting for incoming connections at:@.%a@." Uri.pp_hum sr;
