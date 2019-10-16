@@ -1,6 +1,34 @@
 open Capnp_rpc_lwt
 open Lwt.Infix
 
+module Metrics = struct
+  open Prometheus
+
+  let namespace = "capnp"
+
+  let subsystem = "net"
+
+  let connections =
+    let help = "Number of live capnp-rpc connections" in
+    Gauge.v ~help ~namespace ~subsystem "connections"
+
+  let messages_inbound_received_total =
+    let help = "Total number of messages received" in
+    Counter.v ~help ~namespace ~subsystem "messages_inbound_received_total"
+
+  let messages_outbound_enqueued_total =
+    let help = "Total number of messages enqueued to be transmitted" in
+    Counter.v ~help ~namespace ~subsystem "messages_outbound_enqueued_total"
+
+  let messages_outbound_sent_total =
+    let help = "Total number of messages transmitted" in
+    Counter.v ~help ~namespace ~subsystem "messages_outbound_sent_total"
+
+  let messages_outbound_dropped_total =
+    let help = "Total number of messages lost due to disconnections" in
+    Counter.v ~help ~namespace ~subsystem "messages_outbound_dropped_total"
+end
+
 module Log = Capnp_rpc.Debug.Log
 
 module Builder = Private.Schema.Builder
@@ -42,6 +70,10 @@ module Make (Network : S.NETWORK) = struct
 
   let tags t = Conn.tags t.conn
 
+  let drop_queue q =
+    Prometheus.Counter.inc Metrics.messages_outbound_dropped_total (float_of_int (Queue.length q));
+    Queue.clear q
+
   (* [flush ~xmit_queue endpoint] writes each message in the queue until it is empty.
      Invariant:
        Whenever Lwt blocks or switches threads, a flush thread is running iff the
@@ -52,11 +84,14 @@ module Make (Network : S.NETWORK) = struct
     let next = Queue.peek xmit_queue in
     Endpoint.send endpoint next >>= function
     | Error `Closed ->
-      Endpoint.disconnect endpoint      (* We'll read a close soon *)
+      Endpoint.disconnect endpoint >|= fun () ->      (* We'll read a close soon *)
+      drop_queue xmit_queue
     | Error e ->
       Log.warn (fun f -> f "Error sending messages: %a (will shutdown connection)" Endpoint.pp_error e);
-      Endpoint.disconnect endpoint
+      Endpoint.disconnect endpoint >|= fun () ->
+      drop_queue xmit_queue
     | Ok () ->
+      Prometheus.Counter.inc_one Metrics.messages_outbound_sent_total;
       ignore (Queue.pop xmit_queue);
       if not (Queue.is_empty xmit_queue) then
         flush ~xmit_queue endpoint
@@ -67,6 +102,7 @@ module Make (Network : S.NETWORK) = struct
   let queue_send ~xmit_queue endpoint message =
     let was_idle = Queue.is_empty xmit_queue in
     Queue.add message xmit_queue;
+    Prometheus.Counter.inc_one Metrics.messages_outbound_enqueued_total;
     if was_idle then async_tagged "Message sender thread" (fun () -> flush ~xmit_queue endpoint)
 
   let return_not_implemented t x =
@@ -83,6 +119,7 @@ module Make (Network : S.NETWORK) = struct
       | Ok msg ->
         let open Reader.Message in
         let msg = of_message msg in
+        Prometheus.Counter.inc_one Metrics.messages_inbound_received_total;
         match Parse.message msg with
         | #Endpoint_types.In.t as msg ->
           Log.info (fun f ->
@@ -134,6 +171,7 @@ module Make (Network : S.NETWORK) = struct
       xmit_queue;
       disconnecting = false;
     } in
+    Prometheus.Gauge.inc_one Metrics.connections;
     Lwt.async (fun () ->
         Lwt.catch
           (fun () ->
@@ -148,6 +186,7 @@ module Make (Network : S.NETWORK) = struct
           )
         >>= fun () ->
         Log.info (fun f -> f ~tags "Connection closed");
+        Prometheus.Gauge.dec_one Metrics.connections;
         disconnect t (Capnp_rpc.Exception.v ~ty:`Disconnected "Connection closed")
       );
     t
