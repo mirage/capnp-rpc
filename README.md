@@ -1,7 +1,10 @@
 # OCaml Cap'n Proto RPC library
 
 Copyright 2017 Docker, Inc.
+Copyright 2019 Thomas Leonard.
 See [LICENSE.md](LICENSE.md) for details.
+
+[API documentation][api]
 
 ## Contents
 
@@ -1321,3 +1324,4 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [Persistence API]: https://github.com/capnproto/capnproto/blob/master/c%2B%2B/src/capnp/persistent.capnp
 [Mirage]: https://mirage.io/
 [ocaml-ci]: https://github.com/ocaml-ci/ocaml-ci
+[api]: https://mirage.github.io/capnp-rpc/
