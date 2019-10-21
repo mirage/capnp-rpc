@@ -1,3 +1,33 @@
+### v0.5.0
+
+Breaking changes:
+
+- The networking parts of `capnp-rpc-lwt` have been split off into a new
+  `capnp-rpc-net` package (@talex5, #182). This means that libraries that
+  provide or consume capnp-rpc services can just depend on `capnp-rpc-lwt`,
+  without pulling in a full TLS stack. Only applications should need to
+  depend on `capnp-rpc-net` (which will probably happen automatically via
+  `capnp-rpc-unix` or `capnp-rpc-mirage`). If you get compile errors in
+  your code due to this change, you probably just need to
+  `open Capnp_rpc_net`.
+
+Other changes:
+
+- Add Prometheus metrics for connections (@talex5, #183). 
+  `capnp-rpc-net` now reports the current number of active connections,
+  the total number of messages received, and
+  the total number of messages enqueued, sent and dropped
+  (from which you can work out the current number of queued messages).
+
+- Adapt to x509 0.8.x API changes (@hannesm, #176).
+
+- In the tutorial, say where to put the `Callback` module (@talex5, #177).
+
+- "No client certificate found" should not be fatal (@talex5, #178).
+
+- Remove unused dependency on `mirage-flow-unix` from opam file (@talex5,
+  #179).
+
 ### v0.4.0
 
 Breaking changes:
