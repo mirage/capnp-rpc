@@ -1,7 +1,7 @@
-FROM ocurrent/opam@sha256:4d2dc158efda4a5920440e007638ff08dc2ad8c3af1d0a9ed777924ce6db94fa
+FROM ocurrent/opam@sha256:7cec1ab422d97bf498c309a38b685e7c2650a0daa2d6ddef5fb4428de0535f26
 #FROM ocurrent/opam:alpine-3.10-ocaml-4.08
-RUN cd ~/opam-repository && git fetch && git reset --hard ca18b54339548dc814304558e87517e776016293 && opam update
-RUN opam depext -i capnp afl-persistent conf-capnproto tls mirage-flow-lwt mirage-kv-lwt mirage-clock ptime cmdliner mirage-dns
+RUN cd ~/opam-repository && git fetch && git reset --hard e73f271b6d37f11a33bdf48c5572735c0d322466 && opam update
+RUN opam depext -i capnp afl-persistent conf-capnproto tls tls-mirage mirage-flow mirage-kv mirage-clock ptime cmdliner dns-client dns-mirage
 ADD --chown=opam *.opam /home/opam/capnp-rpc/
 WORKDIR /home/opam/capnp-rpc/
 RUN opam pin add -yn capnp-rpc.dev . && \
@@ -11,4 +11,4 @@ RUN opam pin add -yn capnp-rpc.dev . && \
     opam pin add -yn capnp-rpc-mirage.dev . 
 RUN opam install --deps-only -t .
 ADD --chown=opam . /home/opam/capnp-rpc
-RUN opam config exec -- make all test
+RUN opam exec -- make all test

@@ -141,7 +141,7 @@ module type VAT_NETWORK = S.VAT_NETWORK with
   type service_id := Restorer.Id.t and
   type 'a sturdy_ref := 'a Sturdy_ref.t
 
-module Networking (N : S.NETWORK) (Flow : Mirage_flow_lwt.S) : VAT_NETWORK with
+module Networking (N : S.NETWORK) (Flow : Mirage_flow.S) : VAT_NETWORK with
   module Network = N and
   type flow = Flow.flow
 

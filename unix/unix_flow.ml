@@ -4,7 +4,6 @@ open Lwt.Infix
    in a modern application. *)
 let () = Sys.(set_signal sigpipe Signal_ignore)
 
-type buffer = Cstruct.t
 type flow = {
   fd : Lwt_unix.file_descr;
   mutable current_write : int Lwt.t option;
@@ -13,7 +12,6 @@ type flow = {
 }
 type error = [`Exception of exn]
 type write_error = [`Closed | `Exception of exn]
-type 'a io = 'a Lwt.t
 
 let opt_cancel = function
   | None -> ()

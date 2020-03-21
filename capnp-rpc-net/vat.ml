@@ -5,7 +5,7 @@ module Log = Capnp_rpc.Debug.Log
 
 module ID_map = Auth.Digest.Map
 
-module Make (Network : S.NETWORK) (Underlying : Mirage_flow_lwt.S) = struct
+module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
   module CapTP = CapTP_capnp.Make (Network)
 
   let hash = `SHA256 (* Only support a single hash for now *)

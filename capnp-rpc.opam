@@ -19,7 +19,7 @@ depends: [
   "logs"
   "asetmap"
   "dune" {>= "1.0"}
-  "alcotest" {with-test}
+  "alcotest" {with-test & >= "1.0.1"}
   "afl-persistent" {with-test}
 ]
 build: [

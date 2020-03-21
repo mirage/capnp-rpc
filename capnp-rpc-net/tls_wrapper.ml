@@ -7,7 +7,7 @@ let error fmt =
   fmt |> Fmt.kstrf @@ fun msg ->
   Error (`Msg msg)
 
-module Make (Underlying : Mirage_flow_lwt.S) = struct
+module Make (Underlying : Mirage_flow.S) = struct
   module Flow = struct
     include Tls_mirage.Make(Underlying)
 

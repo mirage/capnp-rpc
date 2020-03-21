@@ -76,13 +76,13 @@ module Digest = struct
   let authenticator = function
     | `Insecure -> None
     | `Fingerprint (hash, digest) ->
-      let hash = (hash :> Nocrypto.Hash.hash) in
+      let hash = (hash :> Mirage_crypto.Hash.hash) in
       (* todo: [server_key_fingerprint] insists on checking the DN, so this must match
          the one in [Secret_key.x509]. Maybe we should make our own authenticator in case
          other implementations use other names. *)
-      let domain = Domain_name.of_string_exn "capnp" in
+      let domain = Domain_name.of_string_exn "capnp" |> Domain_name.host_exn in
       let fingerprints = [domain, Cstruct.of_string digest] in
-      Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprints ?time:None)
+      Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprints ~time:(fun _ ->None))
 
   module Map = Map.Make(struct
       type nonrec t = t
@@ -92,7 +92,7 @@ end
 
 module Secret_key = struct
   type t = {
-    priv : Nocrypto.Rsa.priv;
+    priv : Mirage_crypto_pk.Rsa.priv;
     certificates : Tls.Config.own_cert;
     tls_server_config : Tls.Config.server;
   }
@@ -105,8 +105,8 @@ module Secret_key = struct
     Tls.Config.client ~certificates:t.certificates ~authenticator ()
 
   let digest ?(hash=default_hash) t =
-    let nc_hash = (hash :> Nocrypto.Hash.hash) in
-    let pub = Nocrypto.Rsa.pub_of_priv t.priv in
+    let nc_hash = (hash :> Mirage_crypto.Hash.hash) in
+    let pub = Mirage_crypto_pk.Rsa.pub_of_priv t.priv in
     let value = X509.Public_key.fingerprint ~hash:nc_hash (`RSA pub) |> Cstruct.to_string in
     `Fingerprint (hash, value)
 
@@ -133,7 +133,10 @@ module Secret_key = struct
                         ~date:(9999, 12, 31)
                         ~time:(23, 59, 59)
     in
-    X509.Signing_request.sign csr ~valid_from ~valid_until (`RSA t) dn
+    X509.Signing_request.sign csr ~valid_from ~valid_until (`RSA t) dn |>
+    function
+    | Ok v -> v
+    | Error (`Msg err) -> failwith (Printf.sprintf "x509 signing failed: %s" err)
 
   let of_priv priv =
     let cert = x509 priv in
@@ -142,13 +145,13 @@ module Secret_key = struct
        we allow any client to connect. We just want to know they key so that
        if we later need to resolve a sturdy ref hosted at the client, we can
        reuse this connection. *)
-    let authenticator = X509.Authenticator.null in
+    let authenticator ~host:_ _ = Ok None in
     let tls_server_config = Tls.Config.server ~certificates ~authenticator () in
     { priv; certificates; tls_server_config }
 
   let generate () =
     Log.info (fun f -> f "Generating new private key...");
-    let priv = Nocrypto.Rsa.generate default_rsa_key_bits in
+    let priv = Mirage_crypto_pk.Rsa.generate ~bits:default_rsa_key_bits () in
     let t = of_priv priv in
     Log.info (fun f -> f "Generated key with hash %a" (pp_fingerprint `SHA256) t);
     t
