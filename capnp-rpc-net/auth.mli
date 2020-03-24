@@ -34,7 +34,7 @@ module Digest : sig
       to the correct values for [t]. Note that although we use the "password" field,
       this is not secret. *)
 
-  val authenticator : t -> X509_lwt.authenticator option
+  val authenticator : t -> X509.Authenticator.t option
   (** [authenticator t] is an authenticator that checks that the peer's public key
       matches [t]. Returns [None] if [t] is [insecure].
       Note: it currently also requires the DN field to be "capnp". *)
@@ -55,8 +55,9 @@ module Secret_key : sig
 
   val generate : unit -> t
   (** [generate ()] is a fresh secret key.
-      You must call [Nocrypto_entropy_lwt.initialize] before using this (it will give an
-      error if you forget). *)
+      You must call the relevant entropy initialization function
+      (e.g. {!Mirage_crypto_rng_unix.initialize}) before using this, or it
+      will raise an error if you forget. *)
 
   val digest : ?hash:hash -> t -> Digest.t
   (** [digest ~hash t] is the digest of [t]'s public key, using [hash]. *)

@@ -4,19 +4,14 @@ open Capnp_rpc_net
 open Examples
 
 module Time = struct
-  type 'a io = 'a Lwt.t
   let sleep_ns ns = Lwt_unix.sleep (Duration.to_f ns)
-
-  type t = unit
 
   let period_ns () = None
   let elapsed_ns () = 0L
-  let disconnect () = Lwt.return_unit
 end
 
 module Random = struct
   type g = unit
-  type buffer = Cstruct.t
 
   let generate ?g n = ignore g; Cstruct.create n
 end
@@ -38,13 +33,13 @@ module Stack = struct
     V.connect backend >>= fun v ->
     E.connect v >>= fun e ->
     A.connect e >>= fun a ->
-    I.connect ~ip ~network:Ipaddr.V4.Prefix.private_10 () e a >>= fun i ->
+    I.connect ~ip:(Ipaddr.V4.Prefix.private_10, ip) e a >>= fun i ->
     U.connect i >>= fun u ->
-    T.connect i () >>= fun t ->
+    T.connect i >>= fun t ->
     Icmp.connect i >>= fun icmp ->
     connect v e a i icmp u t
 end
-module Mirage = Capnp_rpc_mirage.Make(Stack)(Dns_resolver_mirage.Static)
+module Mirage = Capnp_rpc_mirage.Make(Random)(Time)(Stack)
 module Vat = Mirage.Vat
 
 type cs = {
@@ -63,23 +58,12 @@ let get_bootstrap cs =
   let sr = Vat.sturdy_uri cs.server id |> Vat.import_exn cs.client in
   Sturdy_ref.connect_exn sr
 
-let dns =
-  let names = Hashtbl.create 7 in
-  let rev = Hashtbl.create 7 in
-  let add name ip =
-    Hashtbl.add names name (Ipaddr.of_string_exn ip);
-    Hashtbl.add rev (Ipaddr.V4.of_string_exn ip) name
-  in
-  add "server" "10.0.0.1";
-  add "client" "10.0.0.2";
-  let dns_entries = {Dns_resolver_mirage.names; rev} in
-  Dns_resolver_mirage.Static.create dns_entries
-
 let create_iface network ip =
   Stack.create_interface network (Ipaddr.V4.of_string_exn ip) >|= fun stack ->
+  let dns = Mirage.Network.Dns.create stack in
   Mirage.network ~dns stack
 
-let () = Nocrypto_entropy_unix.initialize ()
+let () = Mirage_crypto_rng_unix.initialize ()
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
 
@@ -89,7 +73,7 @@ let make_vats ?(serve_tls=false) ~switch ~service () =
   let id = Restorer.Id.public "" in
   let restore = Restorer.single id service in
   let server_config =
-    Mirage.Vat_config.create ~secret_key:server_pem ~serve_tls ~public_address:(`TCP ("server", 7000)) (`TCP 7000)
+    Mirage.Vat_config.create ~secret_key:server_pem ~serve_tls ~public_address:(`TCP ("10.0.0.1", 7000)) (`TCP 7000)
   in
   let net = Stack.create_network () in
   create_iface net "10.0.0.1" >>= fun server_net ->
@@ -141,6 +125,6 @@ let rpc_tests = [
 ]
 
 let () =
-  Alcotest.run ~and_exit:false "capnp-rpc" [
+  Alcotest_lwt.run ~and_exit:false "capnp-rpc" [
     "mirage", rpc_tests;
-  ]
+  ] |> Lwt_main.run

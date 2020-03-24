@@ -1,3 +1,9 @@
+### dev
+
+- Port to latest interfaces for x509 (0.10+), mirage-crypto,
+  alcotest (1.0+), and mirage-types post the `-lwt` package
+  merge (@avsm #190, review by @talex5 @hannesm)
+
 ### v0.5.0
 
 Breaking changes:

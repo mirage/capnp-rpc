@@ -12,7 +12,7 @@ val recv : t -> (Capnp.Message.ro Capnp.BytesMessage.Message.t, [> `Closed]) res
     (this will also happen if the switch is turned off). *)
 
 val of_flow : switch:Lwt_switch.t -> peer_id:Auth.Digest.t ->
-  (module Mirage_flow_lwt.S with type flow = 'flow) -> 'flow -> t
+  (module Mirage_flow.S with type flow = 'flow) -> 'flow -> t
 (** [of_flow ~switch ~peer_id (module F) flow] sends and receives on [flow].
     The caller should arrange for [flow] to be closed when the switch is turned off.
     If the flow is closed, the switch will be turned off.

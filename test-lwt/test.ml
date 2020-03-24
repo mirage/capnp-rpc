@@ -631,7 +631,7 @@ let test_store switch =
   Capability.dec_ref store;
   Lwt.return_unit
 
-let run name fn = Alcotest.test_case name `Quick fn
+let run name fn = Alcotest_lwt.test_case_sync name `Quick fn
 
 let rpc_tests = [
   run_lwt "Simple"              (test_simple ~serve_tls:false);
@@ -661,6 +661,6 @@ let rpc_tests = [
 ]
 
 let () =
-  Alcotest.run ~and_exit:false "capnp-rpc" [
+  Alcotest_lwt.run ~and_exit:false "capnp-rpc" [
     "lwt", rpc_tests;
-  ]
+  ] |> Lwt_main.run

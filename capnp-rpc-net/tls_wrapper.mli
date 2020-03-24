@@ -1,6 +1,6 @@
 open Auth
 
-module Make (Underlying : Mirage_flow_lwt.S) : sig
+module Make (Underlying : Mirage_flow.S) : sig
   (** Make an [Endpoint] from an [Underlying.flow], using TLS if appropriate. *)
 
   val connect_as_server :

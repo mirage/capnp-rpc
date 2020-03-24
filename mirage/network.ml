@@ -17,7 +17,9 @@ module Location = struct
   let equal = ( = )
 end
 
-module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) = struct
+module Make  (R : Mirage_random.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) = struct
+
+  module Dns = Dns_client_mirage.Make(R)(C)(Stack)
   module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Stack.TCPV4)
 
   module Address = struct
@@ -58,16 +60,18 @@ module Make (Stack : Mirage_stack_lwt.V4) (Dns : Dns_resolver_mirage.S) = struct
   let addr_of_host dns host =
     match Ipaddr.V4.of_string host with
     | Ok ip -> Lwt.return @@ Ok ip
-    | Error (`Msg error_msg) ->
-      Dns.gethostbyname dns host >|= function
-      | [] -> error "Unknown host %S : %s" host error_msg
-      | addrs ->
-        let rec loop = function
-          | [] -> error "No IPv4 addresses found for %S : %s" host error_msg
-          | Ipaddr.V4 x :: _ -> Ok x
-          | Ipaddr.V6 _ :: xs -> loop xs
-        in
-        loop addrs
+    | Error (`Msg _) ->
+      match Domain_name.of_string host with
+      | Ok dn -> begin
+        match Domain_name.host dn with
+        | Ok h -> begin
+           Dns.gethostbyname dns h >>= function
+           | Ok addr -> Lwt.return_ok addr
+           | Error (`Msg error_msg) -> Lwt.return @@ error "Unknown host %S : %s" host error_msg
+         end
+        | Error (`Msg error_msg) -> Lwt.return @@ error "Invalid hostname %S : %s" host error_msg
+      end
+      | Error (`Msg error_msg) -> Lwt.return @@ error "Bad domain name %S : %s" host error_msg
 
   let ( >>*= ) x f =
     x >>= function

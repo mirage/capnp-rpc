@@ -7,7 +7,7 @@ let compression = `None
 
 let record_sent_messages = false
 
-type flow = Flow : (module Mirage_flow_lwt.S with type flow = 'a) * 'a -> flow
+type flow = Flow : (module Mirage_flow.S with type flow = 'a) * 'a -> flow
 
 type t = {
   flow : flow;
@@ -18,7 +18,7 @@ type t = {
 
 let peer_id t = t.peer_id
 
-let of_flow (type flow) ~switch ~peer_id (module F : Mirage_flow_lwt.S with type flow = flow) (flow:flow) =
+let of_flow (type flow) ~switch ~peer_id (module F : Mirage_flow.S with type flow = flow) (flow:flow) =
   let generic_flow = Flow ((module F), flow) in
   let decoder = Capnp.Codecs.FramedStream.empty compression in
   { flow = generic_flow; decoder; switch; peer_id }

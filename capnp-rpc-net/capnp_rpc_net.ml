@@ -11,7 +11,7 @@ module type VAT_NETWORK = S.VAT_NETWORK with
   type service_id := Restorer.Id.t and
   type 'a sturdy_ref := 'a Sturdy_ref.t
 
-module Networking (N : S.NETWORK) (F : Mirage_flow_lwt.S) = struct
+module Networking (N : S.NETWORK) (F : Mirage_flow.S) = struct
   type flow = F.flow
 
   module Network = N

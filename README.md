@@ -1253,6 +1253,7 @@ To build:
     cd capnp-rpc
     opam pin add -nyk git capnp-rpc .
     opam pin add -nyk git capnp-rpc-lwt .
+    opam pin add -nyk git capnp-rpc-net .
     opam pin add -nyk git capnp-rpc-unix .
     opam depext capnp-rpc-lwt alcotest
     opam install --deps-only -t capnp-rpc-unix
