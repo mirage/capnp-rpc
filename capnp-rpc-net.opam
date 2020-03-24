@@ -22,8 +22,6 @@ depends: [
   "asetmap"
   "mirage-flow" {>="2.0.0"}
   "tls" {>= "0.8.0"}
-  "mirage-kv" {>="3.0.0"}
-  "mirage-clock" {>="3.0.0"}
   "base64" {>= "3.0.0"}
   "uri" {>= "1.6.0"}
   "ptime"
