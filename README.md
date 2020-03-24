@@ -1147,13 +1147,12 @@ open Mirage
 let main =
   foreign
     ~packages:[package "capnp-rpc-mirage"; package "mirage-dns"]
-    ~deps:[abstract nocrypto]
-    "Unikernel.Make" (time @-> stackv4 @-> job)
+    "Unikernel.Make" (random @-> mclock @-> stackv4 @-> job)
 
 let stack = generic_stackv4 default_network
 
 let () =
-  register "test" [main $ default_time $ stack]
+  register "test" [main $ default_random $ default_monotonic_clock $ stack]
 ```
 
 This should work as the `unikernel.ml`:
@@ -1163,17 +1162,16 @@ open Lwt.Infix
 
 open Capnp_rpc_lwt
 
-module Make (Time : Mirage_time_lwt.S) (Stack : Mirage_stack_lwt.V4) = struct
-  module Dns = Dns_resolver_mirage.Make (Time) (Stack)
-  module Mirage_capnp = Capnp_rpc_mirage.Make (Stack) (Dns)
+module Make (R : Mirage_random.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) = struct
+  module Mirage_capnp = Capnp_rpc_mirage.Make (R) (C) (Stack)
 
   let secret_key = `Ephemeral
 
   let listen_address = `TCP 7000
   let public_address = `TCP ("localhost", 7000)
 
-  let start () stack () =
-    let dns = Dns.create stack in
+  let start () () stack =
+    let dns = Mirage.Network.Dns.create stack in
     let net = Mirage_capnp.network ~dns stack in
     let config = Mirage_capnp.Vat_config.create ~secret_key ~public_address listen_address in
     let service_id = Mirage_capnp.Vat_config.derived_id config "main" in
