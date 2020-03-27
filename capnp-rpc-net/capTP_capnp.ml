@@ -54,11 +54,11 @@ module Make (Network : S.NETWORK) = struct
   let async_tagged label fn =
     Lwt.async
       (fun () ->
-        Lwt.catch fn
-          (fun ex ->
-             Log.warn (fun f -> f "Uncaught async exception in %S: %a" label Fmt.exn ex);
-             Lwt.return_unit
-          )
+         Lwt.catch fn
+           (fun ex ->
+              Log.warn (fun f -> f "Uncaught async exception in %S: %a" label Fmt.exn ex);
+              Lwt.return_unit
+           )
       )
 
   let pp_msg f call =
@@ -106,7 +106,7 @@ module Make (Network : S.NETWORK) = struct
     if was_idle then async_tagged "Message sender thread" (fun () -> flush ~xmit_queue endpoint)
 
   let return_not_implemented t x =
-    Log.info (fun f -> f ~tags:(tags t) "Returning Unimplemented");
+    Log.debug (fun f -> f ~tags:(tags t) "Returning Unimplemented");
     let open Builder in
     let m = Message.init_root () in
     let _ : Builder.Message.t = Message.unimplemented_set_reader m x in
@@ -122,7 +122,7 @@ module Make (Network : S.NETWORK) = struct
         Prometheus.Counter.inc_one Metrics.messages_inbound_received_total;
         match Parse.message msg with
         | #Endpoint_types.In.t as msg ->
-          Log.info (fun f ->
+          Log.debug (fun f ->
               let tags = Endpoint_types.In.with_qid_tag (Conn.tags t.conn) msg in
               f ~tags "<- %a" (Endpoint_types.In.pp_recv pp_msg) msg);
           begin match msg with

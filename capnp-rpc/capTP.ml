@@ -836,33 +836,33 @@ module Make (EP : Message_types.ENDPOINT) = struct
             let id = Export.id ex in
             Hashtbl.add t.exported_caps cap id;
             begin match problem, broken_caps with
-            | Some problem, Some broken_caps -> Queue.add (ex, problem) broken_caps
-            | Some _, _ -> failwith "Cap is broken, but [broken_caps] not provided!"
-            | None, _ when settled -> ()
-            | None, _ ->
-              Log.info (fun f -> f ~tags:t.tags "Monitoring promise export %a -> %a" Export.pp ex Export.dump ex);
-              cap#when_more_resolved (fun x ->
-                  if Export.count ex > 0 then (
-                    let x = x#shortest in
-                    match x#problem with
-                    | Some problem ->
-                      Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending exception"
-                                   Export.pp ex
-                                   x#pp
-                               );
-                      t.queue_send (`Resolve (Export.id ex, Error problem));
-                    | None ->
-                      let new_export = export t x in
-                      Log.info (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending notification to use %a"
-                                   Export.pp ex
-                                   x#pp
-                                   Out.pp_desc new_export
-                               );
-                      Export.resolve ex (get_resolve_target t x);
-                      t.queue_send (`Resolve (Export.id ex, Ok new_export));
-                  ); (* else: no longer an export *)
-                  Core_types.dec_ref x
-                )
+              | Some problem, Some broken_caps -> Queue.add (ex, problem) broken_caps
+              | Some _, _ -> failwith "Cap is broken, but [broken_caps] not provided!"
+              | None, _ when settled -> ()
+              | None, _ ->
+                Log.debug (fun f -> f ~tags:t.tags "Monitoring promise export %a -> %a" Export.pp ex Export.dump ex);
+                cap#when_more_resolved (fun x ->
+                    if Export.count ex > 0 then (
+                      let x = x#shortest in
+                      match x#problem with
+                      | Some problem ->
+                        Log.debug (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending exception"
+                                      Export.pp ex
+                                      x#pp
+                                  );
+                        t.queue_send (`Resolve (Export.id ex, Error problem));
+                      | None ->
+                        let new_export = export t x in
+                        Log.debug (fun f -> f ~tags:t.tags "Export %a resolved to %t - sending notification to use %a"
+                                      Export.pp ex
+                                      x#pp
+                                      Out.pp_desc new_export
+                                  );
+                        Export.resolve ex (get_resolve_target t x);
+                        t.queue_send (`Resolve (Export.id ex, Ok new_export));
+                    ); (* else: no longer an export *)
+                    Core_types.dec_ref x
+                  )
             end;
             ex
         in
@@ -885,10 +885,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
        any of them are broken, we send a resolve for them immediately afterwards. *)
     let resolve_broken t =
       Queue.iter @@ fun (ex, problem) ->
-      Log.info (fun f -> f ~tags:t.tags "Sending resolve for already-broken export %a : %a"
-                   Export.pp ex
-                   Export.dump ex
-               );
+      Log.debug (fun f -> f ~tags:t.tags "Sending resolve for already-broken export %a : %a"
+                    Export.pp ex
+                    Export.dump ex
+                );
       t.queue_send (`Resolve (Export.id ex, Error problem))
 
     let call t remote_promise (target : message_target_cap) msg ~results_to =
@@ -908,9 +908,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
           Question.message_target question i
       in
       let qid = Question.id question in
-      Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
-                   pp_cap target
-                   Core_types.Request_payload.pp msg);
+      Log.debug (fun f -> f ~tags:(with_qid qid t) "Sending: (%a).call %a"
+                    pp_cap target
+                    Core_types.Request_payload.pp msg);
       t.queue_send (`Call (qid, message_target, msg, descs, results_to));
       resolve_broken t broken_caps;
       question
@@ -919,8 +919,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let caps = Core_types.Response_payload.snapshot_caps msg in
       let aid = Answer.id answer in
       let caps = RO_array.map (fun c -> c#shortest) caps in
-      Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
-                   Core_types.Response_payload.pp msg);
+      Log.debug (fun f -> f ~tags:(with_aid aid t) "Returning results: %a"
+                    Core_types.Response_payload.pp msg);
       RO_array.iter Core_types.inc_ref caps;        (* Copy everything stored in [msg]. *)
       let broken_caps = Queue.create () in
       let descs = RO_array.map (export ~broken_caps t) caps in
@@ -929,7 +929,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Answer.return_resolved answer ~exports_for_release ~resolve_targets;
       RO_array.iter Core_types.dec_ref caps;
       let ret = `Results (msg, descs) in
-      Log.info (fun f -> f ~tags:(with_aid aid t) "Wire results: %a" Out.pp_return ret);
+      Log.debug (fun f -> f ~tags:(with_aid aid t) "Wire results: %a" Out.pp_return ret);
       t.queue_send (`Return (aid, ret, false));
       resolve_broken t broken_caps
 
@@ -940,18 +940,18 @@ module Make (EP : Message_types.ENDPOINT) = struct
         return_results t answer payload
       | Error err ->
         let ret = (err : Error.t :> Out.return) in
-        Log.info (fun f -> f ~tags:(with_aid aid t) "Returning error: %a" Error.pp err);
+        Log.debug (fun f -> f ~tags:(with_aid aid t) "Returning error: %a" Error.pp err);
         Answer.return_resolved answer ~exports_for_release:[] ~resolve_targets:RO_array.empty;
         t.queue_send (`Return (aid, ret, false))
 
     let release t import count =
       Imports.release t.imports (Import.id import);
-      Log.info (fun f -> f ~tags:t.tags "Sending release of %a" Import.pp import);
+      Log.debug (fun f -> f ~tags:t.tags "Sending release of %a" Import.pp import);
       t.queue_send (`Release (Import.id import, count))
 
     let finish t question =
       let qid = Question.id question in
-      Log.info (fun f -> f ~tags:(with_qid qid t) "Send finish %a" Question.pp_promise question);
+      Log.debug (fun f -> f ~tags:(with_qid qid t) "Send finish %a" Question.pp_promise question);
       t.queue_send (`Finish (qid, false))
   end
 
@@ -976,7 +976,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     match Export.release export ref_count with
     | `Do_nothing -> ()
     | `Send_release (service, resolve_target) ->
-      Log.info (fun f -> f ~tags:t.tags "Releasing export %a" Export.pp export);
+      Log.debug (fun f -> f ~tags:t.tags "Releasing export %a" Export.pp export);
       Hashtbl.remove t.exported_caps service;
       Exports.release t.exports export_id;
       dec_ref service;
@@ -986,7 +986,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     List.iter @@ function
     | `Return_cancelled ->
       let aid = Answer.id answer in
-      Log.info (fun f -> f ~tags:(with_aid aid t) "Returning cancelled");
+      Log.debug (fun f -> f ~tags:(with_aid aid t) "Returning cancelled");
       t.queue_send (`Return (aid, `Cancelled, false));
     | `Release_exports exports -> List.iter (release t ~ref_count:1) exports
     | `Release_resolve_targets targets -> RO_array.iter (release_resolve_target t) targets
@@ -1009,7 +1009,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       remote_promise#set_question question;
       Answer.return_take_from_question answer question;
       let aid = Answer.id answer in
-      Log.info (fun f -> f ~tags:(with_aid aid t) "Returning take-from-other-question %a" Question.pp question);
+      Log.debug (fun f -> f ~tags:(with_aid aid t) "Returning take-from-other-question %a" Question.pp question);
       t.queue_send (`Return (aid, `TakeFromOtherQuestion (Question.id question), false));
       (* Hook this up so we still forward any pipelined calls *)
       results#resolve (remote_promise :> Core_types.struct_ref)
@@ -1076,7 +1076,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     end
 
   let disembargo t request =
-    Log.info (fun f -> f ~tags:t.tags "Sending disembargo %a" EP.Out.pp_disembargo_request request);
+    Log.debug (fun f -> f ~tags:t.tags "Sending disembargo %a" EP.Out.pp_disembargo_request request);
     t.queue_send (`Disembargo_request request)
 
   let bootstrap t object_id =
@@ -1084,7 +1084,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let question = Send.bootstrap t (result :> Core_types.struct_resolver) in
     result#set_question question;
     let qid = Question.id question in
-    Log.info (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
+    Log.debug (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
     t.queue_send (`Bootstrap (qid, object_id));
     let service = result#cap Wire.Path.root in
     dec_ref result;
@@ -1315,10 +1315,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
         let (embargo_id, _) = Embargoes.alloc t.embargoes (fun id -> (id, embargo)) in
         (* Send disembargo request *)
         let disembargo_request = `Loopback (old_path, embargo_id) in
-        Log.info (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
-                     x#pp
-                     EP.Out.pp_disembargo_request disembargo_request
-                 );
+        Log.debug (fun f -> f ~tags:t.tags "Embargo %t until %a is delivered"
+                      x#pp
+                      EP.Out.pp_disembargo_request disembargo_request
+                  );
         disembargo t disembargo_request;
         (* We don't store [x], because when the reply comes back further disembargoes
            may be needed. *)
@@ -1390,7 +1390,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           match results_to with
           | `Caller -> Send.return t answer x
           | `Yourself ->
-            Log.info (fun f -> f ~tags:(with_aid aid t) "Returning results-sent-elsewhere");
+            Log.debug (fun f -> f ~tags:(with_aid aid t) "Returning results-sent-elsewhere");
             Answer.return_resolved answer ~exports_for_release:[] ~resolve_targets:RO_array.empty;
             t.queue_send (`Return (aid, `ResultsSentElsewhere, false))
           | `ThirdParty _ -> failwith "todo: handle call by sending results to ThirdParty"
@@ -1446,13 +1446,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let msg = Core_types.Request_payload.with_caps caps msg in
       match target with
       | `Local target ->
-        Log.info (fun f -> f ~tags:t.tags "Handling call: (%t).call %a"
-                     target#pp Core_types.Request_payload.pp msg);
+        Log.debug (fun f -> f ~tags:t.tags "Handling call: (%t).call %a"
+                      target#pp Core_types.Request_payload.pp msg);
         target#call answer_resolver msg;  (* Takes ownership of [caps]. *)
         dec_ref target
       | #message_target_cap as target ->
-        Log.info (fun f -> f ~tags:t.tags "Forwarding call: (%a).call %a"
-                     pp_message_target_cap target Core_types.Request_payload.pp msg);
+        Log.debug (fun f -> f ~tags:t.tags "Forwarding call: (%a).call %a"
+                      pp_message_target_cap target Core_types.Request_payload.pp msg);
         send_call t target answer_resolver msg
 
     let bootstrap t id object_id =
@@ -1525,9 +1525,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       Question.return question disembargo_info |> apply_question_actions t question;
       begin match ret2 with
         | `Results msg ->
-          Log.info (fun f -> f ~tags:(with_qid qid t) "Got results: %a"
-                       Core_types.Response_payload.pp msg
-                   );
+          Log.debug (fun f -> f ~tags:(with_qid qid t) "Got results: %a"
+                        Core_types.Response_payload.pp msg
+                    );
           Question.resolve question (Ok msg)
         | `TakeFromCancelledQuestion -> () (* Ignore response to cancelled Question *)
         | `TakeFromOtherQuestion (other, remote_promise) ->
@@ -1576,7 +1576,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let finish t aid ~release_result_caps =
       let answer = Answers.find_exn t.answers aid in
-      Log.info (fun f -> f ~tags:(with_aid aid t) "Received finish for %a" Answer.dump answer);
+      Log.debug (fun f -> f ~tags:(with_aid aid t) "Received finish for %a" Answer.dump answer);
       Answers.release t.answers aid;
       Answer.finish answer ~release_result_caps |> apply_answer_actions t answer
 
@@ -1588,7 +1588,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         | `QuestionCap (question, path) -> Question.message_target question path
         | `Import import -> Import.message_target import
       in
-      Log.info (fun f -> f ~tags:t.tags "Sending disembargo response to %a" EP.Out.pp_desc desc);
+      Log.debug (fun f -> f ~tags:t.tags "Sending disembargo response to %a" EP.Out.pp_desc desc);
       t.queue_send (`Disembargo_reply (desc, embargo_id))
 
     (* If we're trying to disembargo something that resolved to an import, try to disembargo on
@@ -1598,7 +1598,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | Some (`Import i) -> disembargo_imports (Import.disembargo_target i)
 
     let disembargo_request t request =
-      Log.info (fun f -> f ~tags:t.tags "Received disembargo request %a" EP.In.pp_disembargo_request request);
+      Log.debug (fun f -> f ~tags:t.tags "Received disembargo request %a" EP.In.pp_disembargo_request request);
       match request with
       | `Loopback (old_path, embargo_id) ->
         match old_path with
@@ -1638,9 +1638,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let disembargo_reply t target embargo_id =
       let embargo = snd (Embargoes.find_exn t.embargoes embargo_id) in
-      Log.info (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
-                   EP.In.pp_desc target
-                   embargo#pp);
+      Log.debug (fun f -> f ~tags:t.tags "Received disembargo response %a -> %t"
+                    EP.In.pp_desc target
+                    embargo#pp);
       (* A remote export or answer resolved to [target] at some point in the
          past and we sent a disembargo request to it to flush any pipelined
          messages. This is now done - all pipelined messages that we care about
@@ -1653,28 +1653,28 @@ module Make (EP : Message_types.ENDPOINT) = struct
        *)
       let embargo_path =
         match target with
-          | `ReceiverHosted id ->
-            let export = Exports.find_exn t.exports id in
-            double_disembargo_path (Export.resolve_target export)
-          | `ReceiverAnswer (id, path) ->
-            let answer = Answers.find_exn t.answers id in
-            match Answer.resolve_target answer path with
-            | None -> None                    (* No embargoes as still unresolved (target still remote) *)
-            | Some (Error _) -> None          (* No embargoes for errors *)
-            | Some (Ok resolve_target) ->
-              double_disembargo_path resolve_target
+        | `ReceiverHosted id ->
+          let export = Exports.find_exn t.exports id in
+          double_disembargo_path (Export.resolve_target export)
+        | `ReceiverAnswer (id, path) ->
+          let answer = Answers.find_exn t.answers id in
+          match Answer.resolve_target answer path with
+          | None -> None                    (* No embargoes as still unresolved (target still remote) *)
+          | Some (Error _) -> None          (* No embargoes for errors *)
+          | Some (Ok resolve_target) ->
+            double_disembargo_path resolve_target
       in
       let cap = import t ?embargo_path (target :> EP.In.desc) in
-      Log.info (fun f -> f "Disembargo target is %t" cap#pp);
+      Log.debug (fun f -> f "Disembargo target is %t" cap#pp);
       Embargoes.release t.embargoes embargo_id;
       embargo#resolve cap;
       dec_ref embargo
 
     let resolve t import_id new_target =
-      Log.info (fun f -> f ~tags:t.tags "Received resolve of import %a to %a"
-                   ImportId.pp import_id
-                   (Fmt.result ~ok:In.pp_desc ~error:Exception.pp) new_target
-               );
+      Log.debug (fun f -> f ~tags:t.tags "Received resolve of import %a to %a"
+                    ImportId.pp import_id
+                    (Fmt.result ~ok:In.pp_desc ~error:Exception.pp) new_target
+                );
       let import_new_target ~embargo_path =
         match new_target with
         | Error e -> Core_types.broken_cap e
@@ -1683,17 +1683,17 @@ module Make (EP : Message_types.ENDPOINT) = struct
       match Imports.find t.imports import_id with
       | None ->
         let new_target = import_new_target ~embargo_path:None in
-        Log.info (fun f -> f ~tags:t.tags "Import %a no longer used - releasing new resolve target %t"
-                     ImportId.pp import_id new_target#pp);
+        Log.debug (fun f -> f ~tags:t.tags "Import %a no longer used - releasing new resolve target %t"
+                      ImportId.pp import_id new_target#pp);
         dec_ref new_target
       | Some im ->
         (* Check we're not resolving a settled import. *)
         if im.Import.settled then (
-            let new_target = import_new_target ~embargo_path:None in
-            let msg = Fmt.strf "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
-            dec_ref new_target;
-            failwith msg
-          );
+          let new_target = import_new_target ~embargo_path:None in
+          let msg = Fmt.strf "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
+          dec_ref new_target;
+          failwith msg
+        );
         let get_import id =
           let i = Imports.find_exn t.imports id in
           Import.inc_ref i;
@@ -1711,8 +1711,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
              - Some [resolve_target] kept the import in the table. *)
           let target = import_new_target ~embargo_path:None in
           Import.mark_resolved im ~get_import new_target;
-          Log.info (fun f -> f ~tags:t.tags "Ignoring resolve of import %a, which we no longer need (to %t)"
-                       ImportId.pp import_id target#pp);
+          Log.debug (fun f -> f ~tags:t.tags "Ignoring resolve of import %a, which we no longer need (to %t)"
+                        ImportId.pp import_id target#pp);
           dec_ref target
 
   end

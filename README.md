@@ -1026,7 +1026,7 @@ Using `Capability.with_ref` makes it easier to ensure that `dec_ref` gets called
 First, always make sure logging is enabled so you can at least see warnings.
 The `main.ml` examples in this document enable some basic logging.
 
-If you turn up the log level to `Info` (or even `Debug`), you'll see lots of information about what is going on.
+If you turn up the log level to `Debug`, you'll see lots of information about what is going on.
 Turning on colour in the logs will help too - see `test-bin/calc.ml` for an example.
 
 Many references will be displayed with their reference count (e.g. as `rc=3`).
@@ -1268,7 +1268,7 @@ The calculator example can also be run across two Unix processes.
 Start the server with:
 
 ```
-$ ./_build/default/test-bin/calc.bc serve \
+$ dune exec -- ./test-bin/calc.bc serve \
     --capnp-listen-address unix:/tmp/calc.socket \
     --capnp-secret-key-file=key.pem
 Waiting for incoming connections at:
@@ -1280,7 +1280,7 @@ Note that `key.pem` does not need to exist. A new key will be generated and save
 In another terminal, run the client and connect to the address displayed by the server:
 
 ```
-./_build/default/test-bin/calc.bc connect capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket
+dune exec -- ./test-bin/calc.bc connect capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket/
 ```
 
 You can also use `--capnp-disable-tls` if you prefer to run without encryption

@@ -53,7 +53,7 @@ let equal a b =
   | _ -> Error `Unsettled
 
 let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) (req : 'a Request.t) =
-  Log.info (fun f -> f "Calling %a" Capnp.RPC.MethodID.pp m);
+  Log.debug (fun f -> f "Calling %a" Capnp.RPC.MethodID.pp m);
   let msg = Request.finish m req in
   let results, resolver = Local_struct_promise.make () in
   target#call resolver msg;
