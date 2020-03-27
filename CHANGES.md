@@ -1,8 +1,10 @@
-### dev
+### v0.6.0
 
 - Port to latest interfaces for x509 (0.10+), mirage-crypto,
   alcotest (1.0+), and mirage-types post the `-lwt` package
   merge (@avsm #190, review by @talex5 @hannesm)
+
+- Convert many info-level log messages to debug level (@talex5 #193)
 
 ### v0.5.0
 
