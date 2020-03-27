@@ -82,7 +82,7 @@ let cmds = [serve_cmd; connect_cmd]
 let () =
   Fmt_tty.setup_std_outputs ();
   Logs.set_reporter reporter;
-  Logs.set_level ~all:true (Some Logs.Info);
+  Logs.set_level ~all:true (Some Logs.Debug);
   match Term.eval_choice ~catch:false default_cmd cmds with
   | exception Failure msg -> Fmt.epr "%s@." msg; exit 1
   | status -> Term.exit status

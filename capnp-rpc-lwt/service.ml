@@ -39,7 +39,7 @@ let local (s:#generic) =
       let call = Msg.Request.readable msg in
       let interface_id = Call.interface_id_get call in
       let method_id = Call.method_id_get call in
-      Log.info (fun f -> f "Invoking local method %a" pp_method (interface_id, method_id));
+      Log.debug (fun f -> f "Invoking local method %a" pp_method (interface_id, method_id));
       let p = Call.params_get call in
       let m : abstract_method_t = s#dispatch ~interface_id ~method_id in
       let release_params () = Core_types.Request_payload.release msg in
