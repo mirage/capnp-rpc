@@ -38,12 +38,12 @@ module Make (R : Mirage_random.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stac
     match listen_address with
     | `TCP port ->
       Stack.listen_tcpv4 t.stack ~port (fun flow ->
-          Logs.info (fun f -> f ?tags "Accepting new connection");
+          Log.info (fun f -> f ?tags "Accepting new connection");
           let secret_key = if serve_tls then Some (Vat_config.secret_key config) else None in
           Lwt.async (fun () -> handle_connection ?tags ~secret_key vat flow);
           Lwt.return_unit
         );
-      Logs.info (fun f -> f ?tags "Waiting for %s connections on %a"
+      Log.info (fun f -> f ?tags "Waiting for %s connections on %a"
                     (if serve_tls then "(encrypted)" else "UNENCRYPTED")
                     Vat_config.Listen_address.pp listen_address);
       Lwt.return vat

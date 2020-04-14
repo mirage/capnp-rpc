@@ -1,5 +1,8 @@
 (** Send and receive capnp messages over a byte-stream. *)
 
+val src : Logs.src
+(** Control the log level. *)
+
 type t
 (** A wrapper for a byte-stream (flow). *)
 

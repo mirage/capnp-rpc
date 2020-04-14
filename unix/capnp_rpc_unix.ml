@@ -124,14 +124,14 @@ let serve ?switch ?tags ?restore config =
       socket
   in
   Unix.listen socket backlog;
-  Logs.info (fun f -> f ?tags "Waiting for %s connections on %a"
+  Log.info (fun f -> f ?tags "Waiting for %s connections on %a"
                 (if serve_tls then "(encrypted)" else "UNENCRYPTED")
                 Vat_config.Listen_address.pp listen_address);
   let lwt_socket = Lwt_unix.of_unix_file_descr socket in
   let rec loop () =
     Lwt_switch.check switch;
     Lwt_unix.accept lwt_socket >>= fun (client, _addr) ->
-    Logs.info (fun f -> f ?tags "Accepting new connection");
+    Log.info (fun f -> f ?tags "Accepting new connection");
     let secret_key = if serve_tls then Some (Vat_config.secret_key config) else None in
     Lwt.async (fun () -> handle_connection ?tags ~secret_key vat client);
     loop ()
