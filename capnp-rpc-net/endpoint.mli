@@ -1,10 +1,7 @@
 (** Send and receive capnp messages over a byte-stream. *)
 
-module Log : Logs.LOG
-(** The endpoint library's logger. *)
-
 val src : Logs.src
-(** Control the log level for [Log]. *)
+(** Control the log level. *)
 
 type t
 (** A wrapper for a byte-stream (flow). *)
