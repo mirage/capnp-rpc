@@ -136,7 +136,7 @@ module Secret_key = struct
     X509.Signing_request.sign csr ~valid_from ~valid_until (`RSA t) dn |>
     function
     | Ok v -> v
-    | Error (`Msg err) -> failwith (Printf.sprintf "x509 signing failed: %s" err)
+    | Error err -> Fmt.failwith "x509 signing failed: %a" X509.Validation.pp_signature_error err
 
   let of_priv priv =
     let cert = x509 priv in
