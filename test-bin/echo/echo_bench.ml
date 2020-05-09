@@ -7,21 +7,19 @@ let () =
   Logs.set_level (Some Logs.Info);
   Logs.set_reporter (Logs_fmt.reporter ())
 
-let rec create_for v = function
-  | 0. -> []
-  | n -> v n :: (create_for v (n-.1.))
-
 let run_client service = 
-  let n = 100000. in
-  let ops = n |> create_for (fun i -> 
+  let n = 100000 in
+  let ops = List.init n (fun i -> 
+      let payload = Int.to_string i in
+      let desired_result = "echo:" ^ payload in
       fun () -> 
-        Echo.ping service (Float.to_string i) >>= fun res ->
-        Lwt.return (res = "echo:" ^ (Float.to_string i))
+        Echo.ping service payload >>= fun res ->
+        Lwt.return (res = desired_result)
     ) in
   let st = Unix.gettimeofday () in
   Lwt_list.map_p (fun v -> v ()) ops >>= fun _ ->
   let ed = Unix.gettimeofday () in 
-  let rate = n /. (ed -. st) in
+  let rate = (Int.to_float n) /. (ed -. st) in
   Logs.info (fun m -> m "rate = %f" rate );
   Lwt.return_unit
 
