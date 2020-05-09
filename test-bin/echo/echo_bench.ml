@@ -15,11 +15,11 @@ let run_client service =
   let n = 100000. in
   let ops = n |> create_for (fun i -> 
       fun () -> 
-        let%lwt res = Echo.ping service (Float.to_string i) in
+        Echo.ping service (Float.to_string i) >>= fun res ->
         Lwt.return (res = "echo:" ^ (Float.to_string i))
     ) in
   let st = Unix.gettimeofday () in
-  let%lwt _res = Lwt_list.map_p (fun v -> v ()) ops in
+  Lwt_list.map_p (fun v -> v ()) ops >>= fun _ ->
   let ed = Unix.gettimeofday () in 
   let rate = n /. (ed -. st) in
   Logs.info (fun m -> m "rate = %f" rate );
@@ -41,6 +41,6 @@ let () =
     Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
     let client_vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    let%lwt proxy = Sturdy_ref.connect_exn sr in
+    Sturdy_ref.connect_exn sr >>= fun proxy -> 
     run_client proxy
   end

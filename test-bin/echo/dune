@@ -1,7 +1,6 @@
 (executable
  (name echo_bench)
  (libraries lwt.unix capnp-rpc capnp-rpc-lwt capnp-rpc-net capnp-rpc-unix logs.fmt)
- (preprocess (pps lwt_ppx))
  (flags (:standard -w -53-55)))
 
 (rule
