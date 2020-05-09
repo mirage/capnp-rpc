@@ -4,10 +4,10 @@ open Capnp_rpc_net
 
 module Location = Network.Location
 
-module Make (R : Mirage_random.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) : sig
+module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) : sig
   include Capnp_rpc_net.VAT_NETWORK with
     type flow = Stack.TCPV4.flow and
-    module Network = Network.Make(R)(C)(Stack)
+    module Network = Network.Make(R)(T)(C)(Stack)
 
   module Vat_config : sig
     module Listen_address : sig

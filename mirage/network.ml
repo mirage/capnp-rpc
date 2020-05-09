@@ -17,9 +17,9 @@ module Location = struct
   let equal = ( = )
 end
 
-module Make  (R : Mirage_random.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) = struct
+module Make  (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) = struct
 
-  module Dns = Dns_client_mirage.Make(R)(C)(Stack)
+  module Dns = Dns_client_mirage.Make(R)(T)(C)(Stack)
   module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Stack.TCPV4)
 
   module Address = struct
