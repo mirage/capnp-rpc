@@ -5,7 +5,9 @@ open Examples
 
 module Time = struct
   let sleep_ns ns = Lwt_unix.sleep (Duration.to_f ns)
+end 
 
+module Clock = struct
   let period_ns () = None
   let elapsed_ns () = 0L
 end
@@ -21,9 +23,9 @@ module Stack = struct
   module V = Vnetif.Make(B)
   module E = Ethernet.Make(V)
   module A = Arp.Make(E)(Time)
-  module I = Static_ipv4.Make(Random)(Time)(E)(A)
+  module I = Static_ipv4.Make(Random)(Clock)(E)(A)
   module U = Udp.Make(I)(Random)
-  module T = Tcp.Flow.Make(I)(Time)(Time)(Random)
+  module T = Tcp.Flow.Make(I)(Time)(Clock)(Random)
   module Icmp = Icmpv4.Make(I)
   include Tcpip_stack_direct.Make(Time)(Random)(V)(E)(A)(I)(Icmp)(U)(T)
 
@@ -39,7 +41,7 @@ module Stack = struct
     Icmp.connect i >>= fun icmp ->
     connect v e a i icmp u t
 end
-module Mirage = Capnp_rpc_mirage.Make(Random)(Time)(Stack)
+module Mirage = Capnp_rpc_mirage.Make(Random)(Time)(Clock)(Stack)
 module Vat = Mirage.Vat
 
 type cs = {
