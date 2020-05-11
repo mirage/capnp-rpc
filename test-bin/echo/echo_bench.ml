@@ -13,11 +13,11 @@ let run_client service =
       let payload = Int.to_string i in
       let desired_result = "echo:" ^ payload in
       fun () -> 
-        Echo.ping service payload >>= fun res ->
-        Lwt.return (res = desired_result)
+        Echo.ping service payload >|= fun res ->
+        assert (res = desired_result)
     ) in
   let st = Unix.gettimeofday () in
-  Lwt_list.map_p (fun v -> v ()) ops >>= fun _ ->
+  Lwt_list.iter_p (fun v -> v ()) ops >>= fun () ->
   let ed = Unix.gettimeofday () in 
   let rate = (Int.to_float n) /. (ed -. st) in
   Logs.info (fun m -> m "rate = %f" rate );
