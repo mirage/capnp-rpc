@@ -7,9 +7,9 @@ type 'a cap = Core_types.cap
 
 type 'a t = Message.t
 
-let create init =
+let create ?message_size init =
   let msg =
-    Message.init_root ()
+    Message.init_root ?message_size ()
     |> StructStorage.with_attachments (Msg.wrap_attachments (Core_types.Attachments.builder ())) in
   let ret = Message.return_init msg in
   let p = Return.results_init ret in
@@ -17,7 +17,7 @@ let create init =
   msg, content
 
 let create_empty () =
-  let msg = Message.init_root () in
+  let msg = Message.init_root ~message_size:100 () in
   let _ = Message.return_init msg in
   msg
 

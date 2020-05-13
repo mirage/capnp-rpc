@@ -106,7 +106,7 @@ module Response = struct
     | _ -> assert false
 
   let bootstrap () =
-    let msg = B.Message.init_root () in
+    let msg = B.Message.init_root ~message_size:150 () in
     let ret = B.Message.return_init msg in
     let p = B.Return.results_init ret in
     B.Payload.content_set_interface p (Some Stdint.Uint32.zero);   (* Cap index 0 *)

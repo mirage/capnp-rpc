@@ -67,7 +67,7 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
       write_exn (Message.abort_init b) ex;
       Message.to_message b
     | `Bootstrap (qid, object_id) ->
-      let b = Message.init_root () in
+      let b = Message.init_root ~message_size:100 () in
       let boot = Message.bootstrap_init b in
       Bootstrap.question_id_set boot (QuestionId.uint32 qid);
       Schema.BuilderOps.write_string (Bootstrap.deprecated_object_id_get boot) object_id;
@@ -86,7 +86,7 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
       end;
       Call.to_message c
     | `Finish (qid, release_result_caps) ->
-      let b = Message.init_root () in
+      let b = Message.init_root ~message_size:42 () in
       let fin = Message.finish_init b in
       Finish.question_id_set fin (QuestionId.uint32 qid);
       Finish.release_result_caps_set fin release_result_caps;

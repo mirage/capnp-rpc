@@ -71,9 +71,12 @@ module Capability : sig
     type 'a t
     (** An ['a t] is a builder for the out-going request's payload. *)
 
-    val create : (Capnp.Message.rw Slice.t -> 'a) -> 'a t * 'a
+    val create : ?message_size:int -> (Capnp.Message.rw Slice.t -> 'a) -> 'a t * 'a
     (** [create init] is a fresh request payload and contents builder.
-        Use one of the generated [init_pointer] functions for [init]. *)
+        Use one of the generated [init_pointer] functions for [init].
+        @param message_size An estimate of the size of the payload. If this is too small,
+                            additional segments will be allocated automatically, but this
+                            is less efficient than getting the size right to start with. *)
 
     val create_no_args : unit -> 'a t
     (** [create_no_args ()] is a payload with no content. *)
@@ -210,7 +213,7 @@ module Service : sig
     type 'b t
     (** An ['a t] is a builder for the out-going response. *)
 
-    val create : (Capnp.Message.rw Slice.t -> 'a) -> 'a t * 'a
+    val create : ?message_size:int -> (Capnp.Message.rw Slice.t -> 'a) -> 'a t * 'a
     (** [create init] is a fresh response and contents builder.
         Use one of the generated [init_pointer] functions for [init]. *)
 

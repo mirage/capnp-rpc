@@ -100,6 +100,12 @@ module Make (Network : S.NETWORK) = struct
 
   (* Enqueue [message] in [xmit_queue] and ensure the flush thread is running. *)
   let queue_send ~xmit_queue endpoint message =
+    Log.debug (fun f ->
+        let module M = Capnp_rpc_lwt.Private.Schema.MessageWrapper.Message in
+        f "queue_send: %d/%d allocated bytes in %d segs"
+                  (M.total_size message)
+                  (M.total_alloc_size message)
+                  (M.num_segments message));
     let was_idle = Queue.is_empty xmit_queue in
     Queue.add message xmit_queue;
     Prometheus.Counter.inc_one Metrics.messages_outbound_enqueued_total;
