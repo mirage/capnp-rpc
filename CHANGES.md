@@ -1,3 +1,24 @@
+### v0.7.0
+
+- Update for x509 0.11.0 API changes (@talex5, #196).
+
+- Update to new mirage network API (@Cjen1, #198).
+
+- Add echo benchmark test (@Cjen1, #197).
+
+- Estimate message sizes to improve performance (@talex5, #200).
+  By default, capnproto allocates 8k buffers, but most capnp-rpc messages are
+  much smaller than this.
+
+Logging:
+
+- Fix application logging, to use library's log (@Cjen1, #195).
+
+- Expose the endpoint logger (@Cjen1, #195).
+
+- Only enable debug logging for capnp libraries in the calc example.
+  TLS now generates a lot of messages at debug level (@talex5, #200).
+
 ### v0.6.0
 
 - Port to latest interfaces for x509 (0.10+), mirage-crypto,
