@@ -17,7 +17,7 @@ let run_client service =
         assert (res = desired_result)
     ) in
   let st = Unix.gettimeofday () in
-  Lwt_list.iter_p (fun v -> v ()) ops >>= fun () ->
+  Lwt_stream.of_list ops |> Lwt_stream.iter_n ~max_concurrency:12 (fun v -> v ()) >>= fun () ->
   let ed = Unix.gettimeofday () in 
   let rate = (Int.to_float n) /. (ed -. st) in
   Logs.info (fun m -> m "rate = %f" rate );

@@ -82,7 +82,11 @@ let cmds = [serve_cmd; connect_cmd]
 let () =
   Fmt_tty.setup_std_outputs ();
   Logs.set_reporter reporter;
-  Logs.set_level ~all:true (Some Logs.Debug);
+  Logs.set_level ~all:true (Some Logs.Info);
+  Logs.Src.list () |> List.iter (fun src ->
+      if Astring.String.is_prefix ~affix:"capnp" (Logs.Src.name src) then
+        Logs.Src.set_level src (Some Logs.Debug);
+    );
   match Term.eval_choice ~catch:false default_cmd cmds with
   | exception Failure msg -> Fmt.epr "%s@." msg; exit 1
   | status -> Term.exit status

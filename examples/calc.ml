@@ -70,7 +70,7 @@ let evaluate t expr =
 let getOperator t op =
   let open C.GetOperator in
   let module O = Api.Builder.Calculator.Operator in
-  let req, p = Capability.Request.create Params.init_pointer in
+  let req, p = Capability.Request.create ~message_size:200 Params.init_pointer in
   Params.op_set p (match op with
       | `Add -> O.Add
       | `Subtract -> O.Subtract
@@ -104,7 +104,7 @@ module Value = struct
       method read_impl _ release_params =
         let open Value.Read in
         release_params ();
-        let resp, c = Service.Response.create Results.init_pointer in
+        let resp, c = Service.Response.create ~message_size:200 Results.init_pointer in
         Results.value_set c f;
         Service.return resp
     end
@@ -173,7 +173,7 @@ module Fn = struct
         (* Functions return floats, not Value objects, so we have to wait here. *)
         Service.return_lwt (fun () ->
             Value.final_read value >|= fun value ->
-            let resp, r = Service.Response.create Results.init_pointer in
+            let resp, r = Service.Response.create ~message_size:200 Results.init_pointer in
             Results.value_set r value;
             Ok resp
           )
@@ -216,7 +216,7 @@ let local =
       let fn_obj = Fn.local n_args body in
       Expr.release body;
       release_params ();
-      let resp, results = Service.Response.create Results.init_pointer in
+      let resp, results = Service.Response.create ~message_size:200 Results.init_pointer in
       Results.func_set results (Some fn_obj);
       Service.return resp
 
@@ -226,7 +226,7 @@ let local =
       release_params ();
       let value_obj = eval expr in
       Expr.release expr;
-      let resp, results = Service.Response.create Results.init_pointer in
+      let resp, results = Service.Response.create ~message_size:200 Results.init_pointer in
       Results.value_set results (Some value_obj);
       Capability.dec_ref value_obj;
       Service.return resp
@@ -243,7 +243,7 @@ let local =
         | O.Divide      -> Fn.div
         | O.Undefined _ -> failwith "Unknown operator"
       in
-      let resp, results = Service.Response.create Results.init_pointer in
+      let resp, results = Service.Response.create ~message_size:200 Results.init_pointer in
       Results.func_set results (Some op_obj);
       Service.return resp
   end
