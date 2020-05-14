@@ -92,13 +92,13 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
       Finish.release_result_caps_set fin release_result_caps;
       Message.to_message b
     | `Release (id, count) ->
-      let m = Message.init_root () in
+      let m = Message.init_root ~message_size:48 () in
       let rel = Message.release_init m in
       Release.id_set rel (ImportId.uint32 id);
       Release.reference_count_set_int_exn rel count;
       Message.to_message m
     | `Disembargo_request disembargo_request ->
-      let m = Message.init_root () in
+      let m = Message.init_root ~message_size:200 () in
       let dis = Message.disembargo_init m in
       let ctx = Disembargo.context_init dis in
       begin match disembargo_request with
@@ -108,7 +108,7 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
       end;
       Message.to_message m
     | `Disembargo_reply (target, embargo_id) ->
-      let m = Message.init_root () in
+      let m = Message.init_root ~message_size:200 () in
       let dis = Message.disembargo_init m in
       let ctx = Disembargo.context_init dis in
       set_target (Disembargo.target_init dis) target;
@@ -128,17 +128,17 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
           write_exn (Return.exception_init ret) ex;
           ret
         | `Cancelled ->
-          let m = Message.init_root () in
+          let m = Message.init_root ~message_size:200 () in
           let ret = Message.return_init m in
           Return.canceled_set ret;
           ret
         | `ResultsSentElsewhere ->
-          let m = Message.init_root () in
+          let m = Message.init_root ~message_size:200 () in
           let ret = Message.return_init m in
           Return.results_sent_elsewhere_set ret;
           ret
         | `TakeFromOtherQuestion qid ->
-          let m = Message.init_root () in
+          let m = Message.init_root ~message_size:200 () in
           let ret = Message.return_init m in
           Return.take_from_other_question_set ret (QuestionId.uint32 qid);
           ret
