@@ -35,6 +35,7 @@ See [LICENSE.md](LICENSE.md) for details.
 	* [How can I import a sturdy ref that I need to start my vat?](#how-can-i-import-a-sturdy-ref-that-i-need-to-start-my-vat)
 	* [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
 	* [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
+	* [Can I set up a direct 2-party connection over a pre-existing channel?](#can-i-set-up-a-direct-2-party-connection-over-a-pre-existing-channel)
 	* [How can I use this with Mirage?](#how-can-i-use-this-with-mirage)
 * [Contributing](#contributing)
 	* [Conceptual model](#conceptual-model)
@@ -1133,6 +1134,28 @@ capnp.wait_forever()
 
 Note that calling `wait_forever` prevents further use of the session, however.
 
+### Can I set up a direct 2-party connection over a pre-existing channel?
+
+The normal way to connect to a remote service is using a sturdy ref, as described above.
+This uses the [NETWORK][] to open a new connection to the server, or reuses an existing connection
+if there is one. However, it is sometimes useful to use a pre-existing connection directly.
+
+For example, a process may want to spawn a child process and communicate with it
+over a socketpair. The [calc_direct.ml][] example shows how to do this:
+
+```
+$ dune exec -- ./test-bin/calc_direct.exe
+parent: application: Connecting to child process...
+parent: application: Sending request...
+ child: application: Serving requests...
+ child: application: 21.000000 op 2.000000 -> 42.000000
+parent: application: Result: 42.000000
+parent: application: Shutting down...
+parent:   capnp-rpc: Connection closed
+parent: application: Waiting for child to exit...
+parent: application: Done
+```
+
 ### How can I use this with Mirage?
 
 Note: `capnp` uses the `stdint` library, which has C stubs and
@@ -1324,3 +1347,5 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [Mirage]: https://mirage.io/
 [ocaml-ci]: https://github.com/ocaml-ci/ocaml-ci
 [api]: https://mirage.github.io/capnp-rpc/
+[NETWORK]: https://mirage.github.io/capnp-rpc/capnp-rpc-net/Capnp_rpc_net/S/module-type-NETWORK/index.html
+[calc_direct.ml]: ./test-bin/calc_direct.ml
