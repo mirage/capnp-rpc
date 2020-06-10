@@ -1,13 +1,6 @@
-(executable
- (name test)
+(test
+ (name test_mirage)
+ (package capnp-rpc-mirage)
  (libraries io-page-unix capnp-rpc-lwt capnp-rpc-mirage alcotest-lwt examples
    logs.fmt testbed tcpip.ipv4 tcpip.stack-direct mirage-vnetif ethernet
    arp-mirage tcpip.tcp tcpip.icmpv4 mirage-crypto-rng.unix))
-
-(alias
- (name runtest)
- (package capnp-rpc-mirage)
- (deps
-  (:< test.bc))
- (action
-  (run %{<})))

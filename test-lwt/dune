@@ -1,12 +1,5 @@
-(executable
- (name test)
+(test
+ (package capnp-rpc-unix)
+ (name test_lwt)
  (libraries capnp-rpc-lwt capnp-rpc-unix alcotest-lwt examples logs.fmt
    testbed))
-
-(alias
- (name runtest)
- (package capnp-rpc-unix)
- (deps
-  (:< test.bc))
- (action
-  (run %{<})))
