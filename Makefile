@@ -3,7 +3,7 @@
 default: test build-fuzz
 
 all:
-	dune build @install test/test.bc test-lwt/test.bc test-bin/calc.exe test-mirage/test.bc
+	dune build @install test/test.exe test-lwt/test_lwt.exe test-bin/calc.exe test-mirage/test_mirage.exe
 	rm -rf _build/_tests
 	dune runtest --no-buffer -j 1
 
@@ -19,7 +19,7 @@ clean:
 
 test:
 	rm -rf _build/_tests
-	dune build test/test.bc test-lwt/test.bc test-bin/calc.bc test-mirage/test.bc
+	dune build test/test.exe test-lwt/test_lwt.exe test-bin/calc.exe test-mirage/test_mirage.exe
 	#./_build/default/test/test.bc test core -ev 36
 	#./_build/default/test-lwt/test.bc test lwt -ev 3
 	dune build @runtest --no-buffer -j 1
