@@ -1,11 +1,4 @@
-(executable
+(test
  (name test)
- (libraries capnp-rpc alcotest logs.fmt testbed))
-
-(alias
- (name runtest)
  (package capnp-rpc)
- (deps
-  (:< test.bc))
- (action
-  (run %{<})))
+ (libraries capnp-rpc alcotest logs.fmt testbed))
