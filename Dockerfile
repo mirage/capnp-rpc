@@ -1,6 +1,6 @@
 FROM ocurrent/opam@sha256:7cec1ab422d97bf498c309a38b685e7c2650a0daa2d6ddef5fb4428de0535f26
 #FROM ocurrent/opam:alpine-3.10-ocaml-4.08
-RUN cd ~/opam-repository && git fetch && git reset --hard 5406460dc52fbfb6e7b34deae0b712dbea3efa41 && opam update
+RUN cd ~/opam-repository && git fetch && git reset --hard 42f3767f07a36517910bdbf5d0c5230457ae7c79 && opam update
 RUN opam depext -i capnp afl-persistent conf-capnproto tls tls-mirage mirage-flow ptime cmdliner dns-client dns-mirage
 ADD --chown=opam *.opam /home/opam/capnp-rpc/
 WORKDIR /home/opam/capnp-rpc/

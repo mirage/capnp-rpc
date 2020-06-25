@@ -31,11 +31,11 @@ module Stack = struct
 
   let create_network () = B.create ~use_async_readers:true ~yield:Lwt_unix.yield ()
 
-  let create_interface backend ip =
+  let create_interface backend cidr =
     V.connect backend >>= fun v ->
     E.connect v >>= fun e ->
     A.connect e >>= fun a ->
-    I.connect ~ip:(Ipaddr.V4.Prefix.private_10, ip) e a >>= fun i ->
+    I.connect ~cidr e a >>= fun i ->
     U.connect i >>= fun u ->
     T.connect i >>= fun t ->
     Icmp.connect i >>= fun icmp ->
@@ -60,8 +60,8 @@ let get_bootstrap cs =
   let sr = Vat.sturdy_uri cs.server id |> Vat.import_exn cs.client in
   Sturdy_ref.connect_exn sr
 
-let create_iface network ip =
-  Stack.create_interface network (Ipaddr.V4.of_string_exn ip) >|= fun stack ->
+let create_iface network cidr =
+  Stack.create_interface network (Ipaddr.V4.Prefix.of_string_exn cidr) >|= fun stack ->
   let dns = Mirage.Network.Dns.create stack in
   Mirage.network ~dns stack
 
@@ -78,8 +78,8 @@ let make_vats ?(serve_tls=false) ~switch ~service () =
     Mirage.Vat_config.create ~secret_key:server_pem ~serve_tls ~public_address:(`TCP ("10.0.0.1", 7000)) (`TCP 7000)
   in
   let net = Stack.create_network () in
-  create_iface net "10.0.0.1" >>= fun server_net ->
-  create_iface net "10.0.0.2" >>= fun client_net ->
+  create_iface net "10.0.0.1/8" >>= fun server_net ->
+  create_iface net "10.0.0.2/8" >>= fun client_net ->
   let server_switch = Lwt_switch.create () in
   Mirage.serve ~switch:server_switch ~tags:Testbed.Test_utils.server_tags ~restore server_net server_config >>= fun server ->
   Lwt_switch.add_hook (Some switch) (fun () -> Lwt_switch.turn_off server_switch);
