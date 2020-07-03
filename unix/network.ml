@@ -1,3 +1,5 @@
+open Lwt.Infix
+
 module Log = Capnp_rpc.Debug.Log
 module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Unix_flow)
 
@@ -69,23 +71,31 @@ let addr_of_host host =
 let connect_socket = function
   | `Unix path ->
     Logs.info (fun f -> f "Connecting to %S..." path);
-    let socket = Unix.(socket PF_UNIX SOCK_STREAM 0) in
-    Unix.connect socket (Unix.ADDR_UNIX path);
-    socket
+    let socket = Lwt_unix.(socket PF_UNIX SOCK_STREAM 0) in
+    Lwt.catch
+      (fun () -> Lwt_unix.connect socket (Unix.ADDR_UNIX path) >|= fun () -> socket)
+      (fun ex -> Lwt_unix.close socket >>= fun () -> Lwt.fail ex)
   | `TCP (host, port) ->
     Logs.info (fun f -> f "Connecting to %s:%d..." host port);
-    let socket = Unix.(socket PF_INET SOCK_STREAM 0) in
-    Unix.setsockopt socket Unix.SO_KEEPALIVE true;
-    Unix.connect socket (Unix.ADDR_INET (addr_of_host host, port));
-    socket
+    let socket = Lwt_unix.(socket PF_INET SOCK_STREAM 0) in
+    Lwt.catch
+      (fun () ->
+         Lwt_unix.setsockopt socket Unix.SO_KEEPALIVE true;
+         Lwt_unix.connect socket (Unix.ADDR_INET (addr_of_host host, port)) >|= fun () ->
+         socket
+      )
+      (fun ex -> Lwt_unix.close socket >>= fun () -> Lwt.fail ex)
 
 let connect () ~switch ~secret_key (addr, auth) =
-  match connect_socket addr with
-  | exception ex ->
-    Lwt.return @@ error "@[<v2>Network connection for %a failed:@,%a@]" Location.pp addr Fmt.exn ex
-  | socket ->
-    let flow = Unix_flow.connect ~switch (Lwt_unix.of_unix_file_descr socket) in
-    Tls_wrapper.connect_as_client ~switch flow secret_key auth
+  Lwt.try_bind
+    (fun () -> connect_socket addr)
+    (fun socket ->
+       let flow = Unix_flow.connect ~switch socket in
+       Tls_wrapper.connect_as_client ~switch flow secret_key auth
+    )
+    (fun ex ->
+       Lwt.return @@ error "@[<v2>Network connection for %a failed:@,%a@]" Location.pp addr Fmt.exn ex
+    )
 
 let accept_connection ~switch ~secret_key flow =
   Tls_wrapper.connect_as_server ~switch flow secret_key
