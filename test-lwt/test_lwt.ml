@@ -608,7 +608,7 @@ let test_store switch =
   (* Set up client *)
   let client = Capnp_rpc_unix.client_only_vat ~tags:Test_utils.client_tags ~switch () in
   let sr = Capnp_rpc_unix.Vat.import_exn client store_uri in
-  Sturdy_ref.connect_exn sr >>= fun store ->
+  Sturdy_ref.with_cap_exn sr @@ fun store ->
   (* Try creating a file *)
   let file = Store.create_file store in
   Store.File.set file "Hello" >>= fun () ->
@@ -623,12 +623,9 @@ let test_store switch =
   (* Restart server *)
   start_server ~switch () >>= fun _server ->
   (* Reconnect client *)
-  Sturdy_ref.connect_exn file_sr >>= fun file ->
+  Sturdy_ref.with_cap_exn file_sr @@ fun file ->
   Store.File.get file >>= fun data ->
   Alcotest.(check string) "Read file" "Hello" data;
-  (* Clean up *)
-  Capability.dec_ref file;
-  Capability.dec_ref store;
   Lwt.return_unit
 
 let run name fn = Alcotest_lwt.test_case_sync name `Quick fn
