@@ -440,8 +440,7 @@ let () =
     Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
     let client_vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    Sturdy_ref.connect_exn sr >>= fun proxy_to_service ->
-    run_client proxy_to_service
+    Sturdy_ref.with_cap_exn sr run_client
   end
 ```
 
@@ -522,8 +521,8 @@ In `start_server`:
 #### The client side
 
 After starting the server and getting the sturdy URI, we create a client vat and connect to the sturdy ref.
-The result, `proxy_to_service`, is a proxy to the remote service via the network
-that can be used in exactly the same way as the direct reference we used before.
+The result is a proxy to the remote service via the network that can be used in
+exactly the same way as the direct reference we used before.
 
 #### Separate processes
 
@@ -605,8 +604,7 @@ let connect uri =
     Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
     let client_vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    Sturdy_ref.connect_exn sr >>= fun proxy_to_service ->
-    run_client proxy_to_service
+    Sturdy_ref.with_cap_exn sr run_client
   end
 
 open Cmdliner
@@ -1291,7 +1289,7 @@ The calculator example can also be run across two Unix processes.
 Start the server with:
 
 ```
-$ dune exec -- ./test-bin/calc.bc serve \
+$ dune exec -- ./test-bin/calc.exe serve \
     --capnp-listen-address unix:/tmp/calc.socket \
     --capnp-secret-key-file=key.pem
 Waiting for incoming connections at:
@@ -1303,7 +1301,7 @@ Note that `key.pem` does not need to exist. A new key will be generated and save
 In another terminal, run the client and connect to the address displayed by the server:
 
 ```
-dune exec -- ./test-bin/calc.bc connect capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket/
+dune exec -- ./test-bin/calc.exe connect capnp://sha-256:LPp-7l74zqvGcRgcP8b7-kdSpwwzxlA555lYC8W8prc@/tmp/calc.socket/
 ```
 
 You can also use `--capnp-disable-tls` if you prefer to run without encryption

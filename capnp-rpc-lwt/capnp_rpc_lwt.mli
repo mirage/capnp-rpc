@@ -182,6 +182,17 @@ module Sturdy_ref : sig
   val connect_exn : 'a t -> 'a Capability.t Lwt.t
   (** [connect_exn] is a wrapper for [connect] that returns a failed Lwt thread on error. *)
 
+  val with_cap :
+    'a t ->
+    ('a Capability.t -> ('b, [> `Capnp of Capnp_rpc.Exception.t] as 'e) Lwt_result.t) ->
+    ('b, 'e) Lwt_result.t
+  (** [with_cap t f] uses [connect t] to get a live-ref [x],
+      then does [Capability.with_ref x f]. *)
+
+  val with_cap_exn : 'a t -> ('a Capability.t -> 'b Lwt.t) -> 'b Lwt.t
+  (** [with_cap_exn t f] uses [connect_exn t] to get a live-ref [x],
+      then does [Capability.with_ref x f]. *)
+
   val reader :
     ('a StructStorage.reader_t -> Capnp.MessageSig.ro Slice.t option) ->
     'a StructStorage.reader_t -> Uri.t
