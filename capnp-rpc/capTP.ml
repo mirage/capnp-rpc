@@ -994,32 +994,35 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
   (* Note: takes ownership of [msg] *)
   let rec send_call t target (results:Core_types.struct_resolver) msg =
-    match results#sealed_dispatch CapTP_results with
-    | Some (_, answer) when not (Answer.needs_return answer) ->
-      (* The only reason for making this call is to answer a cancelled question (we already
-         replied to it to confirm the cancellation). No-one cares about the answer, so do nothing. *)
-      Core_types.Request_payload.release msg;
-      Core_types.resolve_exn results Exception.cancelled (* (might be useful for debugging) *)
-    | Some (t', answer) when t == t' ->
-      let remote_promise = make_remote_promise t in
-      (* [results] is at [target]. We can tell the peer to send the results to itself directly. *)
-      let question = Send.call t (remote_promise :> Core_types.struct_resolver)
-          target msg ~results_to:`Yourself in
-      Core_types.Request_payload.release msg;
-      remote_promise#set_question question;
-      Answer.return_take_from_question answer question;
-      let aid = Answer.id answer in
-      Log.debug (fun f -> f ~tags:(with_aid aid t) "Returning take-from-other-question %a" Question.pp question);
-      t.queue_send (`Return (aid, `TakeFromOtherQuestion (Question.id question), false));
-      (* Hook this up so we still forward any pipelined calls *)
-      results#resolve (remote_promise :> Core_types.struct_ref)
-    | _ ->
-      let remote_promise = make_remote_promise t in
-      let question = Send.call t (remote_promise :> Core_types.struct_resolver)
-          target msg ~results_to:`Caller in
-      Core_types.Request_payload.release msg;
-      remote_promise#set_question question;
-      results#resolve (remote_promise :> Core_types.struct_ref)
+    match t.disconnected with
+    | Some ex -> results#resolve (Core_types.broken_struct (`Exception ex))
+    | None ->
+      match results#sealed_dispatch CapTP_results with
+      | Some (_, answer) when not (Answer.needs_return answer) ->
+        (* The only reason for making this call is to answer a cancelled question (we already
+           replied to it to confirm the cancellation). No-one cares about the answer, so do nothing. *)
+        Core_types.Request_payload.release msg;
+        Core_types.resolve_exn results Exception.cancelled (* (might be useful for debugging) *)
+      | Some (t', answer) when t == t' ->
+        let remote_promise = make_remote_promise t in
+        (* [results] is at [target]. We can tell the peer to send the results to itself directly. *)
+        let question = Send.call t (remote_promise :> Core_types.struct_resolver)
+            target msg ~results_to:`Yourself in
+        Core_types.Request_payload.release msg;
+        remote_promise#set_question question;
+        Answer.return_take_from_question answer question;
+        let aid = Answer.id answer in
+        Log.debug (fun f -> f ~tags:(with_aid aid t) "Returning take-from-other-question %a" Question.pp question);
+        t.queue_send (`Return (aid, `TakeFromOtherQuestion (Question.id question), false));
+        (* Hook this up so we still forward any pipelined calls *)
+        results#resolve (remote_promise :> Core_types.struct_ref)
+      | _ ->
+        let remote_promise = make_remote_promise t in
+        let question = Send.call t (remote_promise :> Core_types.struct_resolver)
+            target msg ~results_to:`Caller in
+        Core_types.Request_payload.release msg;
+        remote_promise#set_question question;
+        results#resolve (remote_promise :> Core_types.struct_ref)
 
   (* A cap that sends to a promised answer's cap at other *)
   and make_remote_promise t =
