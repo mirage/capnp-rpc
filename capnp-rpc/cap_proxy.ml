@@ -86,7 +86,7 @@ module Make(C : S.CORE_TYPES) = struct
           in
           Queue.iter forward queue;
           Queue.iter (fun f -> cap#when_released f) on_release
-        | Resolved _ -> failwith "Already resolved!"
+        | Resolved _ -> Fmt.failwith "Can't resolve %t to %t; it's already resolved!" self#pp cap#pp
 
       method break ex =
         self#resolve (broken_cap ex)
