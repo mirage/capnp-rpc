@@ -94,7 +94,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
       mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
       mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
       mutable resolution : disembargo_info;
-      proxy : Cap_proxy.resolver_cap Weak_ptr.t (* Our switchable ([Weak_ptr.t] is mutable). *)
+      proxy : Cap_proxy.resolver_cap Weak_ptr.t; (* Our switchable ([Weak_ptr.t] is mutable). *)
+      strong_proxy : < > option ref;    (* Keeps the switchable alive if there are callbacks registered. *)
     }
     and disembargo_info = [
       | `Unresolved
@@ -209,6 +210,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       count = 1;
       id = id;
       proxy = Weak_ptr.empty ();
+      strong_proxy = ref None;
       settled;
       resolution = `Unresolved;
       used = mark_dirty;
@@ -1124,8 +1126,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
     type 'a S.brand += Gc : unit S.brand
 
     (* Forwards messages to [init] until resolved.
-       Forces [release] when resolved or released. *)
-    let make ~(release:unit Lazy.t) ~settled init =
+       Forces [release] when resolved or released.
+       Stores a reference to itself in [strong_proxy] when unresolved but with queued callbacks. *)
+    let make ~(release:unit Lazy.t) ~settled ~strong_proxy init =
       object (self : #Core_types.cap)
         val id = Debug.OID.next ()
 
@@ -1142,6 +1145,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             if RC.is_zero u.rc then (
               Lazy.force release;
               let old_state = state in
+              strong_proxy := None;
               state <- Set released;
               match old_state with
               | Unset u -> Queue.iter (fun f -> f ()) u.on_release
@@ -1156,6 +1160,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
             let pp f = self#pp f in
             RC.check ~pp rc;
             state <- Set cap;
+            strong_proxy := None;
             begin match RC.to_int rc with
               | Some rc -> cap#update_rc (rc - 1);     (* Transfer our ref-count *)
               | None -> ()
@@ -1185,12 +1190,16 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
         method when_more_resolved fn =
           match state with
-          | Unset x -> Queue.add fn x.on_set
+          | Unset x ->
+            Queue.add fn x.on_set;
+            strong_proxy := Some (self :> < >)
           | Set x -> x#when_more_resolved fn
 
         method when_released fn =
           match state with
-          | Unset x -> Queue.add fn x.on_release
+          | Unset x ->
+            Queue.add fn x.on_release;
+            strong_proxy := Some (self :> < >)
           | Set x -> x#when_released fn
 
         (* When trying to find the target for export, it's OK to expose our current
@@ -1215,6 +1224,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                                    RC.pp x.rc self#pp);
                       x.rc <- RC.leaked;
                       state <- Set released; (* Don't call resolve; rc is now invalid *)
+                      assert (!strong_proxy = None);    (* Otherwise we wouldn't have been GC'd *)
                       Queue.iter (fun f -> f released) x.on_set;
                       Lazy.force release
                     )
@@ -1228,8 +1238,11 @@ module Make (EP : Message_types.ENDPOINT) = struct
           match state with
           | Unset u ->
             let pp f = self#pp f in
+            assert ((!strong_proxy = None) = (Queue.is_empty u.on_set && Queue.is_empty u.on_release));
             RC.check ~pp u.rc
-          | Set x -> x#check_invariants
+          | Set x ->
+            assert (!strong_proxy = None);
+            x#check_invariants
 
         method pp f =
           Fmt.pf f "switchable(%a) %a" Debug.OID.pp id pp_state state
@@ -1281,7 +1294,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         Import.dec_ref import |> apply_import_actions t;
       ) in
       (* Imports can resolve to another cap (if unsettled) or break. *)
-      let switchable = Switchable.make ~release ~settled cap in
+      let switchable = Switchable.make ~release ~settled ~strong_proxy:import.strong_proxy cap in
       Import.init_proxy import switchable;
       switchable
 
