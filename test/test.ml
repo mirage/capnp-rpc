@@ -1517,6 +1517,37 @@ let test_unimplemented () =
     Logs.err (fun f -> f "Error: %a@\n%a" Fmt.exn ex S.dump s);
     raise ex
 
+(* The client's only reference to an import is a callback on the import itself.
+   The import must not be released, even though the leak detector would normally
+   do that. *)
+let test_import_callbacks () =
+  let service = Services.manual () in
+  let c, s, bs = init_pair ~bootstrap_service:service in
+  let q1 = call bs "q1" [] in
+  S.handle_msg s ~expect:"call:q1";
+  let a1 = service#pop0 "q1" in
+  let promise = Cap_proxy.local_promise () in
+  resolve_ok a1 "a1" [promise];
+  C.handle_msg c ~expect:"return:a1";
+  let ok =
+    let r = ref "-" in
+    let f1 = q1#cap 0 in
+    f1#when_more_resolved (fun x ->
+        r := "resolved";
+        dec_ref x;
+        dec_ref f1
+      );
+    r
+  in
+  dec_ref q1;
+  Gc.full_major ();
+  promise#resolve (Core_types.broken_cap (Capnp_rpc.Exception.v "broken"));
+  CS.flush c s;
+  dec_ref bs;
+  Alcotest.(check string) "ok set" "resolved" !ok;
+  CS.flush c s;
+  CS.check_finished c s
+
 let tests = [
   "Return",     `Quick, test_return;
   "Return error", `Quick, test_return_error;
@@ -1564,6 +1595,7 @@ let tests = [
   "Broken call", `Quick, test_broken_call;
   "Broken later", `Quick, test_broken_later;
   "Broken connection", `Quick, test_broken_connection;
+  "Import callbacks", `Quick, test_import_callbacks;
 ] |> List.map (fun (name, speed, test) ->
     name, speed, (fun () ->
         Testbed.Capnp_direct.ref_leaks := 0;
