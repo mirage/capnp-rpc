@@ -1,3 +1,36 @@
+### v0.8.0
+
+Bug fixes and diagnostics:
+
+- Don't GC imports with callbacks (@talex5, #210).
+
+- Improve "Already resolved!" error message (@talex5, #209).
+  Show the state of the promise we were trying to set, and what we tried to set it to.
+
+- Reject attempts to send after disconnecting (@talex5, #208).
+
+- Unix: don't leak FDs if `Network.connect` fails (@talex5, #206).
+  Also, use `Lwt` to open connections so we don't block the whole process.
+
+New functions:
+
+- Add `Sturdy_ref.with_cap` and `with_cap_exn` convenience functions (@talex5, #207).
+  Using the plain `connect` functions, it's easy to forget to release the live-ref at the end.
+
+Build changes:
+
+- capnp-rpc-mirage: adapt test to tcpip 5.0.0 API (@hannesm, #205).
+
+- Upgrade to dune 2 (@talex5, #204).
+
+- Switch tests to build in native code and use the test stanza (@avsm, #203).
+
+Documentation:
+
+- Show how to make a connection directly (@talex5, #202).
+  The new `test-bin/calc_direct.ml` example shows how a parent process can
+  spawn a child and communicate with it directly over a socketpair.
+
 ### v0.7.0
 
 - Update for x509 0.11.0 API changes (@talex5, #196).
