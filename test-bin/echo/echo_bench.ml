@@ -39,5 +39,5 @@ let () =
     Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
     let client_vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    Sturdy_ref.with_ref_exn sr run_client
+    Sturdy_ref.with_cap_exn sr run_client
   end
