@@ -2,7 +2,7 @@ open Lwt.Infix
 
 (* Slightly rude to set signal handlers in a library, but SIGPIPE makes no sense
    in a modern application. *)
-let () = Sys.(set_signal sigpipe Signal_ignore)
+let () = if not Sys.win32 then Sys.(set_signal sigpipe Signal_ignore)
 
 type flow = {
   fd : Lwt_unix.file_descr;
