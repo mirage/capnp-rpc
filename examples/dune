@@ -6,9 +6,9 @@
 (rule
  (targets test_api.ml test_api.mli)
  (deps test_api.capnp)
- (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
 
 (rule
  (targets calculator.ml calculator.mli)
  (deps calculator.capnp)
- (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))

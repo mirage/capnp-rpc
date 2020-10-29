@@ -6,4 +6,4 @@
 (rule
  (targets echo_api.ml echo_api.mli)
  (deps    echo_api.capnp)
- (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))

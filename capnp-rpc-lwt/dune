@@ -8,9 +8,9 @@
 (rule
  (targets rpc_schema.ml rpc_schema.mli)
  (deps rpc_schema.capnp)
- (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
 
 (rule
  (targets persistent.ml persistent.mli)
  (deps persistent.capnp)
- (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
