@@ -255,7 +255,7 @@ Here's a suitable `dune` file to compile the schema file and then the generated 
 (rule
  (targets echo_api.ml echo_api.mli)
  (deps    echo_api.capnp)
- (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
 ```
 
 The service is now usable:
@@ -541,7 +541,7 @@ Edit the `dune` file to build a client and server:
 (rule
  (targets echo_api.ml echo_api.mli)
  (deps    echo_api.capnp)
- (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
 ```
 
 Here's a suitable `server.ml`:
