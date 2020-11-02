@@ -28,6 +28,7 @@ See [LICENSE.md](LICENSE.md) for details.
 	* [Summary](#summary)
 	* [Further reading](#further-reading)
 * [FAQ](#faq)
+	* [Why does my connection stop working after 10 minutes?](#why-does-my-connection-stop-working-after-10-minutes)
 	* [How can I return multiple results?](#how-can-i-return-multiple-results)
 	* [Can I create multiple instances of an interface dynamically?](#can-i-create-multiple-instances-of-an-interface-dynamically)
 	* [Can I get debug output?](#can-i-get-debug-output)
@@ -1005,6 +1006,26 @@ Congratulations! You now know how to:
 * [E Reference Mechanics][] gives some insight into how distributed promises work.
 
 ## FAQ
+
+### Why does my connection stop working after 10 minutes?
+
+Cap'n Proto connections are often idle for long periods of time, and some networks automatically close idle connections.
+To avoid this, capnp-rpc-unix sets the `SO_KEEPALIVE` option when connecting to another vat,
+so that the initiator of the connection will send a TCP keep-alive message at regular intervals.
+However, TCP keep-alives are sent after the connection has been idle for 2 hours by default,
+and this isn't frequent enough for e.g. Docker's libnetwork,
+which silently breaks idle TCP connections after about 10 minutes.
+
+A typical sequence looks like this:
+
+1. A client connects to a server and configures a notification callback.
+2. The connection is idle for 10 minutes. libnetwork removes the connection from its routing table.
+3. Later, the server tries to send the notification and discovers that the connection has failed.
+4. After 2 hours, the client sends a keep-alive message and it too discovers that the connection has failed.
+   It establishes a new connection and retries.
+
+On some platforms, capnp-rpc-unix (>= 0.9.0) is able to reduce the timeout to 1 minute by setting the `TCP_KEEPIDLE` socket option.
+On other platforms, you may have to configure this setting globally (e.g. with `sudo sysctl net.ipv4.tcp_keepalive_time=60`).
 
 ### How can I return multiple results?
 
