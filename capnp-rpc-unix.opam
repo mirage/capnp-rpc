@@ -17,6 +17,7 @@ depends: [
   "astring"
   "fmt" {>= "0.8.4"}
   "logs"
+  "extunix"
   "base64" {>= "3.0.0"}
   "dune" {>= "2.0"}
   "alcotest-lwt" {with-test & >= "1.0.1"}
