@@ -158,13 +158,14 @@ module Table = struct
     | Manual cap -> Core_types.dec_ref cap;
     | Cached _ -> ()
 
-  let remove t id =
-    let id = hash t id in
-    match Hashtbl.find t.cache id with
+  let remove_digest t digest =
+    match Hashtbl.find t.cache digest with
     | exception Not_found -> failwith "Service ID not in restorer table"
     | value ->
       release value;
-      Hashtbl.remove t.cache id
+      Hashtbl.remove t.cache digest
+
+  let remove t id = remove_digest t (hash t id)
 
   let clear t =
     Hashtbl.iter (fun _ v -> release v) t.cache;

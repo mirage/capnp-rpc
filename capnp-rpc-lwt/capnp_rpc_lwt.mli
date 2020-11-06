@@ -325,4 +325,48 @@ module Persistence : sig
 
   val save_exn : 'a Capability.t -> Uri.t Lwt.t
   (** [save_exn] is a wrapper for [save] that returns a failed thread on error. *)
+
+  class type ['a, 'args] backend =
+    object
+      method add : 'args -> 'a Capability.t Lwt.t
+      (** [add args] adds a new item to the store with [args] as its loader arguments,
+          and registers it with the vat's restorer.
+          It returns a secret that can be passed to the vat's restorer to connect to the object. *)
+
+      method remove : string -> unit
+      (** [remove id] removes the entry with the given id, if any.
+          @raise Not_found if [id] is not present. *)
+
+      method list : (string * 'args) list
+      (** [list] returns all entries [(id, args)] in the collection. *)
+
+      method find_all : 'args -> string list
+      (** [find_all args] returns all entries with the given arguments. *)
+    end
+
+  type ('a, 'args) collection
+  (** A collection of persisted objects of type ['a], stored in the database as ['args]
+      (typically ['args = string]). *)
+
+  type id
+
+  val collection : ('a, 'args) backend -> ('a, 'args) collection
+  (** [collection load backend] creates a collection from a storage backend.
+      [load secret] should load the capability for [secret]. *)
+
+  val add : ('a, 'args) collection -> 'args -> 'a Capability.t Lwt.t
+  (** [add collection args] adds a new item to the collection and then loads it using the
+      collection's loader function. This will presumably return a capability that implements
+      the persistence protocol, from which you can get the sturdy ref. *)
+
+  val remove : ('a, 'args) collection -> id -> unit
+  (** [remove id] removes the entry with the given id, if any.
+      @raise Not_found if [id] is not present. *)
+
+  val list :('a, 'args) collection -> (id * 'args) list
+  (** [list] returns all entries [(id, args)] in the collection. *)
+
+  val find_all :('a, 'args) collection -> 'args -> id list
+  (** [find_all args] returns all entries with the given arguments. *)
+
 end

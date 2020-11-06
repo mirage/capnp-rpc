@@ -24,3 +24,4 @@ module Persistence = Persistence
 module Two_party_network = Two_party_network
 module Auth = Auth
 module Tls_wrapper = Tls_wrapper
+module Mock = Mock

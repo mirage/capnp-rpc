@@ -54,3 +54,23 @@ let save_exn cap =
   save cap >>= function
   | Error (`Capnp e) -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Error.pp e)
   | Ok x -> Lwt.return x
+
+class type ['a, 'args] backend =
+  object
+    method add : 'args -> 'a Capability.t Lwt.t
+    method remove : string -> unit
+    method list : (string * 'args) list
+    method find_all : 'args -> string list
+  end
+
+type ('a, 'args) collection = {
+  backend : ('a, 'args) backend;
+}
+
+type id = string
+
+let collection backend = { backend }
+let add t args = t.backend#add args
+let remove t id = t.backend#remove id
+let list t = t.backend#list
+let find_all t args = t.backend#find_all args

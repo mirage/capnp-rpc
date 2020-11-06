@@ -146,3 +146,44 @@ module Networking (N : S.NETWORK) (Flow : Mirage_flow.S) : VAT_NETWORK with
   type flow = Flow.flow
 
 module Capnp_address = Capnp_address
+
+module Mock : sig
+  (** Some mock objects that may be useful for writing tests. *)
+
+  module Persistent_store (T : sig type args end) : sig
+    (** A "persistent" store that just keeps things in memory.
+        This might also be a useful template for making custom stores.
+        Note that the [list] and [find_all] operations are not efficient
+        if the store is large.
+        Note that in a real store [T.args] would typically be [string]. *)
+
+    type t
+
+    val create : make_sturdy_uri:(Restorer.Id.t -> Uri.t) -> unit -> t * Restorer.t
+    (** [create ~make_sturdy_uri] is a store that uses [make_sturdy_uri] to add
+        the address and public fingerprint parts of the full URI.
+        The returned restorer should be passed to the vat after all collections
+        and services have been registered. *)
+
+    val register_collection :
+      t ->
+      string ->
+      (validate:(unit -> bool) ->
+       sturdy_ref:'a Capnp_rpc_lwt.Sturdy_ref.t ->
+       T.args ->
+       Restorer.resolution Lwt.t
+      ) ->
+      ('a, T.args) Persistence.collection
+    (** [register_collection t name fn] registers a collection within the store of objects with the same type.
+        Only one collection can be registered for each name.
+        When a request for a previously-issued sturdy ref arrives,
+        the loader calls [fn ~validate ~sturdy_ref arguments] to create the live ref.
+        [sturdy_ref] is the object's own sturdy-ref, which it may want to hand back to clients
+        (e.g. if implementing the persistence API).
+        [validate] can be used to check whether the object is still in the table, to handle revocation. *)
+
+    val table : t -> Restorer.Table.t
+    (** [table t] is the restorer's table, which can be used to add services manually. *)
+  end
+
+end
