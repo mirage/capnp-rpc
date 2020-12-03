@@ -4,7 +4,7 @@ open Lwt.Infix
 module Log = Capnp_rpc.Debug.Log
 module Unix_flow = Unix_flow
 
-let () = Mirage_crypto_rng_unix.initialize ()
+let () = Mirage_crypto_rng_lwt.initialize ()
 
 type flow = Unix_flow.flow
 

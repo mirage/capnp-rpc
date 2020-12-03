@@ -56,7 +56,7 @@ module Secret_key : sig
   val generate : unit -> t
   (** [generate ()] is a fresh secret key.
       You must call the relevant entropy initialization function
-      (e.g. {!Mirage_crypto_rng_unix.initialize}) before using this, or it
+      (e.g. {!Mirage_crypto_rng_lwt.initialize}) before using this, or it
       will raise an error if you forget. *)
 
   val digest : ?hash:hash -> t -> Digest.t
