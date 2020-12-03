@@ -2,4 +2,4 @@
  (name capnp_rpc_unix)
  (public_name capnp-rpc-unix)
  (libraries lwt.unix astring capnp-rpc-lwt capnp-rpc-net capnp-rpc fmt logs
-   mirage-crypto-rng.unix cmdliner cstruct-lwt extunix))
+   mirage-crypto-rng.lwt cmdliner cstruct-lwt extunix))

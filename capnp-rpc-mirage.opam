@@ -10,7 +10,7 @@ homepage: "https://github.com/mirage/capnp-rpc"
 bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 doc: "https://mirage.github.io/capnp-rpc/"
 depends: [
-  "ocaml" {>= "4.03.0"}
+  "ocaml" {>= "4.08.0"}
   "capnp" {>= "3.1.0"}
   "capnp-rpc-net" {= version}
   "astring"
@@ -24,6 +24,7 @@ depends: [
   "io-page-unix" {with-test}
   "tcpip" {>= "5.0.0" & with-test}
   "mirage-vnetif" {with-test}
+  "mirage-crypto-rng" {>= "0.7.0" & with-test}
   "dune" {>= "2.0"}
 ]
 build: [

@@ -65,7 +65,7 @@ let create_iface network cidr =
   let dns = Mirage.Network.Dns.create stack in
   Mirage.network ~dns stack
 
-let () = Mirage_crypto_rng_unix.initialize ()
+let () = Mirage_crypto_rng_lwt.initialize ()
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
 
