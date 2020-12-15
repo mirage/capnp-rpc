@@ -7,8 +7,8 @@ maintainer: "Thomas Leonard <talex5@gmail.com>"
 authors: "Thomas Leonard <talex5@gmail.com>"
 license: "Apache"
 homepage: "https://github.com/mirage/capnp-rpc"
-bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 doc: "https://mirage.github.io/capnp-rpc/"
+bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 depends: [
   "ocaml" {>= "4.08.0"}
   "capnp-rpc-net" {= version}
@@ -20,8 +20,11 @@ depends: [
   "extunix"
   "base64" {>= "3.0.0"}
   "dune" {>= "2.0"}
-  "alcotest-lwt" {with-test & >= "1.0.1"}
+  "alcotest" {>= "1.0.1" & with-test}
+  "alcotest-lwt" { >= "1.0.1" & with-test}
   "mirage-crypto-rng" {>= "0.7.0"}
+  "lwt"
+  "asetmap" {with-test}
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

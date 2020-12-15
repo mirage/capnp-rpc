@@ -7,25 +7,28 @@ maintainer: "Thomas Leonard <talex5@gmail.com>"
 authors: "Thomas Leonard <talex5@gmail.com>"
 license: "Apache"
 homepage: "https://github.com/mirage/capnp-rpc"
-bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 doc: "https://mirage.github.io/capnp-rpc/"
+bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 depends: [
   "ocaml" {>= "4.08.0"}
   "capnp" {>= "3.1.0"}
   "capnp-rpc-net" {= version}
-  "astring"
+  "astring" {with-test}
   "fmt"
   "logs"
   "dns-client" {>= "4.5.0"}
   "tls-mirage"
-  "mirage-stack" {>="2.0.0"}
+  "mirage-stack" {>= "2.0.0"}
   "arp-mirage" {with-test}
+  "alcotest" {>= "1.0.1" & with-test}
   "alcotest-lwt" {>= "1.0.1" & with-test}
   "io-page-unix" {with-test}
   "tcpip" {>= "5.0.0" & with-test}
   "mirage-vnetif" {with-test}
   "mirage-crypto-rng" {>= "0.7.0" & with-test}
   "dune" {>= "2.0"}
+  "asetmap" {with-test}
+  "ethernet" {>= "2.2.0" & with-test}
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]
