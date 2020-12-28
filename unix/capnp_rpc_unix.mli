@@ -95,6 +95,26 @@ end
 val sturdy_uri : Uri.t Cmdliner.Arg.conv
 (** A cmdliner argument converter for a "capnp://" URI (or the path of a file containing such a URI). *)
 
+val connect_with_progress :
+  ?mode:[`Auto | `Log | `Batch | `Console | `Silent] ->
+  'a Sturdy_ref.t -> ('a Capability.t, Capnp_rpc.Exception.t) Lwt_result.t
+(** [connect_with_progress sr] is like [Sturdy_ref.connect], but shows that a connection is in progress.
+    Note: On failure, it does {e not} display the error, which should instead be handled by the caller.
+    @param mode Controls how progress is displayed:
+                - [`Log] writes info-level log messages about starting and completing the connection.
+                - [`Batch] prints a message to stderr when starting, then prints OK when done.
+                - [`Console] displays a message while connecting if it takes too long, then erases it when done.
+                - [`Silent] does nothing.
+                - [`Auto] (the default) tries to log (as for [`Log]), but if the log message isn't used then it behaves as
+                          [`Console] (if stderr is a tty) or as [`Batch] (if not). *)
+
+val with_cap_exn :
+  ?progress:[`Auto | `Log | `Batch | `Console | `Silent] ->
+  'a Sturdy_ref.t ->
+  ('a Capability.t -> 'b Lwt.t) ->
+  'b Lwt.t
+(** Like [Sturdy_ref.with_cap_exn], but using [connect_with_progress] to show progress. *)
+
 val serve :
   ?switch:Lwt_switch.t ->
   ?tags:Logs.Tag.set ->
