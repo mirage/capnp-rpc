@@ -1292,15 +1292,12 @@ To build:
 
     git clone https://github.com/mirage/capnp-rpc.git
     cd capnp-rpc
-    opam pin add -nyk git capnp-rpc .
-    opam pin add -nyk git capnp-rpc-lwt .
-    opam pin add -nyk git capnp-rpc-net .
-    opam pin add -nyk git capnp-rpc-unix .
-    opam depext capnp-rpc-lwt alcotest
-    opam install --deps-only -t capnp-rpc-unix
+    opam pin add -ny .
+    opam depext -t capnp-rpc-unix capnp-rpc-mirage
+    opam install --deps-only -t .
     make test
 
-If you have trouble building, you can build it with Docker from a known-good state using `docker build .`.
+If you have trouble building, you can use the Dockerfile shown in the CI logs (click the green tick on the main page).
 
 ### Testing
 
