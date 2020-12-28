@@ -602,10 +602,9 @@ let run_client service =
 
 let connect uri =
   Lwt_main.run begin
-    Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
     let client_vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    Sturdy_ref.with_cap_exn sr run_client
+    Capnp_rpc_unix.with_cap_exn sr run_client
   end
 
 open Cmdliner
@@ -636,11 +635,13 @@ With the server still running in another window, run the client using the `echo.
 
 ```
 $ dune exec ./client.exe echo.cap
-Connecting to echo service at: capnp://sha-256:_FNMlR9cf1maixDAM6Y1pwwZ-aikqa_DP8P7RCVr1k4@127.0.0.1:7000/JL_hRxzrTSbLNcb0Tqp2f0N_sh5znvY2ym9KMVzLtcQ
 Callback got "foo"
 Callback got "foo"
 Callback got "foo"
 ```
+
+Note that we're using `Capnp_rpc_unix.with_cap_exn` here instead of `Sturdy_ref.with_cap_exn`.
+It's almost the same, except that it displays a suitable progress indicator if the connection takes too long.
 
 ### Pipelining
 

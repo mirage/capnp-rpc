@@ -13,6 +13,7 @@ module Vat = Vat_network.Vat
 module Network = Network
 module Vat_config = Vat_config
 module File_store = File_store
+module Sturdy_ref = Capnp_rpc_lwt.Sturdy_ref
 
 let error fmt =
   fmt |> Fmt.kstrf @@ fun msg ->
@@ -71,6 +72,84 @@ let sturdy_uri =
                 or the path to a file containing such a URI, but got %S." s
   in
   Cmdliner.Arg.conv (of_string, Uri.pp_hum)
+
+module Console = struct
+  (* The first item in this list is what is currently displayed on screen *)
+  let messages = ref []
+
+  let clear () =
+    match !messages with
+    | [] -> ()
+    | msg :: _ ->
+      let blank = Stdlib.String.make (String.length msg) ' ' in
+      Printf.fprintf stderr "\r%s\r%!" blank
+
+  let show () =
+    match !messages with
+    | [] -> ()
+    | msg :: _ ->
+      prerr_string msg;
+      flush stderr
+
+  let with_msg msg f =
+    clear ();
+    messages := msg :: !messages;
+    show ();
+    Lwt.finalize f
+      (fun () ->
+         clear ();
+         let rec remove_first = function
+           | [] -> assert false
+           | x :: xs when x = msg -> xs
+           | x :: xs -> x :: remove_first xs
+         in
+         messages := remove_first !messages;
+         show ();
+         Lwt.return_unit
+      )
+end
+
+let addr_of_sr sr =
+  match Capnp_rpc_net.Capnp_address.parse_uri (Capnp_rpc_lwt.Cast.sturdy_to_raw sr)#to_uri_with_secrets with
+  | Ok ((addr, _auth), _id) -> addr
+  | Error (`Msg m) -> failwith m
+
+let rec connect_with_progress ?(mode=`Auto) sr =
+  let pp = Fmt.using addr_of_sr Capnp_rpc_net.Capnp_address.Location.pp in
+  match mode with
+  | `Auto
+  | `Log ->
+    let did_log = ref false in
+    Log.info (fun f -> did_log := true; f "Connecting to %a..." pp sr);
+    if !did_log then (
+      Sturdy_ref.connect sr >|= function
+      | Ok _ as x -> Log.info (fun f -> f "Connected to %a" pp sr); x
+      | Error _ as e -> e
+    ) else (
+      if Unix.(isatty stderr) then
+        connect_with_progress ~mode:`Console sr
+      else
+        connect_with_progress ~mode:`Batch sr
+    )
+  | `Batch ->
+    Fmt.epr "Connecting to %a... %!" pp sr;
+    begin Sturdy_ref.connect sr >|= function
+      | Ok _ as x -> Fmt.epr "OK@."; x
+      | Error _ as x -> Fmt.epr "ERROR@."; x
+    end
+  | `Console ->
+    let x = Sturdy_ref.connect sr in
+    Lwt.choose [Lwt_unix.sleep 0.5; Lwt.map ignore x] >>= fun () ->
+    if Lwt.is_sleeping x then (
+      Console.with_msg (Fmt.strf "[ connecting to %a ]" pp sr)
+        (fun () -> x)
+    ) else x
+  | `Silent -> Sturdy_ref.connect sr
+
+let with_cap_exn ?progress sr f =
+  connect_with_progress ?mode:progress sr >>= function
+  | Error ex -> Fmt.failwith "%a" Capnp_rpc.Exception.pp ex
+  | Ok x -> Capnp_rpc_lwt.Capability.with_ref x f
 
 let handle_connection ?tags ~secret_key vat client =
   Lwt.catch (fun () ->

@@ -80,13 +80,13 @@ let try_set_keepalive_idle socket i =
 
 let connect_socket = function
   | `Unix path ->
-    Logs.info (fun f -> f "Connecting to %S..." path);
+    Log.info (fun f -> f "Connecting to %S..." path);
     let socket = Lwt_unix.(socket PF_UNIX SOCK_STREAM 0) in
     Lwt.catch
       (fun () -> Lwt_unix.connect socket (Unix.ADDR_UNIX path) >|= fun () -> socket)
       (fun ex -> Lwt_unix.close socket >>= fun () -> Lwt.fail ex)
   | `TCP (host, port) ->
-    Logs.info (fun f -> f "Connecting to %s:%d..." host port);
+    Log.info (fun f -> f "Connecting to %s:%d..." host port);
     let socket = Lwt_unix.(socket PF_INET SOCK_STREAM 0) in
     Lwt.catch
       (fun () ->
