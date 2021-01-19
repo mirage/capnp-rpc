@@ -30,7 +30,7 @@ let parse_uri s =
 module Cap_file = struct
   let load_uri path =
     try
-      let ch = open_in path in
+      let ch = open_in_bin path in
       let len = in_channel_length ch in
       let data = really_input_string ch len in
       close_in ch;

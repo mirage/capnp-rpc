@@ -35,7 +35,7 @@ let remove t ~digest =
 let load t ~digest =
   let path = path_of_digest t digest in
   if Sys.file_exists path then (
-    let ch = open_in path in
+    let ch = open_in_bin path in
     let len = in_channel_length ch in
     let segment = Bytes.create len in
     really_input ch segment 0 len;
