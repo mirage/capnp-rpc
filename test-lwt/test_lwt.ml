@@ -628,6 +628,22 @@ let test_store switch =
   Alcotest.(check string) "Read file" "Hello" data;
   Lwt.return_unit
 
+let test_file_store _switch =
+  Lwt_io.with_temp_dir ~prefix:"capnp-tests-" @@ fun tmpdir ->
+  let module S = Capnp_rpc_unix.File_store in
+  let s = S.create tmpdir in
+  Alcotest.(check (option reject)) "Missing file" None @@ S.load s ~digest:"missing";
+  let module Builder = Examples.Api.Builder.Simple in
+  let module Reader = Examples.Api.Reader.Simple in
+  let data =
+    let b = Builder.init_root () in
+    Builder.text_set b "Test";
+    Builder.to_reader b
+  in
+  S.save s ~digest:"!/.." data;
+  Alcotest.(check (option string)) "Restored" (Some "Test") @@ Option.map Reader.text_get (S.load s ~digest:"!/..");
+  Lwt.return_unit
+
 let run name fn = Alcotest_lwt.test_case_sync name `Quick fn
 
 let rpc_tests = [
@@ -655,6 +671,7 @@ let rpc_tests = [
   run_lwt "Parallel fails"      test_parallel_fails;
   run_lwt "Crossed calls"       test_crossed_calls;
   run_lwt "Store"               test_store;
+  run_lwt "File store"          test_file_store;
 ]
 
 let () =
