@@ -753,6 +753,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       exported_caps = Hashtbl.create 30;
       disconnected = None;
     }
+  [@@ocaml.warning "-16"]       (* Too late to change the API now. *)
 
   let with_qid qid t =
     Logs.Tag.add Debug.qid_tag (QuestionId.uint32 qid) t.tags

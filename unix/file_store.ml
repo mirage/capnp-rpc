@@ -20,12 +20,13 @@ let segments_of_reader = function
 let save t ~digest data =
   let path = path_of_digest t digest in
   let tmp_path = path ^ ".new" in
-  let ch = open_out tmp_path in
-  let segments = segments_of_reader data in
-  segments |> List.iter (fun {Message.segment; bytes_consumed} ->
-      output ch segment 0 bytes_consumed
+  let ch = open_out_bin tmp_path in
+  Fun.protect ~finally:(fun () -> close_out ch) (fun () ->
+    let segments = segments_of_reader data in
+    segments |> List.iter (fun {Message.segment; bytes_consumed} ->
+        output ch segment 0 bytes_consumed
+      );
     );
-  close_out ch;
   Unix.rename tmp_path path
 
 let remove t ~digest =
@@ -35,11 +36,15 @@ let remove t ~digest =
 let load t ~digest =
   let path = path_of_digest t digest in
   if Sys.file_exists path then (
-    let ch = open_in path in
-    let len = in_channel_length ch in
-    let segment = Bytes.create len in
-    really_input ch segment 0 len;
-    close_in ch;
+    let ch = open_in_bin path in
+    let segment =
+      Fun.protect ~finally:(fun () -> close_in ch) (fun () ->
+          let len = in_channel_length ch in
+          let segment = Bytes.create len in
+          really_input ch segment 0 len;
+          segment
+        )
+    in
     let msg = Message.of_storage [segment] in
     let reader = ReaderOps.get_root_struct (Message.readonly msg) in
     Some reader

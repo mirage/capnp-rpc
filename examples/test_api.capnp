@@ -35,3 +35,7 @@ interface File {
 interface Store {
   createFile @0 () -> (file :File);
 }
+
+struct Simple {
+  text @0 :Text;
+}

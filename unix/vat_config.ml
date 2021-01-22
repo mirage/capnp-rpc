@@ -45,15 +45,14 @@ let secret_key_file =
 
 let read_whole_file path =
   let ic = open_in_bin path in
+  Fun.protect ~finally:(fun () -> close_in ic) @@ fun () ->
   let len = in_channel_length ic in
-  let data = really_input_string ic len in
-  close_in ic;
-  data
+  really_input_string ic len
 
 let write_whole_file path data =
   let oc = open_out_gen [Open_wronly; Open_creat; Open_excl; Open_binary] 0o600 path in
-  output_string oc data;
-  close_out oc
+  Fun.protect ~finally:(fun () -> close_out oc) @@ fun () ->
+  output_string oc data
 
 let init_secret_key_file key_file =
   if Sys.file_exists key_file then (
