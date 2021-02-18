@@ -70,7 +70,8 @@ module Make (EP : Capnp_core.ENDPOINT) = struct
       let b = Message.init_root ~message_size:100 () in
       let boot = Message.bootstrap_init b in
       Bootstrap.question_id_set boot (QuestionId.uint32 qid);
-      Schema.BuilderOps.write_string (Bootstrap.deprecated_object_id_get boot) object_id;
+      if not (String.equal object_id "") then
+        Schema.BuilderOps.write_string (Bootstrap.deprecated_object_id_get boot) object_id;
       Message.to_message b
     | `Call (qid, target, request, descs, results_to) ->
       let c = Msg.Request.writable request in
