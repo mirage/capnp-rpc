@@ -1,3 +1,10 @@
+### v1.0
+
+- Skip the setting of `object_id` if it is empty (@LasseBlaauwbroek #224).
+  This improves interoperability with the C++ implementation.
+
+- Use `open_in_bin` instead of `open_in` for Windows compatibility (@MisterDA #222).
+
 ### v0.9.0
 
 - Add connection progress indicator (@talex5 #220).  
