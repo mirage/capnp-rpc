@@ -68,16 +68,6 @@ let addr_of_host host =
     else
       addr.Unix.h_addr_list.(0)
 
-let have_tcp_keepidle =
-  try ExtUnix.All.have_sockopt_int ExtUnix.All.TCP_KEEPIDLE
-  with ExtUnix.All.Not_available _ -> false
-
-let try_set_keepalive_idle socket i =
-  if have_tcp_keepidle then (
-    let socket = Lwt_unix.unix_file_descr socket in
-    ExtUnix.All.setsockopt_int socket ExtUnix.All.TCP_KEEPIDLE i
-  )
-
 let connect_socket = function
   | `Unix path ->
     Log.info (fun f -> f "Connecting to %S..." path);
@@ -91,7 +81,7 @@ let connect_socket = function
     Lwt.catch
       (fun () ->
          Lwt_unix.setsockopt socket Unix.SO_KEEPALIVE true;
-         try_set_keepalive_idle socket 60;
+         Keepalive.try_set_idle (Lwt_unix.unix_file_descr socket) 60;
          Lwt_unix.connect socket (Unix.ADDR_INET (addr_of_host host, port)) >|= fun () ->
          socket
       )

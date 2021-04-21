@@ -199,6 +199,8 @@ let serve ?switch ?tags ?restore config =
     | `TCP (host, port) ->
       let socket = Unix.(socket PF_INET SOCK_STREAM 0) in
       Unix.setsockopt socket Unix.SO_REUSEADDR true;
+      Unix.setsockopt socket Unix.SO_KEEPALIVE true;
+      Keepalive.try_set_idle socket 60;
       Unix.bind socket (Unix.ADDR_INET (addr_of_host host, port));
       socket
   in
