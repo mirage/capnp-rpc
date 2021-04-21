@@ -13,7 +13,7 @@ module Location : sig
   (** [tcp ~host port] is [`TCP (host, port)]. *)
 end
 
-module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) : sig
+module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4V6) : sig
 
   module Dns : module type of Dns_client_mirage.Make(R)(T)(C)(Stack)  
 
@@ -29,7 +29,7 @@ module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) 
   val accept_connection :
     switch:Lwt_switch.t ->
     secret_key:Capnp_rpc_net.Auth.Secret_key.t option ->
-    Stack.TCPV4.flow ->
+    Stack.TCP.flow ->
     (Capnp_rpc_net.Endpoint.t, [> `Msg of string]) result Lwt.t
   (** [accept_connection ~switch ~secret_key flow] is a new endpoint for [flow].
       If [secret_key] is not [None], it is used to perform a TLS server-side handshake.

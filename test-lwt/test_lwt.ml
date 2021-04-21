@@ -49,9 +49,11 @@ let cap_equal_exn a b =
 
 let cap = Alcotest.testable Capability.pp cap_equal_exn
 
+let () = Logs.(set_level (Some Logs.Warning))
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
 let bad_key = Auth.Secret_key.generate ()
+let () = Logs.(set_level (Some Logs.Info))
 
 let server_pem = `PEM (Auth.Secret_key.to_pem_data server_key)
 
