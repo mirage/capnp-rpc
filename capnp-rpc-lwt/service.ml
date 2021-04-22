@@ -62,8 +62,8 @@ let return_empty () =
   return @@ Response.create_empty ()
 
 (* A convenient way to implement a simple blocking local function, where
-   pipelining is not supported (further messages will be queued up at this
-   host until it returns). *)
+   pipelining is not supported (messages sent to the result promise will be
+   queued up at this host until it returns). *)
 let return_lwt fn =
   let result, resolver = Local_struct_promise.make () in
   Lwt.async (fun () ->
@@ -81,3 +81,7 @@ let return_lwt fn =
   result
 
 let fail = Core_types.fail
+
+let fail_lwt ?ty fmt =
+  fmt |> Fmt.kstr @@ fun msg ->
+  Lwt_result.fail (`Capnp (`Exception (Capnp_rpc.Exception.v ?ty msg)))
