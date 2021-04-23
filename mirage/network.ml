@@ -17,10 +17,10 @@ module Location = struct
   let equal = ( = )
 end
 
-module Make  (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) = struct
+module Make  (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4V6) = struct
 
   module Dns = Dns_client_mirage.Make(R)(T)(C)(Stack)
-  module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Stack.TCPV4)
+  module Tls_wrapper = Capnp_rpc_net.Tls_wrapper.Make(Stack.TCP)
 
   module Address = struct
     module Full = Capnp_rpc_net.Capnp_address
@@ -58,7 +58,7 @@ module Make  (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK)
   }
 
   let addr_of_host dns host =
-    match Ipaddr.V4.of_string host with
+    match Ipaddr.of_string host with
     | Ok ip -> Lwt.return @@ Ok ip
     | Error (`Msg _) ->
       match Domain_name.of_string host with
@@ -66,7 +66,7 @@ module Make  (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK)
         match Domain_name.host dn with
         | Ok h -> begin
            Dns.gethostbyname dns h >>= function
-           | Ok addr -> Lwt.return_ok addr
+           | Ok addr -> Lwt.return_ok (Ipaddr.V4 addr)
            | Error (`Msg error_msg) -> Lwt.return @@ error "Unknown host %S : %s" host error_msg
          end
         | Error (`Msg error_msg) -> Lwt.return @@ error "Invalid hostname %S : %s" host error_msg
@@ -83,9 +83,9 @@ module Make  (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK)
     | `TCP (host, port) ->
       Logs.info (fun f -> f "Connecting to %s:%d..." host port);
       addr_of_host t.dns host >>*= fun addr ->
-      let tcp = Stack.tcpv4 t.stack in
-      Stack.TCPV4.create_connection tcp (addr, port) >>= function
-      | Error e -> Lwt.return @@ error "Failed to connect to %S:%d: %a" host port Stack.TCPV4.pp_error e
+      let tcp = Stack.tcp t.stack in
+      Stack.TCP.create_connection tcp (addr, port) >>= function
+      | Error e -> Lwt.return @@ error "Failed to connect to %S:%d: %a" host port Stack.TCP.pp_error e
       | Ok flow -> Tls_wrapper.connect_as_client ~switch flow secret_key auth
 
   let accept_connection ~switch ~secret_key flow =

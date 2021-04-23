@@ -23,11 +23,13 @@ module Stack = struct
   module V = Vnetif.Make(B)
   module E = Ethernet.Make(V)
   module A = Arp.Make(E)(Time)
-  module I = Static_ipv4.Make(Random)(Clock)(E)(A)
+  module I4 = Static_ipv4.Make(Random)(Clock)(E)(A)
+  module I6 = Ipv6.Make(V)(E)(Random)(Time)(Clock)
+  module I = Tcpip_stack_direct.IPV4V6(I4)(I6)
   module U = Udp.Make(I)(Random)
   module T = Tcp.Flow.Make(I)(Time)(Clock)(Random)
-  module Icmp = Icmpv4.Make(I)
-  include Tcpip_stack_direct.Make(Time)(Random)(V)(E)(A)(I)(Icmp)(U)(T)
+  module Icmp = Icmpv4.Make(I4)
+  include Tcpip_stack_direct.MakeV4V6(Time)(Random)(V)(E)(A)(I)(Icmp)(U)(T)
 
   let create_network () = B.create ~use_async_readers:true ~yield:Lwt_unix.yield ()
 
@@ -35,10 +37,12 @@ module Stack = struct
     V.connect backend >>= fun v ->
     E.connect v >>= fun e ->
     A.connect e >>= fun a ->
-    I.connect ~cidr e a >>= fun i ->
+    I4.connect ~cidr e a >>= fun i4 ->
+    I6.connect ~no_init:true v e >>= fun i6 ->
+    I.connect ~ipv4_only:true ~ipv6_only:false i4 i6 >>= fun i ->
     U.connect i >>= fun u ->
     T.connect i >>= fun t ->
-    Icmp.connect i >>= fun icmp ->
+    Icmp.connect i4 >>= fun icmp ->
     connect v e a i icmp u t
 end
 module Mirage = Capnp_rpc_mirage.Make(Random)(Time)(Clock)(Stack)

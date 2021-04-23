@@ -4,14 +4,14 @@ module Log = Capnp_rpc.Debug.Log
 
 module Location = Network.Location
 
-module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) = struct
+module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4V6) = struct
 
   module Dns = Dns_client_mirage.Make(R)(T)(C)(Stack)
   module Network = Network.Make(R)(T)(C)(Stack)
   module Vat_config = Vat_config.Make(Network)
-  module Vat_network = Capnp_rpc_net.Networking(Network)(Stack.TCPV4)
+  module Vat_network = Capnp_rpc_net.Networking(Network)(Stack.TCP)
 
-  type flow = Stack.TCPV4.flow
+  type flow = Stack.TCP.flow
 
   module CapTP = Vat_network.CapTP
   module Vat = Vat_network.Vat
@@ -37,7 +37,7 @@ module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) 
     in
     match listen_address with
     | `TCP port ->
-      Stack.listen_tcpv4 t.stack ~port (fun flow ->
+      Stack.listen_tcp t.stack ~port (fun flow ->
           Log.info (fun f -> f ?tags "Accepting new connection");
           let secret_key = if serve_tls then Some (Vat_config.secret_key config) else None in
           Lwt.async (fun () -> handle_connection ?tags ~secret_key vat flow);

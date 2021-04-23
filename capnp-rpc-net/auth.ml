@@ -92,7 +92,7 @@ end
 
 module Secret_key = struct
   type t = {
-    priv : Mirage_crypto_pk.Rsa.priv;
+    priv : X509.Private_key.t;
     certificates : Tls.Config.own_cert;
     tls_server_config : Tls.Config.server;
   }
@@ -106,8 +106,8 @@ module Secret_key = struct
 
   let digest ?(hash=default_hash) t =
     let nc_hash = (hash :> Mirage_crypto.Hash.hash) in
-    let pub = Mirage_crypto_pk.Rsa.pub_of_priv t.priv in
-    let value = X509.Public_key.fingerprint ~hash:nc_hash (`RSA pub) |> Cstruct.to_string in
+    let pub = X509.Private_key.public t.priv in
+    let value = X509.Public_key.fingerprint ~hash:nc_hash pub |> Cstruct.to_string in
     `Fingerprint (hash, value)
 
   let pp_fingerprint hash f t =
@@ -123,20 +123,17 @@ module Secret_key = struct
     let dn =
       [ X509.Distinguished_name.(Relative_distinguished_name.singleton (CN "capnp")) ]
     in
-    let csr = X509.Signing_request.create dn (`RSA t) in
-    let valid_from = date_time
-                       ~date:(1970, 1, 1)
-                       ~time:(1, 1, 1)
-    in
-    (* RFC 5280 says expiration date should be GeneralizedTime value 99991231235959Z *)
-    let valid_until = date_time
-                        ~date:(9999, 12, 31)
-                        ~time:(23, 59, 59)
-    in
-    X509.Signing_request.sign csr ~valid_from ~valid_until (`RSA t) dn |>
-    function
-    | Ok v -> v
-    | Error err -> Fmt.failwith "x509 signing failed: %a" X509.Validation.pp_signature_error err
+    match X509.Signing_request.create dn t with
+    | Error (`Msg m) ->
+      Fmt.failwith "x509 certificate signing request creation failed %s" m
+    | Ok csr ->
+      let valid_from = date_time ~date:(1970, 1, 1) ~time:(1, 1, 1) in
+      (* RFC 5280 says expiration date should be GeneralizedTime value 99991231235959Z *)
+      let valid_until = date_time ~date:(9999, 12, 31) ~time:(23, 59, 59) in
+      X509.Signing_request.sign csr ~valid_from ~valid_until t dn |>
+      function
+      | Ok v -> v
+      | Error err -> Fmt.failwith "x509 signing failed: %a" X509.Validation.pp_signature_error err
 
   let of_priv priv =
     let cert = x509 priv in
@@ -152,15 +149,15 @@ module Secret_key = struct
   let generate () =
     Log.info (fun f -> f "Generating new private key...");
     let priv = Mirage_crypto_pk.Rsa.generate ~bits:default_rsa_key_bits () in
-    let t = of_priv priv in
+    let t = of_priv (`RSA priv) in
     Log.info (fun f -> f "Generated key with hash %a" (pp_fingerprint `SHA256) t);
     t
 
   let of_pem_data data =
     match X509.Private_key.decode_pem (Cstruct.of_string data) with
-    | Ok (`RSA priv) -> of_priv priv
+    | Ok priv -> of_priv priv
     | Error (`Msg msg) -> Fmt.failwith "Failed to parse secret key!@ %s" msg
 
   let to_pem_data t =
-    X509.Private_key.encode_pem (`RSA t.priv) |> Cstruct.to_string
+    X509.Private_key.encode_pem t.priv |> Cstruct.to_string
 end
