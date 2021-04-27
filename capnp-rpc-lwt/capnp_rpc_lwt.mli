@@ -252,6 +252,12 @@ module Service : sig
 
   val fail : ?ty:Capnp_rpc.Exception.ty -> ('a, Format.formatter, unit, 'b StructRef.t) format4 -> 'a
   (** [fail msg] is an exception with reason [msg]. *)
+
+  val fail_lwt :
+    ?ty:Capnp_rpc.Exception.ty ->
+    ('a, Format.formatter, unit, (_, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t) format4 ->
+     'a
+  (** [fail_lwt msg] is like [fail msg], but can be used with [return_lwt]. *)
 end
 
 (**/**)
