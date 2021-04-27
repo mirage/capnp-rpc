@@ -1,3 +1,17 @@
+### v1.1
+
+- Update to latest X509, TCP and TLS APIs (@talex5 @hannesm #228).
+
+- Add `Service.fail_lwt` convenience function (@talex5 #229).
+
+- Remove confusing debug details from `call_for_value_exn` errors (@talex5 #230).
+  The hidden information is now logged (at debug level) instead.
+
+- Configure TCP keep-alives for incoming connections, not just outgoing ones (@talex5 #227).
+  This is needed when the client machine crashes without resetting the connection.
+
+- Include version number in opam license field (@talex5 #226).
+
 ### v1.0
 
 - Skip the setting of `object_id` if it is empty (@LasseBlaauwbroek #224).
