@@ -86,11 +86,11 @@ let call_for_value_exn cap m req =
   call_for_value cap m req >>= function
   | Ok x -> Lwt.return x
   | Error (`Capnp e) ->
-    let msg = Fmt.strf "Error calling %t(%a): %a"
-        cap#pp
-        Capnp.RPC.MethodID.pp m
-        Capnp_rpc.Error.pp e in
-    Lwt.fail (Failure msg)
+    Log.debug (fun f -> f "Error calling %t(%a): %a"
+                  cap#pp
+                  Capnp.RPC.MethodID.pp m
+                  Capnp_rpc.Error.pp e);
+    Fmt.failwith "%a: %a" Capnp.RPC.MethodID.pp m Capnp_rpc.Error.pp e
 
 let call_for_unit cap m req =
   call_for_value cap m req >|= function
