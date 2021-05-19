@@ -1477,8 +1477,9 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let answer = Answer.create id ~answer:promise in
       Answers.set t.answers id answer;
       object_id |> t.restore @@ fun service ->
-      let results =
-        match service with
+      if Answer.needs_return answer && t.disconnected = None then (
+        let results =
+          match service with
           | Error ex -> Error (`Exception ex)
           | Ok service ->
             let msg =
@@ -1486,9 +1487,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
               |> Core_types.Response_payload.with_caps (RO_array.of_list [service])
             in
             Ok msg
-      in
-      Core_types.resolve_payload answer_resolver results;
-      Send.return t answer results
+        in
+        Core_types.resolve_payload answer_resolver results;
+        Send.return t answer results
+      ) else (
+        Result.iter dec_ref service
+      )
 
     let return_results t question msg descrs =
       let caps_used = Question.paths_used question |> caps_used ~msg in
