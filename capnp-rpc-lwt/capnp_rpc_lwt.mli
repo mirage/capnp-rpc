@@ -55,12 +55,21 @@ module Capability : sig
       believed to be healthy. Once a capability is broken, it will never
       work again and any calls made on it will fail with exception [ex]. *)
 
-  val wait_until_settled : 'a t -> unit Lwt.t
-  (** [wait_until_settled x] resolves once [x] is a "settled" (non-promise) reference.
-      If [x] is a near, far or broken reference, this returns immediately.
+  val await_settled : 'a t -> (unit, Capnp_rpc.Exception.t) Lwt_result.t
+  (** [await_settled t] resolves once [t] is a "settled" (non-promise) reference.
+      If [t] is a near, far or broken reference, this returns immediately.
       If it is currently a local or remote promise, it waits until it isn't.
-      [wait_until_settled] takes ownership of [x] until it returns (you must not
-      [dec_ref] it before then). *)
+      [wait_until_settled] takes ownership of [t] until it returns (you must not
+      [dec_ref] it before then).
+      @return [Ok ()] on success, or [Error _] if [t] failed.
+      @since 1.2 *)
+
+  val await_settled_exn : 'a t -> unit Lwt.t
+  (** Like [await_settled], but raises an exception on error.
+      @since 1.2 *)
+
+  val wait_until_settled : 'a t -> unit Lwt.t
+  [@@deprecated "Use await_settled instead."]
 
   val equal : 'a t -> 'a t -> (bool, [`Unsettled]) result
   (** [equal a b] indicates whether [a] and [b] designate the same settled service.

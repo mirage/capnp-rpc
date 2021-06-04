@@ -25,7 +25,7 @@ let when_broken = Core_types.when_broken
 let when_released (x:Core_types.cap) f = x#when_released f
 let problem x = x#problem
 
-let wait_until_settled x =
+let wait_until_settled (x : _ t) =
   let result, set_result = Lwt.wait () in
   let rec aux x =
     if x#blocker = None then (
@@ -39,6 +39,18 @@ let wait_until_settled x =
   in
   aux x;
   result
+
+let await_settled t =
+  wait_until_settled t >|= fun () ->
+  match problem t with
+  | None -> Ok ()
+  | Some ex -> Error ex
+
+let await_settled_exn t =
+  wait_until_settled t >|= fun () ->
+  match problem t with
+  | None -> ()
+  | Some e -> Fmt.failwith "%a" Capnp_rpc.Exception.pp e
 
 let equal a b =
   match a#blocker, b#blocker with
