@@ -494,8 +494,8 @@ let test_parallel_connect switch =
   let service2 = get_bootstrap cs in
   service >>= fun service ->
   service2 >>= fun service2 ->
-  Capability.wait_until_settled service >>= fun () ->
-  Capability.wait_until_settled service2 >>= fun () ->
+  Capability.await_settled_exn service >>= fun () ->
+  Capability.await_settled_exn service2 >>= fun () ->
   Alcotest.check cap "Shared connection" service service2;
   Capability.dec_ref service;
   Capability.dec_ref service2;
@@ -508,8 +508,8 @@ let test_parallel_fails switch =
   service >>= fun service ->
   service2 >>= fun service2 ->
   Lwt_switch.turn_off cs.server_switch >>= fun () ->
-  Capability.wait_until_settled service >>= fun () ->
-  Capability.wait_until_settled service2 >>= fun () ->
+  Capability.await_settled_exn service >>= fun () ->
+  Capability.await_settled_exn service2 >>= fun () ->
   Alcotest.check cap "Shared failure" service service2;
   Capability.dec_ref service;
   Capability.dec_ref service2;
@@ -646,6 +646,25 @@ let test_file_store _switch =
   Alcotest.(check (option string)) "Restored" (Some "Test") @@ Option.map Reader.text_get (S.load s ~digest:"!/..");
   Lwt.return_unit
 
+let capnp_error = Alcotest.of_pp Capnp_rpc.Exception.pp
+
+let test_await_settled _switch =
+  (* Ok *)
+  let p, r = Capability.promise () in
+  let check = Capability.await_settled p in
+  Capability.resolve_ok r @@ Echo.local ();
+  check >>= fun check ->
+  Alcotest.(check (result unit capnp_error)) "Check await success" (Ok ()) check;
+  Capability.dec_ref p;
+  (* Error *)
+  let p, r = Capability.promise () in
+  let check = Capability.await_settled p in
+  let err = Capnp_rpc.Exception.v "Test" in
+  Capability.resolve_exn r err;
+  check >>= fun check ->
+  Alcotest.(check (result unit capnp_error)) "Check await failure" (Error err) check;
+  Lwt.return_unit
+
 let run name fn = Alcotest_lwt.test_case_sync name `Quick fn
 
 let rpc_tests = [
@@ -674,6 +693,7 @@ let rpc_tests = [
   run_lwt "Crossed calls"       test_crossed_calls;
   run_lwt "Store"               test_store;
   run_lwt "File store"          test_file_store;
+  run_lwt "Await settled"       test_await_settled;
 ]
 
 let () =
