@@ -1,3 +1,14 @@
+### v1.2
+
+- Don't crash if the peer disconnects before the bootstrap reply is ready (@talex5 #234).
+  When replying to a normal question we checked that the answer was still needed before trying to reply, but didn't for bootstrap requests.
+
+- Replace `wait_until_settled` with safer `await_settled` (@talex5 #233).
+  `wait_until_settled` makes it too easy to ignore errors.
+
+- Require fmt >= 0.8.7 for `kstr` and set OCaml 4.08 as the minimum version everywhere (@talex5 #232).
+  Older versions aren't tested in CI because the unix and mirage packages require at least OCaml 4.08.
+
 ### v1.1
 
 - Update to latest X509, TCP and TLS APIs (@talex5 @hannesm #228).
