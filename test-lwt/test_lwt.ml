@@ -57,26 +57,29 @@ let () = Logs.(set_level (Some Logs.Info))
 
 let server_pem = `PEM (Auth.Secret_key.to_pem_data server_key)
 
-let make_vats ?(serve_tls=false) ~switch ~service () =
-  let id = Restorer.Id.public "" in
-  let restore = Restorer.single id service in
+let make_vats_full ?(serve_tls=false) ~client_switch ~server_switch ~restore () =
   let server_config =
     let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) "capnp-rpc-test-server" in
-    Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
+    Lwt_switch.add_hook (Some server_switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
     Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem ~serve_tls (`Unix socket_path)
   in
-  let server_switch = Lwt_switch.create () in
   Capnp_rpc_unix.serve ~switch:server_switch ~tags:Test_utils.server_tags ~restore server_config >>= fun server ->
-  Lwt_switch.add_hook (Some switch) (fun () -> Lwt_switch.turn_off server_switch);
-  Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);
   Lwt.return {
-    client = Vat.create ~switch ~tags:Test_utils.client_tags ~secret_key:(lazy client_key) ();
+    client = Vat.create ~switch:client_switch ~tags:Test_utils.client_tags ~secret_key:(lazy client_key) ();
     server;
     client_key;
     server_key;
     serve_tls;
     server_switch;
   }
+
+let make_vats ?serve_tls ~switch ~service () =
+  let server_switch = Lwt_switch.create () in
+  Lwt_switch.add_hook (Some switch) (fun () -> Lwt_switch.turn_off server_switch);
+  let id = Restorer.Id.public "" in
+  let restore = Restorer.single id service in
+  Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);
+  make_vats_full ?serve_tls ~client_switch:switch ~server_switch ~restore ()
 
 (* Generic Lwt running for Alcotest. *)
 let run_lwt name ?(expected_warnings=0) fn =
@@ -665,6 +668,29 @@ let test_await_settled _switch =
   Alcotest.(check (result unit capnp_error)) "Check await failure" (Error err) check;
   Lwt.return_unit
 
+(* The client disconnects before the server has finished loading the bootstrap object. *)
+let test_late_bootstrap switch =
+  let connected, set_connected = Lwt.wait () in
+  let service, set_service = Lwt.wait () in
+  let module Loader = struct
+    type t = unit
+    let hash () = `SHA256
+    let make_sturdy () _id = assert false
+    let load () _sr _name =
+      Lwt.wakeup_later set_connected ();
+      service
+  end in
+  let table = Capnp_rpc_net.Restorer.Table.of_loader (module Loader) () in
+  let restore = Restorer.of_table table in
+  let client_switch = Lwt_switch.create () in
+  make_vats_full ~client_switch ~server_switch:switch ~restore () >>= fun cs ->
+  let service = get_bootstrap cs in
+  connected >>= fun () ->
+  Lwt_switch.turn_off client_switch >>= fun () ->
+  Lwt.wakeup set_service @@ Capnp_rpc_net.Restorer.grant @@ Echo.local ();
+  service >>= fun _ ->
+  Lwt.return ()
+
 let run name fn = Alcotest_lwt.test_case_sync name `Quick fn
 
 let rpc_tests = [
@@ -694,6 +720,7 @@ let rpc_tests = [
   run_lwt "Store"               test_store;
   run_lwt "File store"          test_file_store;
   run_lwt "Await settled"       test_await_settled;
+  run_lwt "Late bootstrap"      test_late_bootstrap;
 ]
 
 let () =
