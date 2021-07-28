@@ -52,7 +52,7 @@ let rec recv t =
     Log.debug (fun f -> f "Incomplete; waiting for more data...");
     F.read flow >>= function
     | Ok (`Data data) ->
-      Log.debug (fun f -> f "Read %d bytes" (Cstruct.len data));
+      Log.debug (fun f -> f "Read %d bytes" (Cstruct.length data));
       Capnp.Codecs.FramedStream.add_fragment t.decoder (Cstruct.to_string data);
       recv t
     | Ok `Eof ->
