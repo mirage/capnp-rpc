@@ -41,7 +41,7 @@ let write t buf =
       t.current_write <- Some write_thread;
       write_thread >>= fun wrote ->
       t.current_write <- None;
-      if wrote = Cstruct.len buf then Lwt.return (Ok ())
+      if wrote = Cstruct.length buf then Lwt.return (Ok ())
       else aux (Cstruct.shift buf wrote)
     )
   in
