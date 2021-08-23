@@ -63,8 +63,8 @@ module type VAT_NETWORK = sig
 
   module Network : NETWORK
 
+  (** Sharing capabilities over a network link. *)
   module CapTP : sig
-    (** Sharing capabilities over a network link. *)
 
     type t
     (** A CapTP connection to a remote peer. *)
@@ -87,15 +87,16 @@ module type VAT_NETWORK = sig
     (** [dump] dumps the state of the connection, for debugging. *)
   end
 
+  (** A Vat is an actor in the CapTP network, composed of
+      objects that can call each other directly. *)
   module Vat : sig
     (** An actor in the CapTP network.
-        A vat is a collection of objects that can call each other directly.
-        A vat may be connected to other vats over CapTP network connections.
-        Typically an application will create only a single vat.
+        A Vat may be connected to other Vats over CapTP network connections.
+        Typically an application will create only a single Vat.
         See the {!module:Capnp_rpc_unix} module for a higher-level API. *)
 
     type t
-    (** A local vat. *)
+    (** A local Vat. *)
 
     val create :
       ?switch:Lwt_switch.t ->
@@ -104,10 +105,10 @@ module type VAT_NETWORK = sig
       ?address:Network.Address.t ->
       secret_key:Auth.Secret_key.t Lazy.t ->
       Network.t -> t
-    (** [create ~switch ~restore ~address ~secret_key network] is a new vat that
+    (** [create ~switch ~restore ~address ~secret_key network] is a new Vat that
         uses [restore] to restore sturdy refs hosted at this vat to live
         capabilities for peers.
-        The vat will suggest that other parties connect to it using [address].
+        The Vat will suggest that other parties connect to it using [address].
         Turning off the switch will disconnect any active connections. *)
 
     val add_connection : t -> switch:Lwt_switch.t -> mode:[`Accept|`Connect] -> Endpoint.t -> CapTP.t Lwt.t
@@ -115,20 +116,20 @@ module type VAT_NETWORK = sig
         which is a connection to another vat.
         When the connection ends, [switch] will be turned off, and turning off [switch] will
         end the connection.
-        [mode] is used if two vats connect to each other at the same time to
+        [mode] is used if two Vats connect to each other at the same time to
         decide which connection to drop. Use [`Connect] if [t] initiated the new
         connection. Note that [add_connection] may return an existing connection. *)
 
     val public_address : t -> Network.Address.t option
     (** [public_address t] is the address that peers should use when connecting
-        to this vat to locate and authenticate it. *)
+        to this Vat to locate and authenticate it. *)
 
     val sturdy_ref : t -> service_id -> 'a sturdy_ref
-    (** [sturdy_ref t service_id] is a sturdy ref for [service_id], hosted at this vat.
-        Fails if this vat does not accept incoming connections. *)
+    (** [sturdy_ref t service_id] is a sturdy ref for [service_id], hosted at this Vat.
+        Fails if this Vat does not accept incoming connections. *)
 
     val export : t -> 'a sturdy_ref -> Uri.t
-    (** [export t sr] turns [sr] into a URI, which can be displayed and imported into another vat. *)
+    (** [export t sr] turns [sr] into a URI, which can be displayed and imported into another Vat. *)
 
     val sturdy_uri : t -> service_id -> Uri.t
     (** [sturdy_uri t id] is [sturdy_ref t id |> export t]. *)
