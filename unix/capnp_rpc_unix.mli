@@ -9,6 +9,7 @@ include Capnp_rpc_net.VAT_NETWORK with
   type flow = Unix_flow.flow and
   module Network = Network
 
+(** Configuration for a {!Vat}. *)
 module Vat_config : sig
   type t
 
@@ -59,8 +60,8 @@ module Vat_config : sig
   (** [cmd] evalutes to a configuration populated from the command-line options. *)
 end
 
+(** An on-disk store for saved services. *)
 module File_store : sig
-  (** An on-disk store for saved services. *)
 
   type 'a t
   (** A store of values of type ['a]. *)
@@ -80,6 +81,7 @@ module File_store : sig
   (** [remove t ~digest] removes the stored data for [digest]. *)
 end
 
+(** Utilities for capability files. *)
 module Cap_file : sig
   val load : Vat.t -> string -> (_ Sturdy_ref.t, [> `Msg of string]) result
   (** [load vat path] loads the contents of [path] as a capability URI. *)
