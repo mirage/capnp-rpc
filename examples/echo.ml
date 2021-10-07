@@ -22,7 +22,7 @@ let local () =
       let msg = Params.msg_get params in
       release_params ();
       let resp, results = Service.Response.create Results.init_pointer in
-      Results.reply_set results (Fmt.strf "got:%d:%s" count msg);
+      Results.reply_set results (Fmt.str "got:%d:%s" count msg);
       count <- count + 1;
       if Params.slow_get params then (
         Service.return_lwt (fun () ->

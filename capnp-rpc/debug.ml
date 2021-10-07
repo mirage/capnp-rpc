@@ -10,13 +10,13 @@ let pp_exn f = function
   | Failure msg -> Fmt.string f msg
   | ex -> Fmt.exn f ex
 
-let failf msg = Fmt.kstrf failwith msg
+let failf msg = Fmt.kstr failwith msg
 
 let invariant_broken f = raise (Invariant_broken f)
 
 let () =
   Printexc.register_printer @@ function
-  | Invariant_broken pp -> Some (Fmt.strf "%t" pp)
+  | Invariant_broken pp -> Some (Fmt.str "%t" pp)
   | _ -> None
 
 module OID = struct

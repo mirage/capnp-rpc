@@ -262,7 +262,7 @@ let test_local_embargo_4 () =
      It therefore does not try to disembargo it. *)
   Alcotest.(check string) "Error not embargoed"
     "Failed: Invalid capability index!"
-   (Fmt.strf "%t" broken#shortest#pp);
+   (Fmt.str "%t" broken#shortest#pp);
   (* Clean up *)
   dec_ref qp;
   dec_ref local;
@@ -955,12 +955,12 @@ let ensure_is_cycle_error (x:#Core_types.struct_ref) : unit =
   match x#response with
   | Some (Error (`Exception ex))
     when (String.is_prefix ~affix:"Attempt to create a cycle detected:" ex.Exception.reason) -> ()
-  | _ -> Alcotest.fail (Fmt.strf "Not a cycle error: %t" x#pp)
+  | _ -> Alcotest.fail (Fmt.str "Not a cycle error: %t" x#pp)
 
 let ensure_is_cycle_error_cap cap =
   match cap#problem with
   | Some ex when (String.is_prefix ~affix:"<cycle: " ex.Exception.reason) -> ()
-  | _ -> Alcotest.fail (Fmt.strf "Not a cycle error: %t" cap#pp)
+  | _ -> Alcotest.fail (Fmt.str "Not a cycle error: %t" cap#pp)
 
 let test_cycle () =
   (* Cap cycles *)
@@ -1396,14 +1396,14 @@ module Level0 = struct
     let bs_request = Queue.pop t.from_server in
     match bs_request with
     | `Bootstrap (qid, "") -> qid
-    | _ -> Alcotest.fail (Fmt.strf "Expecting bootstrap, got %s" (Testbed.Connection.summary_of_msg bs_request))
+    | _ -> Alcotest.fail (Fmt.str "Expecting bootstrap, got %s" (Testbed.Connection.summary_of_msg bs_request))
 
   let expect_call t expected =
     match Queue.pop t.from_server with
     | `Call (qid, _, msg, _, _) ->
       Alcotest.(check string) "Get call" expected @@ Request.data msg;
       qid
-    | request -> Alcotest.fail (Fmt.strf "Expecting call, got %s" (Testbed.Connection.summary_of_msg request))
+    | request -> Alcotest.fail (Fmt.str "Expecting call, got %s" (Testbed.Connection.summary_of_msg request))
 
   let call t target ~qid msg =
     send t @@ `Call (qid_of_int qid, `ReceiverHosted target, Request.v msg, RO_array.empty, `Caller)

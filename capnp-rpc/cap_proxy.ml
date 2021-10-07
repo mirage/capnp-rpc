@@ -67,7 +67,7 @@ module Make(C : S.CORE_TYPES) = struct
           let cap =
             match cap#blocker with
             | Some blocker when blocker = (self :> base_ref) ->
-              let msg = Fmt.strf "@[<v>Attempt to create a cycle detected:@,\
+              let msg = Fmt.str "@[<v>Attempt to create a cycle detected:@,\
                                   Resolving %t with %t would create a cycle@]" self#pp cap#pp in
               Log.info (fun f -> f "%s" msg);
               C.dec_ref cap;

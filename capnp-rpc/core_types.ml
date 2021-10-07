@@ -131,7 +131,7 @@ module Make(Wire : S.WIRE) = struct
   let null = broken_cap {Exception.ty = `Failed; reason = "null"}
   let cancelled = broken_cap Exception.cancelled
 
-  let cap_failf ?(ty=`Failed) msg = msg |> Fmt.kstrf (fun reason -> broken_cap {Exception.ty; reason})
+  let cap_failf ?(ty=`Failed) msg = msg |> Fmt.kstr (fun reason -> broken_cap {Exception.ty; reason})
 
   let cap_in_cap_list i caps =
     match i with
@@ -291,7 +291,7 @@ module Make(Wire : S.WIRE) = struct
   end
 
   let fail ?(ty=`Failed) msg =
-    msg |> Fmt.kstrf @@ fun reason ->
+    msg |> Fmt.kstr @@ fun reason ->
     broken_struct (`Exception {Exception.ty; reason})
 
   let resolved = function

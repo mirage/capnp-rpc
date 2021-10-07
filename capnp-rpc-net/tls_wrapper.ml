@@ -4,7 +4,7 @@ open Lwt.Infix
 open Auth
 
 let error fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
+  fmt |> Fmt.kstr @@ fun msg ->
   Error (`Msg msg)
 
 module Make (Underlying : Mirage_flow.S) = struct

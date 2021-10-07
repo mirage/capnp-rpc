@@ -1,5 +1,5 @@
 let error fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
+  fmt |> Fmt.kstr @@ fun msg ->
   Error (`Msg msg)
 
 let encode ~alphabet ~pad s =

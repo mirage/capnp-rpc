@@ -1711,7 +1711,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
         (* Check we're not resolving a settled import. *)
         if im.Import.settled then (
           let new_target = import_new_target ~embargo_path:None in
-          let msg = Fmt.strf "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
+          let msg = Fmt.str "Got a Resolve (to %t) for settled import %a!" new_target#pp Import.dump im in
           dec_ref new_target;
           failwith msg
         );

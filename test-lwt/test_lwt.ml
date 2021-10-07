@@ -533,7 +533,7 @@ let test_crossed_calls switch =
     let restore = Restorer.(single id) service in
     let config =
       let secret_key = `PEM (Auth.Secret_key.to_pem_data secret_key) in
-      let name = Fmt.strf "capnp-rpc-test-%s" addr in
+      let name = Fmt.str "capnp-rpc-test-%s" addr in
       let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) name in
       Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
       Capnp_rpc_unix.Vat_config.create ~secret_key (`Unix socket_path)

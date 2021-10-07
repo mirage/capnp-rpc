@@ -1,7 +1,7 @@
 open Astring
 
 let error fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
+  fmt |> Fmt.kstr @@ fun msg ->
   Error (`Msg msg)
 
 let none_if_empty = function

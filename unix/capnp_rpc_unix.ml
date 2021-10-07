@@ -16,7 +16,7 @@ module File_store = File_store
 module Sturdy_ref = Capnp_rpc_lwt.Sturdy_ref
 
 let error fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
+  fmt |> Fmt.kstr @@ fun msg ->
   Error (`Msg msg)
 
 let parse_uri s =
@@ -141,7 +141,7 @@ let rec connect_with_progress ?(mode=`Auto) sr =
     let x = Sturdy_ref.connect sr in
     Lwt.choose [Lwt_unix.sleep 0.5; Lwt.map ignore x] >>= fun () ->
     if Lwt.is_sleeping x then (
-      Console.with_msg (Fmt.strf "[ connecting to %a ]" pp sr)
+      Console.with_msg (Fmt.str "[ connecting to %a ]" pp sr)
         (fun () -> x)
     ) else x
   | `Silent -> Sturdy_ref.connect sr
