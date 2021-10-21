@@ -77,12 +77,8 @@ module Digest = struct
     | `Insecure -> None
     | `Fingerprint (hash, digest) ->
       let hash = (hash :> Mirage_crypto.Hash.hash) in
-      (* todo: [server_key_fingerprint] insists on checking the DN, so this must match
-         the one in [Secret_key.x509]. Maybe we should make our own authenticator in case
-         other implementations use other names. *)
-      let domain = Domain_name.of_string_exn "capnp" |> Domain_name.host_exn in
-      let fingerprints = [domain, Cstruct.of_string digest] in
-      Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprints ~time:(fun _ ->None))
+      let fingerprint = Cstruct.of_string digest in
+      Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprint ~time:(fun _ -> None))
 
   module Map = Map.Make(struct
       type nonrec t = t
@@ -142,7 +138,7 @@ module Secret_key = struct
        we allow any client to connect. We just want to know they key so that
        if we later need to resolve a sturdy ref hosted at the client, we can
        reuse this connection. *)
-    let authenticator ~host:_ _ = Ok None in
+    let authenticator ?ip:_ ~host:_ _ = Ok None in
     let tls_server_config = Tls.Config.server ~certificates ~authenticator () in
     { priv; certificates; tls_server_config }
 

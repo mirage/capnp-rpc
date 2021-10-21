@@ -5,11 +5,17 @@ open Examples
 
 module Time = struct
   let sleep_ns ns = Lwt_unix.sleep (Duration.to_f ns)
-end 
+end
 
 module Clock = struct
   let period_ns () = None
   let elapsed_ns () = 0L
+end
+
+module PClock = struct
+  let now_d_ps () = (0, 0L)
+  let current_tz_offset_s () = None
+  let period_d_ps () = None
 end
 
 module Random = struct
@@ -45,7 +51,7 @@ module Stack = struct
     Icmp.connect i4 >>= fun icmp ->
     connect v e a i icmp u t
 end
-module Mirage = Capnp_rpc_mirage.Make(Random)(Time)(Clock)(Stack)
+module Mirage = Capnp_rpc_mirage.Make(Random)(Time)(Clock)(PClock)(Stack)
 module Vat = Mirage.Vat
 
 type cs = {
