@@ -15,7 +15,7 @@ end
 
 module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4V6) : sig
 
-  module Dns : module type of Dns_client_mirage.Make(R)(T)(C)(Stack)  
+  module Dns : module type of Dns_client_mirage.Make(R)(T)(C)(Stack)
 
   type t = {
     stack : Stack.t;

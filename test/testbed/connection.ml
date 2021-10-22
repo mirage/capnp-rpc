@@ -97,7 +97,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
   let pop_msg ?expect t =
     match Queue.pop t.recv_queue with
     | exception Queue.Empty ->
-      Alcotest.fail (Fmt.strf "No messages found! (expecting %a)" Fmt.(option string) expect)
+      Alcotest.fail (Fmt.str "No messages found! (expecting %a)" Fmt.(option string) expect)
     | msg ->
       begin match msg with
         | #EP.In.t as msg ->

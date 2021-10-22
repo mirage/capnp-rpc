@@ -12,7 +12,7 @@ type hash = [`SHA256]
    "sha-512:def". We need to detect it's the same peer. *)
 
 let error fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
+  fmt |> Fmt.kstr @@ fun msg ->
   Error (`Msg msg)
 
 let ( >>= ) x f =

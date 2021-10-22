@@ -1,4 +1,4 @@
-let failf fmt = Fmt.kstrf failwith fmt
+let failf fmt = Fmt.kstr failwith fmt
 
 let pp_item ~check pp f (k, v) =
   match check v with

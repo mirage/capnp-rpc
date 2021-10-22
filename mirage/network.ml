@@ -2,7 +2,7 @@ open Lwt.Infix
 module Log = Capnp_rpc.Debug.Log
 
 let error fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
+  fmt |> Fmt.kstr @@ fun msg ->
   Error (`Msg msg)
 
 module Location = struct

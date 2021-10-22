@@ -53,7 +53,7 @@ end
 type t = unit
 
 let error fmt =
-  fmt |> Fmt.kstrf @@ fun msg ->
+  fmt |> Fmt.kstr @@ fun msg ->
   Error (`Msg msg)
 
 let parse_third_party_cap_id _ = `Two_party_only

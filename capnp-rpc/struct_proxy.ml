@@ -9,7 +9,7 @@ module Make (C : S.CORE_TYPES) = struct
   let cycle_marker = C.broken_cap (Exception.v "<cycle marker>")
 
   let cycle_err fmt =
-    "@[<v>Attempt to create a cycle detected:@," ^^ fmt ^^ "@]" |> Fmt.kstrf @@ fun msg ->
+    "@[<v>Attempt to create a cycle detected:@," ^^ fmt ^^ "@]" |> Fmt.kstr @@ fun msg ->
     Log.info (fun f -> f "%s" msg);
     C.broken_struct (`Exception (Exception.v msg))
 
@@ -273,7 +273,7 @@ module Make (C : S.CORE_TYPES) = struct
                              @      to: -> %t" self#pp x#pp);
       match state with
       | Finished -> dec_ref x (* Cancelled *)
-      | Forwarding x -> failwith (Fmt.strf "Already forwarding (to %t)!" x#pp)
+      | Forwarding x -> failwith (Fmt.str "Already forwarding (to %t)!" x#pp)
       | Unresolved u ->
         (* Check for cycles *)
         let x =
@@ -295,7 +295,7 @@ module Make (C : S.CORE_TYPES) = struct
                   detector_caps.(i) <- RO_array.get_exn caps i
                 done;
                 if c#blocker = Some (self :> C.base_ref) then
-                  C.broken_cap (Exception.v (Fmt.strf "<cycle: %t>" c#pp))
+                  C.broken_cap (Exception.v (Fmt.str "<cycle: %t>" c#pp))
                 else c
               in
               let fixed_caps = RO_array.map break_cycles caps in

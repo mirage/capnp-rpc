@@ -10,5 +10,5 @@ let pp f = function
   | `Cancelled -> Fmt.pf f "cancelled"
 
 let exn ?ty msg =
-  msg |> Fmt.kstrf @@ fun reason ->
+  msg |> Fmt.kstr @@ fun reason ->
   `Exception (Exception.v ?ty reason)

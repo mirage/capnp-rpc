@@ -26,7 +26,7 @@ let of_flow (type flow) ~switch ~peer_id (module F : Mirage_flow.S with type flo
 let dump_msg =
   let next = ref 0 in
   fun data ->
-    let name = Fmt.strf "/tmp/msg-%d.capnp" !next in
+    let name = Fmt.str "/tmp/msg-%d.capnp" !next in
     Log.info (fun f -> f "Saved message as %S" name);
     incr next;
     let ch = open_out_bin name in

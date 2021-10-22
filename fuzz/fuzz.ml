@@ -52,13 +52,13 @@ let code =
 
 let step = ref 0
 
-let failf msg = Fmt.kstrf failwith msg
+let failf msg = Fmt.kstr failwith msg
 
 let styles = [| `Red; `Green; `Blue |]
 
 let actor_for_id id =
   let style = styles.(id mod Array.length styles) in
-  (style, Fmt.strf "vat-%d" id)
+  (style, Fmt.str "vat-%d" id)
 
 let tags_for_id id =
   Logs.Tag.empty |> Logs.Tag.add Test_utils.actor_tag (actor_for_id id)
@@ -150,7 +150,7 @@ module Msg = struct
   let summary = function
     | `Abort _ -> "abort"
     | `Bootstrap _ -> "bootstrap"
-    | `Call (_, _, msg, _, _) -> Fmt.strf "call:%a:%d" OID.pp msg.contents.Request.sender msg.contents.Request.seq
+    | `Call (_, _, msg, _, _) -> Fmt.str "call:%a:%d" OID.pp msg.contents.Request.sender msg.contents.Request.seq
     | `Return (_, `Results (msg, _), _) -> "return:" ^ msg.contents
     | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
     | `Return (_, `Cancelled, _) -> "return:(cancelled)"
@@ -519,13 +519,13 @@ module Vat = struct
           counters.next_expected <- counters.next_expected + 1
         done;
         let expected_seq = counters.next_expected in
-        let expected_msg = Fmt.strf "%a:%d" OID.pp sender counters.next_expected in
+        let expected_msg = Fmt.str "%a:%d" OID.pp sender counters.next_expected in
         counters.next_expected <- succ counters.next_expected;
         let answer_var = OID.next () in
         begin
           let caps = Core_types.Request_payload.snapshot_caps msg in
           match RO_array.length caps with
-          | 0 -> 
+          | 0 ->
             code (fun f -> Fmt.pf f "let %a = %t#pop0 %S in"
                      pp_resolver
                      answer_var self#pp_var

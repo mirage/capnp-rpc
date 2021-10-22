@@ -71,7 +71,7 @@ module Make_basic
       | Return.ResultsSentElsewhere -> `ResultsSentElsewhere
       | Return.TakeFromOtherQuestion other -> `TakeFromOtherQuestion (AnswerId.of_uint32 other)
       | Return.AcceptFromThirdParty _ -> failwith "TODO: AcceptFromThirdParty"
-      | Return.Undefined x -> failwith (Fmt.strf "Unexpected return type received: %d" x)
+      | Return.Undefined x -> failwith (Fmt.str "Unexpected return type received: %d" x)
     in
     `Return (qid, ret, release_param_caps)
 
