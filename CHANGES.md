@@ -1,7 +1,7 @@
 ### current
 
 - Fix Fmt deprecation warnings (@tmcgilchrist #239)
-
+- Update to latest X509 and DNS APIs. (@tmcgilchrist #240)
 
 ### v1.2
 

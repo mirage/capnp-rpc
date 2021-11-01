@@ -4,10 +4,10 @@ module Log = Capnp_rpc.Debug.Log
 
 module Location = Network.Location
 
-module Make (R : Mirage_random.S) (T : Mirage_time.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4V6) = struct
+module Make (R : Mirage_random.S) (T : Mirage_time.S) (M : Mirage_clock.MCLOCK) (P : Mirage_clock.PCLOCK) (Stack : Mirage_stack.V4V6) = struct
 
-  module Dns = Dns_client_mirage.Make(R)(T)(C)(Stack)
-  module Network = Network.Make(R)(T)(C)(Stack)
+  module Dns = Dns_client_mirage.Make(R)(T)(M)(P)(Stack)
+  module Network = Network.Make(R)(T)(M)(P)(Stack)
   module Vat_config = Vat_config.Make(Network)
   module Vat_network = Capnp_rpc_net.Networking(Network)(Stack.TCP)
 
