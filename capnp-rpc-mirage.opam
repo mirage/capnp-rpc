@@ -19,6 +19,7 @@ depends: [
   "dns-client" {>= "6.0.0"}
   "tls-mirage"
   "mirage-stack" {>= "2.2.0"}
+  "mirage-protocols" {>= "6.0.0"}
   "arp" {>= "2.3.0" & with-test}
   "alcotest" {>= "1.0.1" & with-test}
   "alcotest-lwt" {>= "1.0.1" & with-test}
