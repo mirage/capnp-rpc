@@ -37,7 +37,7 @@ module Make (R : Mirage_random.S) (T : Mirage_time.S) (M : Mirage_clock.MCLOCK) 
     in
     match listen_address with
     | `TCP port ->
-      Stack.listen_tcp t.stack ~port (fun flow ->
+      Stack.TCP.listen (Stack.tcp t.stack) ~port (fun flow ->
           Log.info (fun f -> f ?tags "Accepting new connection");
           let secret_key = if serve_tls then Some (Vat_config.secret_key config) else None in
           Lwt.async (fun () -> handle_connection ?tags ~secret_key vat flow);
