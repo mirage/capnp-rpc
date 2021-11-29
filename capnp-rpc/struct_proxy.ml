@@ -170,7 +170,10 @@ module Make (C : S.CORE_TYPES) = struct
         | PromiseField p -> p.sr#field_sealed_dispatch p.path brand
     end
 
-  class virtual ['promise] t init = object (self : #C.struct_ref)
+  class virtual ['promise] t init = object (self : 'self)
+    constraint 'self = #C.struct_ref
+    constraint 'self = #C.struct_resolver
+
     val mutable state =
       Unresolved {
         target = init;
