@@ -37,7 +37,7 @@ module Stack = struct
   module Icmp = Icmpv4.Make(I4)
   include Tcpip_stack_direct.MakeV4V6(Time)(Random)(V)(E)(A)(I)(Icmp)(U)(T)
 
-  let create_network () = B.create ~use_async_readers:true ~yield:Lwt_unix.yield ()
+  let create_network () = B.create ~use_async_readers:true ~yield:Lwt.pause ()
 
   let create_interface backend cidr =
     V.connect backend >>= fun v ->
