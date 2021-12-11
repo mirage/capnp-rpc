@@ -3,4 +3,4 @@
  (package capnp-rpc-mirage)
  (libraries io-page-unix capnp-rpc-lwt capnp-rpc-mirage alcotest-lwt examples
    logs.fmt testbed tcpip.ipv4 tcpip.ipv6 tcpip.stack-direct mirage-vnetif ethernet
-   arp.mirage tcpip.tcp tcpip.icmpv4 tcpip.unix mirage-crypto-rng.lwt))
+   arp.mirage tcpip.tcp tcpip.icmpv4 mirage-crypto-rng.lwt))
