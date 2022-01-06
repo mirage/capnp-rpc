@@ -13,7 +13,7 @@ module Location : sig
   (** [tcp ~host port] is [`TCP (host, port)]. *)
 end
 
-module Make (R : Mirage_random.S) (T : Mirage_time.S) (M : Mirage_clock.MCLOCK) (P : Mirage_clock.PCLOCK) (Stack : Mirage_stack.V4V6) : sig
+module Make (R : Mirage_random.S) (T : Mirage_time.S) (M : Mirage_clock.MCLOCK) (P : Mirage_clock.PCLOCK) (Stack : Tcpip.Stack.V4V6) : sig
 
   module Dns : module type of Dns_client_mirage.Make(R)(T)(M)(P)(Stack)
 

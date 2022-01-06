@@ -1,4 +1,4 @@
 (library
  (name capnp_rpc_mirage)
  (public_name capnp-rpc-mirage)
- (libraries capnp-rpc-lwt capnp-rpc-net capnp-rpc fmt logs mirage-stack dns-client.mirage))
+ (libraries capnp-rpc-lwt capnp-rpc-net capnp-rpc fmt logs dns-client.mirage tcpip))
