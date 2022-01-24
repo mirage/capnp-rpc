@@ -1,3 +1,11 @@
+### v1.2.2
+
+- Switch from mirage-{stack,protocols} to tcpip (@MisterDA #246).
+
+- Remove deprecated tcpip.unix dependency (@hannesm #245).
+
+- Add OCaml 4.14 support (@kit-ty-kate #244).
+
 ### v1.2.1
 
 - Fix Fmt deprecation warnings (@tmcgilchrist #239).
