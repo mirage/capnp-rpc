@@ -29,6 +29,15 @@ jobs:
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
+      - name: Install Cap'n Proto (on Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CAPNP_VERSION: 0.9.1
+        run: |
+          curl -LO https://capnproto.org/capnproto-c++-win32-$CAPNP_VERSION.zip && \
+          unzip -j capnproto-c++-win32-$CAPNP_VERSION.zip capnproto-tools-win32-$CAPNP_VERSION/capnp.exe -d /usr/bin
+
       - run: opam install . --deps-only --with-test
 
       - run: opam exec -- dune build
