@@ -63,19 +63,14 @@ let connect_addr =
   Arg.(required @@ pos 0 (some Capnp_rpc_unix.sturdy_uri) None i)
 
 let serve_cmd =
-  Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
   let doc = "provide a Cap'n Proto calculator service" in
-  Term.info "serve" ~doc
+  let info = Cmd.info "serve" ~doc in
+  Cmd.v info Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd)
 
 let connect_cmd =
-  Term.(const connect $ connect_addr),
   let doc = "connect to a Cap'n Proto calculator service" in
-  Term.info "connect" ~doc
-
-let default_cmd =
-  let doc = "a calculator example" in
-  Term.(ret (const (`Help (`Pager, None)))),
-  Term.info "calc" ~version:"v0.1" ~doc
+  let info = Cmd.info "connect" ~doc in
+  Cmd.v info Term.(const connect $ connect_addr)
 
 let cmds = [serve_cmd; connect_cmd]
 
@@ -87,6 +82,8 @@ let () =
       if Astring.String.is_prefix ~affix:"capnp" (Logs.Src.name src) then
         Logs.Src.set_level src (Some Logs.Debug);
     );
-  match Term.eval_choice ~catch:false default_cmd cmds with
+  let doc = "a calculator example" in
+  let info = Cmd.info "calc" ~version:"v0.1" ~doc in
+  match Cmd.eval ~catch:false (Cmd.group info cmds) with
   | exception Failure msg -> Fmt.epr "%s@." msg; exit 1
-  | status -> Term.exit status
+  | status -> exit status
