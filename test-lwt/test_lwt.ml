@@ -260,15 +260,16 @@ let test_indexing switch =
   Lwt.return ()
 
 let cmd_result t =
-  let pp f = function
-    | `Error _ -> Fmt.string f "error"
-    | `Help -> Fmt.string f "help"
-    | `Version -> Fmt.string f "version"
-    | `Ok x -> Alcotest.pp t f x
+  let pp f (x : ('a Cmdliner.Cmd.eval_ok, Cmdliner.Cmd.eval_error) result) =
+    match x with
+    | Ok (`Help) -> Fmt.string f "help"
+    | Ok (`Version) -> Fmt.string f "version"
+    | Ok (`Ok x) -> Alcotest.pp t f x
+    | _ -> Fmt.string f "error"
   in
   let equal a b =
     match a, b with
-    | `Ok a, `Ok b -> Alcotest.equal t a b
+    | Ok (`Ok a), Ok (`Ok b) -> Alcotest.equal t a b
     | _ -> a = b
   in
   Alcotest.testable pp equal
@@ -278,20 +279,22 @@ let vat_config = Alcotest.testable Capnp_rpc_unix.Vat_config.pp Capnp_rpc_unix.V
 let config_result = cmd_result vat_config
 
 let test_options () =
-  let term = (Capnp_rpc_unix.Vat_config.cmd, Cmdliner.Term.info "main") in
-  let config = Cmdliner.Term.eval
+  let term = Cmdliner.Cmd.(v (info "main") Capnp_rpc_unix.Vat_config.cmd) in
+  let config = Cmdliner.Cmd.eval_value
       ~argv:[| "main"; "--capnp-secret-key-file=key.pem"; "--capnp-listen-address"; "unix:/run/socket" |] term in
-  let expected = `Ok (Capnp_rpc_unix.Vat_config.create
-                        ~secret_key:(`File "key.pem")
-                        (`Unix "/run/socket")
-                     ) in
+  let expected =
+    Result.ok (`Ok (Capnp_rpc_unix.Vat_config.create
+                      ~secret_key:(`File "key.pem")
+                      (`Unix "/run/socket")))
+  in
   Alcotest.check config_result "Unix, same address" expected config;
-  let expected = `Ok (Capnp_rpc_unix.Vat_config.create
-                       ~secret_key:(`File "key.pem")
-                       ~public_address:(`TCP ("1.2.3.4", 7001))
-                       (`TCP ("0.0.0.0", 7000))
-                     ) in
-  Cmdliner.Term.eval ~argv:[| "main";
+  let expected =
+    Result.ok (`Ok (Capnp_rpc_unix.Vat_config.create
+                      ~secret_key:(`File "key.pem")
+                      ~public_address:(`TCP ("1.2.3.4", 7001))
+                      (`TCP ("0.0.0.0", 7000))))
+  in
+  Cmdliner.Cmd.eval_value ~argv:[| "main";
                               "--capnp-secret-key-file=key.pem";
                               "--capnp-public-address"; "tcp:1.2.3.4:7001";
                               "--capnp-listen-address"; "tcp:0.0.0.0:7000" |] term

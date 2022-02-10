@@ -90,7 +90,7 @@ let secret_key_term =
     | "" -> `Ephemeral
     | path -> `File path
   in
-  Cmdliner.Term.(pure get $ secret_key_file)
+  Cmdliner.Term.(const get $ secret_key_file)
 
 let derived_id t name =
   let secret = hashed_secret t in
@@ -138,4 +138,4 @@ let cmd =
     in
     create ~secret_key ~serve_tls:(not disable_tls) ~public_address listen_address
   in
-  Term.(pure make $ secret_key_term $ disable_tls $ Listen_address.cmd $ public_address)
+  Term.(const make $ secret_key_term $ disable_tls $ Listen_address.cmd $ public_address)
