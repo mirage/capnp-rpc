@@ -48,6 +48,7 @@ let write t buf =
   Lwt.catch
     (fun () -> aux buf)
     (function
+      | Unix.Unix_error (Unix.ECONNRESET, _, _)
       | Unix.Unix_error (Unix.EPIPE, _, _) -> Lwt.return @@ Error `Closed
       | ex -> Lwt.return @@ Error (`Exception ex))
 
