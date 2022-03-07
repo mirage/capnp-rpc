@@ -78,7 +78,9 @@ let read t =
         Lwt.return @@ Ok (`Data (Cstruct.sub buf 0 got))
     )
     (function
-      | Lwt.Canceled -> Lwt.return @@ Ok `Eof
+      | Lwt.Canceled
+      | Unix.Unix_error (Unix.EPIPE, _, _)
+      | Unix.Unix_error (Unix.ECONNRESET, _, _) -> Lwt_result.return `Eof
       | ex -> Lwt.return @@ Error (`Exception ex)
     )
 
