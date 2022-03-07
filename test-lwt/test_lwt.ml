@@ -25,6 +25,20 @@ let ensure_removed path =
   try Unix.unlink path
   with Unix.Unix_error(Unix.ENOENT, _, _) -> ()
 
+let next_port = ref 8000
+
+let get_test_address ~switch name =
+  match Sys.os_type with
+  | "Win32" ->
+    (* No Unix-domain sockets on Windows *)
+    let port = !next_port in
+    incr next_port;
+    `TCP ("127.0.0.1", port)
+  | _ ->
+    let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) name in
+    Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
+    `Unix socket_path
+
 (* Have the client ask the server for its bootstrap object, and return the
    resulting client-side proxy to it. *)
 let get_bootstrap cs =
@@ -59,9 +73,8 @@ let server_pem = `PEM (Auth.Secret_key.to_pem_data server_key)
 
 let make_vats_full ?(serve_tls=false) ~client_switch ~server_switch ~restore () =
   let server_config =
-    let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) "capnp-rpc-test-server" in
-    Lwt_switch.add_hook (Some server_switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
-    Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem ~serve_tls (`Unix socket_path)
+    let addr = get_test_address ~switch:server_switch "capnp-rpc-test-server" in
+    Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem ~serve_tls addr
   in
   Capnp_rpc_unix.serve ~switch:server_switch ~tags:Test_utils.server_tags ~restore server_config >>= fun server ->
   Lwt.return {
@@ -342,6 +355,7 @@ let expect_non_exn = function
   | Error ex -> Alcotest.failf "expect_non_exn: %a" Capnp_rpc.Exception.pp ex
 
 let except = Alcotest.testable Capnp_rpc.Exception.pp (=)
+let except_ty = Alcotest.testable Capnp_rpc.Exception.pp_ty (=)
 
 let test_table_restorer _switch =
   let make_sturdy id = Uri.make ~path:(Restorer.Id.to_string id) () in
@@ -458,8 +472,7 @@ let test_broken switch =
   Logs.info (fun f -> f "Turning off server...");
   Lwt_switch.turn_off cs.server_switch >>= fun () ->
   problem >>= fun problem ->
-  let expected = Exception.v ~ty:`Disconnected "Vat shut down" in
-  Alcotest.check except "Broken callback ran" expected problem;
+  Alcotest.check except_ty "Broken callback ran" `Disconnected problem.ty;
   assert (Capability.problem service <> None);
   Lwt.catch
     (fun () -> Echo.ping service "ping" >|= fun _ -> Alcotest.fail "Should have failed!")
@@ -537,9 +550,7 @@ let test_crossed_calls switch =
     let config =
       let secret_key = `PEM (Auth.Secret_key.to_pem_data secret_key) in
       let name = Fmt.str "capnp-rpc-test-%s" addr in
-      let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) name in
-      Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
-      Capnp_rpc_unix.Vat_config.create ~secret_key (`Unix socket_path)
+      Capnp_rpc_unix.Vat_config.create ~secret_key (get_test_address ~switch name)
     in
     Capnp_rpc_unix.serve ~switch ~tags ~restore config >>= fun vat ->
     Lwt_switch.add_hook (Some switch) (fun () -> Capability.dec_ref service; Lwt.return_unit);
@@ -596,9 +607,10 @@ let test_crossed_calls _switch =
 let test_store switch =
   (* Persistent server configuration *)
   let db = Store.DB.create () in
-  let socket_path = Filename.(concat (Filename.get_temp_dir_name ())) "capnp-rpc-test-server" in
-  Lwt_switch.add_hook (Some switch) (fun () -> Lwt.return @@ ensure_removed socket_path);
-  let config = Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem (`Unix socket_path) in
+  let config =
+    let addr = get_test_address ~switch "capnp-rpc-test-server" in
+    Capnp_rpc_unix.Vat_config.create ~secret_key:server_pem addr
+  in
   let main_id = Restorer.Id.generate () in
   let start_server ~switch () =
     let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
