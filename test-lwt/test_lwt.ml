@@ -355,6 +355,7 @@ let expect_non_exn = function
   | Error ex -> Alcotest.failf "expect_non_exn: %a" Capnp_rpc.Exception.pp ex
 
 let except = Alcotest.testable Capnp_rpc.Exception.pp (=)
+let except_ty = Alcotest.testable Capnp_rpc.Exception.pp_ty (=)
 
 let test_table_restorer _switch =
   let make_sturdy id = Uri.make ~path:(Restorer.Id.to_string id) () in
@@ -471,8 +472,7 @@ let test_broken switch =
   Logs.info (fun f -> f "Turning off server...");
   Lwt_switch.turn_off cs.server_switch >>= fun () ->
   problem >>= fun problem ->
-  let expected = Exception.v ~ty:`Disconnected "Vat shut down" in
-  Alcotest.check except "Broken callback ran" expected problem;
+  Alcotest.check except_ty "Broken callback ran" `Disconnected problem.ty;
   assert (Capability.problem service <> None);
   Lwt.catch
     (fun () -> Echo.ping service "ping" >|= fun _ -> Alcotest.fail "Should have failed!")
