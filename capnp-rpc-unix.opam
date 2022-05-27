@@ -19,10 +19,11 @@ depends: [
   "logs"
   "extunix"
   "base64" {>= "3.0.0"}
-  "dune" {>= "2.0"}
+  "dune" {>= "3.0"}
   "alcotest" {>= "1.0.1" & with-test}
   "alcotest-lwt" { >= "1.0.1" & with-test}
   "mirage-crypto-rng" {>= "0.7.0"}
+  "mdx" {with-test}
   "lwt"
   "asetmap" {with-test}
 ]

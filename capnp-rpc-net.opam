@@ -30,7 +30,7 @@ depends: [
   "asn1-combinators" {>= "0.2.0"}
   "x509" {>= "0.15.0"}
   "tls-mirage"
-  "dune" {>= "2.0"}
+  "dune" {>= "3.0"}
   "mirage-crypto"
   "mirage-crypto-rng"
 ]

@@ -15,34 +15,35 @@ See [LICENSE.md](LICENSE.md) for details.
 * [Installing](#installing)
 * [Structure of the library](#structure-of-the-library)
 * [Tutorial](#tutorial)
-	* [A basic echo service](#a-basic-echo-service)
-	* [Passing capabilities](#passing-capabilities)
-	* [Networking](#networking)
-		* [The server side](#the-server-side)
-		* [The client side](#the-client-side)
-		* [Separate processes](#separate-processes)
-	* [Pipelining](#pipelining)
-	* [Hosting multiple sturdy refs](#hosting-multiple-sturdy-refs)
-	* [Implementing the persistence API](#implementing-the-persistence-api)
-	* [Creating and persisting sturdy refs dynamically](#creating-and-persisting-sturdy-refs-dynamically)
-	* [Summary](#summary)
-	* [Further reading](#further-reading)
+  * [A basic echo service](#a-basic-echo-service)
+  * [Passing capabilities](#passing-capabilities)
+  * [Networking](#networking)
+    * [The server side](#the-server-side)
+    * [The client side](#the-client-side)
+    * [Separate processes](#separate-processes)
+* [Pipelining](#pipelining)
+* [Guide to sturdy refs](#guide-to-sturdy-refs)
+  * [Hosting multiple sturdy refs](#hosting-multiple-sturdy-refs)
+  * [Creating services dynamically](#creating-services-dynamically)
+  * [The Persistence API](#the-persistence-api)
+  * [Persisting sturdy refs](#persisting-sturdy-refs)
+* [Further reading](#further-reading)
 * [FAQ](#faq)
-	* [Why does my connection stop working after 10 minutes?](#why-does-my-connection-stop-working-after-10-minutes)
-	* [How can I return multiple results?](#how-can-i-return-multiple-results)
-	* [Can I create multiple instances of an interface dynamically?](#can-i-create-multiple-instances-of-an-interface-dynamically)
-	* [Can I get debug output?](#can-i-get-debug-output)
-	* [How can I debug reference counting problems?](#how-can-i-debug-reference-counting-problems)
-	* [How can I import a sturdy ref that I need to start my vat?](#how-can-i-import-a-sturdy-ref-that-i-need-to-start-my-vat)
-	* [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
-	* [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
-	* [Can I set up a direct 2-party connection over a pre-existing channel?](#can-i-set-up-a-direct-2-party-connection-over-a-pre-existing-channel)
-	* [How can I use this with Mirage?](#how-can-i-use-this-with-mirage)
+  * [Why does my connection stop working after 10 minutes?](#why-does-my-connection-stop-working-after-10-minutes)
+  * [How can I return multiple results?](#how-can-i-return-multiple-results)
+  * [Can I create multiple instances of an interface dynamically?](#can-i-create-multiple-instances-of-an-interface-dynamically)
+  * [Can I get debug output?](#can-i-get-debug-output)
+  * [How can I debug reference counting problems?](#how-can-i-debug-reference-counting-problems)
+  * [How can I import a sturdy ref that I need to start my vat?](#how-can-i-import-a-sturdy-ref-that-i-need-to-start-my-vat)
+  * [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
+  * [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
+  * [Can I set up a direct 2-party connection over a pre-existing channel?](#can-i-set-up-a-direct-2-party-connection-over-a-pre-existing-channel)
+  * [How can I use this with Mirage?](#how-can-i-use-this-with-mirage)
 * [Contributing](#contributing)
-	* [Conceptual model](#conceptual-model)
-	* [Building](#building)
-	* [Testing](#testing)
-	* [Fuzzing](#fuzzing)
+  * [Conceptual model](#conceptual-model)
+  * [Building](#building)
+  * [Testing](#testing)
+  * [Fuzzing](#fuzzing)
 
 <!-- vim-markdown-toc -->
 
@@ -113,12 +114,15 @@ since they shouldn't care whether the services they use are local or accessed ov
 ## Tutorial
 
 This tutorial creates a simple echo service and then extends it.
-It shows how to use most of the features of the library, including defining services, using encryption and authentication over network links, and saving service state to disk.
+It shows how to use most of the features of the library, including defining services,
+sending and receiving messages, and using encryption and authentication over network links.
+
+When following the tutorial, you should be able to create all the files yourself, following the instructions.
+If you get stuck, you can find complete solutions in the [examples](./examples/) directory.
 
 ### A basic echo service
 
-Start by writing a [Cap'n Proto schema file][schema].
-For example, here is a very simple echo service:
+We start by writing a [Cap'n Proto schema file][schema]:
 
 ```capnp
 interface Echo {
@@ -132,7 +136,8 @@ and returns a struct containing another text field called `reply`.
 
 Save this as `echo_api.capnp` and compile it using capnp:
 
-```
+<!-- $MDX skip -->
+```sh
 $ capnp compile echo_api.capnp -o ocaml
 echo_api.capnp:1:1: error: File does not declare an ID.  I've generated one for you.
 Add this line to your file:
@@ -143,6 +148,7 @@ Every interface needs a globally unique ID.
 If you don't have one, capnp will pick one for you, as shown above.
 Add the line to the start of the file to get:
 
+<!-- $MDX include,file=examples/v1/echo_api.capnp -->
 ```capnp
 @0xb287252b6cbed46e;
 
@@ -153,7 +159,8 @@ interface Echo {
 
 Now it can be compiled:
 
-```
+<!-- $MDX dir=examples/v1 -->
+```sh
 $ capnp compile echo_api.capnp -o ocaml
 echo_api.capnp --> echo_api.mli echo_api.ml
 ```
@@ -162,6 +169,7 @@ The next step is to implement a client and server (in a new `echo.ml` file) usin
 
 For the server, you should inherit from the generated `Api.Service.Echo.service` class:
 
+<!-- $MDX include,file=examples/v1/echo.ml,part=server -->
 ```ocaml
 module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
 
@@ -205,6 +213,7 @@ The client implementation is similar, but uses `Api.Client` instead of `Api.Serv
 Here, we have a *builder* for the parameters and a *reader* for the results.
 `Api.Client.Echo.Ping.method_id` is a globally unique identifier for the ping method.
 
+<!-- $MDX include,file=examples/v1/echo.ml,part=client -->
 ```ocaml
 module Echo = Api.Client.Echo
 
@@ -224,6 +233,7 @@ We'll see how to handle capabilities later.
 
 With the boilerplate out of the way, we can now write a `main.ml` to test it:
 
+<!-- $MDX include,file=examples/v1/main.ml -->
 ```ocaml
 open Lwt.Infix
 
@@ -244,9 +254,9 @@ let () =
   <img src="./diagrams/ping.svg"/>
 </p>
 
-Here's a suitable `dune` file to compile the schema file and then the generated OCaml files
-(which you can now delete from your source directory):
+Here's a suitable `dune` file to compile the schema file and then the generated OCaml files:
 
+<!-- $MDX include,file=examples/v1/dune -->
 ```
 (executable
  (name main)
@@ -259,10 +269,22 @@ Here's a suitable `dune` file to compile the schema file and then the generated 
  (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
 ```
 
+With this, you can now delete the generated files from your source directory:
+
+<!-- $MDX dir=examples/v1 -->
+```sh
+$ rm echo_api.ml echo_api.mli
+```
+
 The service is now usable:
 
+<!-- $MDX skip -->
 ```bash
 $ opam depext -i capnp-rpc-lwt
+```
+
+<!-- $MDX dir=examples/v1 -->
+```bash
 $ dune exec ./main.exe
 Got reply "echo:foo"
 ```
@@ -271,6 +293,9 @@ This isn't very exciting, so let's add some capabilities to the protocol...
 
 ### Passing capabilities
 
+Let's update the schema:
+
+<!-- $MDX include,file=examples/v2/echo_api.capnp -->
 ```capnp
 @0xb287252b6cbed46e;
 
@@ -289,6 +314,7 @@ Instead of returning the text directly, it will send it to a callback at regular
 
 The new `heartbeat_impl` method looks like this:
 
+<!-- $MDX include,file=examples/v2/echo.ml,part=server-heartbeat -->
 ```ocaml
     method heartbeat_impl params release_params =
       let open Echo.Heartbeat in
@@ -309,8 +335,11 @@ Note that all parameters in Cap'n Proto are optional, so we have to check for `c
 `Service.return_lwt fn` runs `fn ()` and replies to the `heartbeat` call when it finishes.
 Here, the whole of the rest of the method is the argument to `return_lwt`, which is a common pattern.
 
-`notify callback msg` just sends a few messages to `callback` in a loop, and then releases it:
+`Capability.with_ref x f` calls `f x` and then releases `x` (capabilities are ref-counted).
 
+`notify callback msg` just sends a few messages to `callback` in a loop:
+
+<!-- $MDX include,file=examples/v2/echo.ml,part=notify -->
 ```ocaml
 let (>>!=) = Lwt_result.bind		(* Return errors *)
 
@@ -326,11 +355,12 @@ let notify callback ~msg =
   loop 3
 ```
 
-Exercise: create a `Callback` submodule in `echo.ml` and implement the client-side `Callback.log` function (hint: it's very similar to `ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually)
+Exercise: create a `Callback` submodule in `echo.ml` and implement the client-side `Callback.log` function (hint: it's very similar to `ping`, but use `Capability.call_for_unit` because we don't care about the value of the result and we want to handle errors manually). If you get stuck, the solution can be found in the `examples/v2` directory.
 
 To write the client for `Echo.heartbeat`, we take a user-provided callback object
 and put it into the request:
 
+<!-- $MDX include,file=examples/v2/echo.ml,part=client-heartbeat -->
 ```ocaml
 let heartbeat t msg callback =
   let open Echo.Heartbeat in
@@ -345,6 +375,7 @@ let heartbeat t msg callback =
 
 In `main.ml`, we can now wrap a regular OCaml function as the callback:
 
+<!-- $MDX include,file=examples/v2/main.ml -->
 ```ocaml
 open Capnp_rpc_lwt
 
@@ -389,8 +420,9 @@ Exercise: implement `Callback.local fn` (hint: it's similar to the original `pin
 
 And testing it should give (three times, at one second intervals):
 
-```
-$ ./main
+<!-- $MDX dir=examples/v2 -->
+```sh
+$ dune exec -- ./main.exe
 Callback got "foo"
 Callback got "foo"
 Callback got "foo"
@@ -410,6 +442,7 @@ However, we can use the same code with the echo client and service in separate p
 Let's put a network connection between the client and the server.
 Here's the new `main.ml` (the top half is the same as before):
 
+<!-- $MDX include,file=examples/v3/main.ml -->
 ```ocaml
 open Lwt.Infix
 open Capnp_rpc_lwt
@@ -451,13 +484,15 @@ let () =
 
 You'll need to edit your `dune` file to add a dependency on `capnp-rpc-unix` in the `(libraries ...` line and also:
 
-```
+<!-- $MDX skip -->
+```sh
 $ opam depext -i capnp-rpc-unix
 ```
 
 Running this will give something like:
 
-```
+<!-- $MDX dir=examples/v3,non-deterministic -->
+```sh
 $ dune exec ./main.exe
 Connecting to echo service at: capnp://sha-256:3Tj5y5Q2qpqN3Sbh0GRPxgORZw98_NtrU2nLI0-Tn6g@127.0.0.1:7000/eBIndzZyoVDxaJdZ8uh_xBx5V1lfXWTJCDX-qEkgNZ4
 Callback got "foo"
@@ -495,6 +530,7 @@ You can use `` `Unix path`` for a Unix-domain socket at `path`, or
 
 For TCP, you might want to listen on one address but advertise a different one, e.g.
 
+<!-- $MDX skip -->
 ```ocaml
 let listen_address = `TCP ("0.0.0.0", 7000)	(* Listen on all interfaces *)
 let public_address = `TCP ("192.168.1.3", 7000)	(* Tell clients to connect here *)
@@ -527,12 +563,13 @@ exactly the same way as the direct reference we used before.
 
 #### Separate processes
 
-The example above runs the client and server in a single process.
+The example above runs the client and server in a single process, which is convenient for testing.
 To run them in separate processes we just need to split `main.ml` into separate files
 and add some command-line parsing to let the user pass the URL.
 
 Edit the `dune` file to build a client and server:
 
+<!-- $MDX include,file=examples/v4/dune -->
 ```
 (executables
  (names client server)
@@ -547,6 +584,7 @@ Edit the `dune` file to build a client and server:
 
 Here's a suitable `server.ml`:
 
+<!-- $MDX include,file=examples/v4/server.ml -->
 ```ocaml
 open Lwt.Infix
 open Capnp_rpc_net
@@ -572,12 +610,12 @@ let serve config =
 open Cmdliner
 
 let serve_cmd =
-  Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd),
   let doc = "run the server" in
-  Term.info "serve" ~doc
+  let info = Cmd.info "serve" ~doc in
+  Cmd.v info Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd)
 
 let () =
-  Term.eval serve_cmd |> Term.exit
+  exit (Cmd.eval serve_cmd)
 ```
 
 The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable `Vat_config`
@@ -585,8 +623,8 @@ based on command-line arguments provided by the user.
 
 And here's the corresponding `client.ml`:
 
+<!-- $MDX include,file=examples/v4/client.ml -->
 ```ocaml
-open Lwt.Infix
 open Capnp_rpc_lwt
 
 let () =
@@ -615,16 +653,17 @@ let connect_addr =
 
 let connect_cmd =
   let doc = "run the client" in
-  Term.(const connect $ connect_addr),
-  Term.info "connect" ~doc
+  let info = Cmd.info "connect" ~doc in
+  Cmd.v info Term.(const connect $ connect_addr)
 
 let () =
-  Term.eval connect_cmd |> Term.exit
+  exit (Cmd.eval connect_cmd)
 ```
 
 To test, start the server running:
 
-```
+<!-- $MDX skip -->
+```sh
 $ dune exec -- ./server.exe \
     --capnp-secret-key-file key.pem \
     --capnp-listen-address tcp:localhost:7000
@@ -633,7 +672,8 @@ Server running. Connect using "echo.cap".
 
 With the server still running in another window, run the client using the `echo.cap` file generated by the server:
 
-```
+<!-- $MDX skip -->
+```sh
 $ dune exec ./client.exe echo.cap
 Callback got "foo"
 Callback got "foo"
@@ -643,11 +683,25 @@ Callback got "foo"
 Note that we're using `Capnp_rpc_unix.with_cap_exn` here instead of `Sturdy_ref.with_cap_exn`.
 It's almost the same, except that it displays a suitable progress indicator if the connection takes too long.
 
-### Pipelining
+Congratulations on finishing the main tutorial! You now know how to:
 
-Let's say the server also offers a logging service, which the client can get from the main echo service:
+- Define Cap'n Proto services and clients, independently of any networking.
+- Pass capability references in method arguments and results.
+- Stretch capabilities over a network link, with encryption, authentication and access control.
+- Configure a vat using command-line arguments.
 
+## Pipelining
+
+Imagine we have a server with the following API:
+
+<!-- $MDX include,file=examples/pipelining/echo_api.capnp -->
 ```capnp
+@0xb287252b6cbed46e;
+
+interface Callback {
+  log @0 (msg :Text) -> ();
+}
+
 interface Echo {
   ping      @0 (msg :Text) -> (reply :Text);
   heartbeat @1 (msg :Text, callback :Callback) -> ();
@@ -655,9 +709,13 @@ interface Echo {
 }
 ```
 
+It's the same API we saw in the tutorial above, but extended with a logging service,
+which the client can get from the main echo service by calling `getLogger`.
+
 The implementation of the new method in the service is simple -
 we export the callback in the response in the same way we previously exported the client's callback in the request:
 
+<!-- $MDX include,file=examples/pipelining/echo.ml,part=server-get-logger -->
 ```ocaml
     method get_logger_impl _ release_params =
       let open Echo.GetLogger in
@@ -668,9 +726,11 @@ we export the callback in the response in the same way we previously exported th
 ```
 
 Exercise: create a `service_logger` that prints out whatever it gets (hint: use `Callback.local`)
+See [examples/pipelining](./examples/pipelining/) for the solution.
 
 The client side is more interesting:
 
+<!-- $MDX include,file=examples/pipelining/echo.ml,part=client-get-logger -->
 ```ocaml
 let get_logger t =
   let open Echo.GetLogger in
@@ -690,6 +750,7 @@ Doing it this way allows `call_for_caps` to release any unused capabilities in t
 
 We can test it as follows:
 
+<!-- $MDX include,file=examples/pipelining/main.ml,part=run-client -->
 ```ocaml
 let run_client service =
   let logger = Echo.get_logger service in
@@ -705,8 +766,11 @@ let run_client service =
 
 This should print (in the server's output) something like:
 
-```
-Service logger: Message from client
+<!-- $MDX dir=examples/pipelining -->
+```sh
+$ dune exec ./main.exe
+[client] Connecting to echo service...
+[server] Received "Message from client"
 ```
 
 In this case, we didn't wait for the `getLogger` call to return before using the logger.
@@ -718,13 +782,14 @@ On the wire, the messages are sent together, and look like:
 
 Now, let's say we'd like the server to send heartbeats to itself:
 
+<!-- $MDX skip -->
 ```ocaml
 let run_client service =
   Capability.with_ref (Echo.get_logger service) @@ fun callback ->
   Echo.heartbeat service "foo" callback
 ```
 
-Here, we ask the server for its logger and then (without waiting for the reply), tell it to send heartbeat messages to the promised logger (you should see the messages appear in the server process's output).
+Here, we ask the server for its logger and then (without waiting for the reply), tell it to send heartbeat messages to the promised logger (you should see the messages appear in the server's output).
 
 Previously, when we exported our local `callback` object, it arrived at the service as a proxy that sent messages back to the client over the network.
 But when we send the (promise of the) server's own logger back to it, the RPC system detects this and "shortens" the path;
@@ -734,125 +799,232 @@ it can call without using the network.
 These optimisations are very important because they allow us to build APIs like this with small functions that can be composed easily.
 Without pipelining, we would be tempted to clutter the protocol with specialised methods like `heartbeatToYourself` to avoid the extra round-trips most RPC protocols would otherwise require.
 
+## Guide to sturdy refs
+
+A `Capability.t` is a "live" reference to a service, and is typically tied to a TCP connection.
+If the TCP connection fails, or the client or server is restarted, the capability becomes broken and can no longer be used.
+By contrast, a "sturdy ref" is an offline reference to a service, which can be saved as a URL in a file, emailed to someone, etc.
+A sturdy ref can be used to get a live ref when needed.
+
 ### Hosting multiple sturdy refs
 
-The `Restorer.single` restorer used above is useful for vats hosting a single sturdy ref.
+The `Restorer.single` restorer used in the tutorial above is useful for vats hosting a single sturdy ref.
 However, you may want to host multiple sturdy refs,
 perhaps to provide separate "admin" and "user" capabilities to different clients,
 or to allow services to be created and persisted as sturdy refs dynamically.
 To do this, we can use `Restorer.Table`.
-For example, we can extend our example to provide sturdy refs for both the main echo service and the logger service:
 
+[examples/sturdy-refs](./examples/sturdy-refs) is an example of this.
+It defines a simple API for a logging service:
+
+<!-- $MDX include,file=examples/sturdy-refs/api.capnp -->
+```capnp
+@0x9ab198a53301be6e;
+
+interface Logger {
+  log @0 (msg :Text) -> ();
+}
+```
+
+Here is an example using it.
+The server writes out two cap files, for two different logger instances.
+Two different clients load these two files and send messages to the server:
+
+<!-- $MDX include,file=examples/sturdy-refs/main.ml,part=main -->
 ```ocaml
-let write_cap vat service_id cap_file =
-  match Capnp_rpc_unix.Cap_file.save_service vat service_id cap_file with
-  | Error (`Msg m) -> failwith m
-  | Ok () -> Fmt.pr "Wrote %S.@." cap_file
+let make_service ~config ~services name =
+  let service = Logger.local name in
+  let id = Capnp_rpc_unix.Vat_config.derived_id config name in
+  Restorer.Table.add services id service;
+  name, id
 
-let serve config =
+let start_server () =
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
-  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-  let logger_id = Capnp_rpc_unix.Vat_config.derived_id config "logger" in
-  Restorer.Table.add services echo_id Echo.local;
-  Restorer.Table.add services logger_id (Echo.Callback.local callback_fn);
   let restore = Restorer.of_table services in
+  let services = List.map (make_service ~config ~services) ["alice"; "bob"] in
+  Capnp_rpc_unix.serve config ~restore >|= fun vat ->
+  services |> List.iter (fun (name, id) ->
+      let cap_file = name ^ ".cap" in
+      Capnp_rpc_unix.Cap_file.save_service vat id cap_file |> or_fail;
+      Printf.printf "[server] saved %S\n%!" cap_file
+    )
+
+let run_client cap_file msg =
+  let vat = Capnp_rpc_unix.client_only_vat () in
+  let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
+  Printf.printf "[client] loaded %S\n%!" cap_file;
+  Sturdy_ref.with_cap_exn sr @@ fun cap ->
+  Logger.log cap msg
+
+let () =
   Lwt_main.run begin
-    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
-    write_cap vat echo_id "echo.cap";
-    write_cap vat logger_id "logger.cap";
-    fst @@ Lwt.wait ()  (* Wait forever *)
+    start_server () >>= fun () ->
+    run_client "./alice.cap" "Message from Alice" >>= fun () ->
+    run_client "./bob.cap" "Message from Bob"
   end
 ```
 
-Exercise: add a `log.exe` client and use it to test the `logger.cap` printed by the above code.
+<!-- $MDX dir=examples/sturdy-refs -->
+```sh
+$ dune exec ./main.exe
+[server] saved "alice.cap"
+[server] saved "bob.cap"
+[client] loaded "./alice.cap"
+[server] "alice" says "Message from Alice"
+[client] loaded "./bob.cap"
+[server] "bob" says "Message from Bob"
+```
 
-### Implementing the persistence API
+### Creating services dynamically
+
+So far, we have been providing a static set of sturdy refs.
+We can also generate new services, with new sturdy refs, dynamically, and return them to clients.
+Let's allow holders of a logger to create nested sub-loggers.
+Then the admin can create `alice.cap` and `bob.cap` using the API, instead of hard-coding them,
+and Alice and Bob can create further delegate to other users as needed.
+
+<!-- $MDX include,file=examples/sturdy-refs-2/api.capnp -->
+```capnp
+@0x9ab198a53301be6e;
+
+interface Logger {
+  log @0 (msg :Text) -> ();
+  sub @1 (label :Text) -> (logger :Logger);
+}
+```
+
+To begin with, we'll just create live refs dynamically.
+We can use the new API like this:
+
+<!-- $MDX include,file=examples/sturdy-refs-2/main.ml,part=main -->
+```ocaml
+let () =
+  Lwt_main.run begin
+    start_server () >>= fun root_uri ->
+    let vat = Capnp_rpc_unix.client_only_vat () in
+    let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
+    Sturdy_ref.with_cap_exn root_sr @@ fun root ->
+    Logger.log root "Message from Admin" >>= fun () ->
+    let for_alice = Logger.sub root "alice" in
+    let for_bob = Logger.sub root "bob" in
+    Logger.log for_alice "Message from Alice" >>= fun () ->
+    Logger.log for_bob "Message from Bob"
+  end
+```
+
+<!-- $MDX dir=examples/sturdy-refs-2 -->
+```sh
+$ dune exec ./main.exe
+[server] "root" says "Message from Admin"
+[server] "root/alice" says "Message from Alice"
+[server] "root/bob" says "Message from Bob"
+```
+
+### The Persistence API
+
+However, we'd like to be able to turn these live capabilities (`for_alice` and `for_bob`)
+into URLs that we can send to Alice and Bob over some other transport (e.g. ssh or email).
 
 Cap'n Proto defines a standard [Persistence API][] which services can implement
 to allow clients to request their sturdy ref.
 
 On the client side, calling `Persistence.save_exn cap` will send a request to `cap`
-asking for its sturdy ref. For example, after connecting to the main echo service and
-getting a live capability to the logger, the client can request a sturdy ref like this:
+asking for its sturdy ref. For example, after getting a live capability,
+the admin can request the sturdy ref like this:
 
+<!-- $MDX include,file=examples/sturdy-refs-3/main.ml,part=save -->
 ```ocaml
-let run_client service =
-  let callback = Echo.get_logger service in
-  Persistence.save_exn callback >>= fun uri ->
-  Fmt.pr "The server's logger's URI is %a.@." Uri.pp_hum uri;
-  Lwt.return_unit
+    (* The admin creates a logger for Alice and saves it: *)
+    let for_alice = Logger.sub root "alice" in
+    Persistence.save_exn for_alice >>= fun uri ->
+    Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail;
+    (* Alice uses it: *)
+    run_client "alice.cap"
 ```
 
-If successful, the client can use this sturdy ref to connect directly to the logger in future.
+If successful, the client can use this sturdy ref to connect directly to the logger in future:
 
-If you try the above, it will fail with `Unimplemented: Unknown interface 17004856819305483596UL`.
+<!-- $MDX dir=examples/sturdy-refs-3 -->
+```sh
+$ dune exec ./main.exe
+[server] "root" says "Message from Admin"
+[server] "root/alice" says "Message from Alice"
+```
+
+If you try the above, it will fail with `Unimplemented: Unknown interface 14468694717054801553UL`.
 To add support on the server side, we must tell each logger instance what its public address is
 and have it implement the persistence interface.
 The simplest way to do this is to wrap the `Callback.local` call with `Persistence.with_sturdy_ref`:
 
+<!-- $MDX include,file=examples/sturdy-refs-3/logger.ml,part=local -->
 ```ocaml
-module Callback = struct
-  ...
-  let local sr fn =
-    let module Callback = Api.Service.Callback in
-    Persistence.with_sturdy_ref sr Callback.local @@ object
-      ...
-    end
+let rec local ~services sr label =
+  let module Logger = Api.Service.Logger in
+  Persistence.with_sturdy_ref sr Logger.local @@ object
 ```
 
-Then pass the `sr` argument when creating the logger (you'll need to make it an argument to `Echo.local` too):
+Then pass the `services` and `sr` arguments when creating the logger:
 
+<!-- $MDX include,file=examples/sturdy-refs-3/main.ml,part=root -->
 ```ocaml
-  let logger_id = Capnp_rpc_unix.Vat_config.derived_id config "logger" in
-  let logger_sr = Restorer.Table.sturdy_ref services logger_id in
-  let service_logger = Echo.Callback.local logger_sr @@ Fmt.pr "Service log: %S@." in
-  Restorer.Table.add services echo_id (Echo.local ~service_logger);
-  Restorer.Table.add services logger_id service_logger;
+  let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
+  let root =
+    let sr = Capnp_rpc_net.Restorer.Table.sturdy_ref services root_id in
+    Logger.local ~services sr "root"
+  in
 ```
 
-After restarting the server, the client should now display the logger's URI,
-which you can then use with `log.exe log URI MSG`.
+### Persisting sturdy refs
 
-### Creating and persisting sturdy refs dynamically
+Currently, each time we run the server we generate a new ID for Alice's logger
+(`alice.cap` will be different each time).
+For a real service, we will want to persist the IDs somehow.
 
-So far, we have been providing a static set of sturdy refs.
-We can also generate new sturdy refs dynamically and return them to clients.
-We'll normally want to record each new export in some kind of persistent storage
-so that the sturdy refs still work after restarting the server.
-
-It is possible to use `Table.add` for this.
-However, that requires all capabilities to be loaded into the table at start-up,
+`Table.add` is not a good choice for dynamic services because
+it requires all capabilities to be loaded into the table at start-up,
 which may be a performance problem.
 
 Instead, we can create the table using `Table.of_loader`.
 When the user asks for a sturdy ref that is not in the table,
-it calls our `load` function to load the capability dynamically.
-The function can use a database or the filesystem to look up the resource.
-You can still use `Table.add` to register additional services, as before.
+it calls our `load` function to load the capability dynamically
+from storage
+(you can still use `Table.add` to register static services, as before).
 
-Let's extend the ping service to support multiple callbacks with different labels.
-Then we can give each user a private sturdy ref to their own logger callback.
-Here's the interface for a `DB` module that loads and saves loggers:
+A database such as sqlite3 is often a good choice for the dynamic services,
+but as Cap'n Proto is also a useful on-disk format, we'll just use that in this guide.
 
+Here's the interface for a `Db` module that loads and saves loggers:
+
+<!-- $MDX include,file=examples/sturdy-refs-4/db.mli -->
 ```ocaml
-module DB : sig
-  include Restorer.LOADER
+open Capnp_rpc_lwt
+open Capnp_rpc_net
 
-  val create : make_sturdy:(Restorer.Id.t -> Uri.t) -> string -> t
-  (** [create ~make_sturdy dir] is a database that persists services in [dir]. *)
+include Restorer.LOADER
 
-  val save_new : t -> label:string -> Restorer.Id.t
-  (** [save_new t ~label] adds a new logger with label [label] to the store and
-      returns its newly-generated ID. *)
-end
+type loader = [`Logger_beacebd78653e9af] Sturdy_ref.t -> label:string -> Restorer.resolution
+(** A function to create a new in-memory logger with the given label and sturdy-ref. *)
+
+val create : make_sturdy:(Restorer.Id.t -> Uri.t) -> string -> t * loader Lwt.u
+(** [create ~make_sturdy dir] is a database that persists services in [dir] and
+    a resolver to let you set the loader (we're not ready to set the loader
+    when we create the database). *)
+
+val save_new : t -> label:string -> Restorer.Id.t
+(** [save_new t ~label] adds a new logger with label [label] to the store and
+    returns its newly-generated ID. *)
 ```
 
 There is a `Capnp_rpc_unix.File_store` module that can persist Cap'n Proto structs to disk.
 First, define a suitable Cap'n Proto data structure to hold the information we need to store.
 In this case, it's just the label:
 
+<!-- $MDX include,file=examples/sturdy-refs-4/store.capnp -->
 ```capnp
+@0x97ed384f584feb4a;
+
 struct SavedLogger {
   label @0 :Text;
 }
@@ -864,141 +1036,141 @@ struct SavedService {
 
 Using Cap'n Proto for this makes it easy to add extra fields or service types later if needed
 (`SavedService.logger` can be upgraded to a union if we decide to add more service types later).
-We can use this with `File_store` to implement `DB`:
+We can use this with `File_store` to implement `Db`:
 
+<!-- $MDX include,file=examples/sturdy-refs-4/db.ml -->
 ```ocaml
-struct
-  module Store = Capnp_rpc_unix.File_store
+open Lwt.Infix
+open Capnp_rpc_lwt
+open Capnp_rpc_net
 
-  type t = {
-    store : Api.Reader.SavedService.struct_t Store.t;
-    make_sturdy : Restorer.Id.t -> Uri.t;
-  }
+module File_store = Capnp_rpc_unix.File_store
+module Store = Store.Make(Capnp.BytesMessage)
 
-  let hash _ = `SHA256
+type loader = [`Logger_beacebd78653e9af] Sturdy_ref.t -> label:string -> Restorer.resolution
 
-  let make_sturdy t = t.make_sturdy
+type t = {
+  store : Store.Reader.SavedService.struct_t File_store.t;
+  loader : loader Lwt.t;
+  make_sturdy : Restorer.Id.t -> Uri.t;
+}
 
-  let load t sr digest =
-    match Store.load t.store ~digest with
-    | None -> Lwt.return Restorer.unknown_service_id
-    | Some saved_service ->
-      let logger = Api.Reader.SavedService.logger_get saved_service in
-      let label = Api.Reader.SavedLogger.label_get logger in
-      let callback msg =
-        Fmt.pr "%s: %S@." label msg
-      in
-      let sr = Sturdy_ref.cast sr in
-      Lwt.return @@ Restorer.grant @@ Callback.local sr callback
+let hash _ = `SHA256
 
-  let save t ~digest label =
-    let open Api.Builder in
-    let service = SavedService.init_root () in
-    let logger = SavedService.logger_init service in
-    SavedLogger.label_set logger label;
-    Store.save t.store ~digest @@ SavedService.to_reader service
+let make_sturdy t = t.make_sturdy
 
-  let save_new t ~label =
-    let id = Restorer.Id.generate () in
-    let digest = Restorer.Id.digest (hash t) id in
-    save t ~digest label;
-    id
+let save t ~digest label =
+  let open Store.Builder in
+  let service = SavedService.init_root () in
+  let logger = SavedService.logger_init service in
+  SavedLogger.label_set logger label;
+  File_store.save t.store ~digest @@ SavedService.to_reader service
 
-  let create ~make_sturdy dir =
-    let store = Store.create dir in
-    {store; make_sturdy}
-end
+let save_new t ~label =
+  let id = Restorer.Id.generate () in
+  let digest = Restorer.Id.digest (hash t) id in
+  save t ~digest label;
+  id
+
+let load t sr digest =
+  match File_store.load t.store ~digest with
+  | None -> Lwt.return Restorer.unknown_service_id
+  | Some saved_service ->
+    let logger = Store.Reader.SavedService.logger_get saved_service in
+    let label = Store.Reader.SavedLogger.label_get logger in
+    let sr = Capnp_rpc_lwt.Sturdy_ref.cast sr in
+    t.loader >|= fun loader ->
+    loader sr ~label
+
+let create ~make_sturdy dir =
+  let loader, set_loader = Lwt.wait () in
+  if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+  let store = File_store.create dir in
+  {store; loader; make_sturdy}, set_loader
 ```
 
 Note: to avoid possible timing attacks, the `load` function is called with the digest of the service ID rather than with the ID itself. This means that even if the load function takes a different amount of time to respond depending on how much of a valid ID the client guessed, the client will only learn the digest (which is of no use to them), not the ID.
 The file store uses the digest as the filename, which avoids needing to check the ID the client gives for special characters, and also means that someone getting a copy of the store (e.g. an old backup) doesn't get the IDs (which would allow them to access the real service).
 
-The main `serve` function then uses `Echo.DB` to create the table:
+The main `start_server` function then uses `Db` to create the table:
 
+<!-- $MDX include,file=examples/sturdy-refs-4/main.ml,part=server -->
 ```ocaml
 let serve config =
-  (* Create the on-disk store *)
-  let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
-  let db = Echo.DB.create ~make_sturdy "/tmp/store" in
-  (* Create the restorer *)
-  let services = Restorer.Table.of_loader (module Echo.DB) db in
-  let restore = Restorer.of_table services in
-  (* Add the fixed services *)
-  let echo_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-  let logger_id = Capnp_rpc_unix.Vat_config.derived_id config "logger" in
-  let logger_sr = Restorer.Table.sturdy_ref services logger_id in
-  let service_logger = Echo.service_logger logger_sr in
-  Restorer.Table.add services echo_id (Echo.local ~service_logger);
-  Restorer.Table.add services logger_id service_logger;
-  (* Run the server *)
   Lwt_main.run begin
-    ...
+    (* Create the on-disk store *)
+    let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+    let db, set_loader = Db.create ~make_sturdy "./store" in
+    (* Create the restorer *)
+    let services = Restorer.Table.of_loader (module Db) db in
+    let restore = Restorer.of_table services in
+    (* Add the root service *)
+    let persist_new ~label =
+      let id = Db.save_new db ~label in
+      Capnp_rpc_net.Restorer.restore restore id
+    in
+    let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
+    let root =
+      let sr = Capnp_rpc_net.Restorer.Table.sturdy_ref services root_id in
+      Logger.local ~persist_new sr "root"
+    in
+    Restorer.Table.add services root_id root;
+    (* Tell the database how to restore saved loggers *)
+    Lwt.wakeup set_loader (fun sr ~label -> Restorer.grant @@ Logger.local ~persist_new sr label);
+    (* Run the server *)
+    Capnp_rpc_unix.serve config ~restore >>= fun _vat ->
+    let uri = Capnp_rpc_unix.Vat_config.sturdy_uri config root_id in
+    Capnp_rpc_unix.Cap_file.save_uri uri "admin.cap" |> or_fail;
+    print_endline "Wrote admin.cap";
+    fst @@ Lwt.wait () (* Wait forever *)
+  end
 ```
 
-Add a method to let clients create new loggers:
+The server implementation of the `sub` method gets the label from the parameters
+and uses `persist_new` to save the new logger to the database:
 
-```capnp
-interface Echo {
-  ping         @0 (msg :Text) -> (reply :Text);
-  heartbeat    @1 (msg :Text, callback :Callback) -> ();
-  getLogger    @2 () -> (callback :Callback);
-  createLogger @3 (label: Text) -> (callback :Callback);
-}
-```
-
-The server implementation of the method gets the label from the parameters,
-adds a saved logger to the database,
-and then "restores" the saved service to a live instance and returns it:
-
+<!-- $MDX include,file=examples/sturdy-refs-4/logger.ml,part=sub-impl -->
 ```ocaml
-    method create_logger_impl params release_params =
-      let open Echo.CreateLogger in
-      let label = Params.label_get params in
-      release_params ();
-      let id = DB.save_new db ~label in
+    method sub_impl params release_param_caps =
+      let open Logger.Sub in
+      let sub_label = Params.label_get params in
+      release_param_caps ();
+      let label = Printf.sprintf "%s/%s" label sub_label in
       Service.return_lwt @@ fun () ->
-      Restorer.restore restore id >|= function
+      persist_new ~label >|= function
       | Error e -> Error (`Capnp (`Exception e))
       | Ok logger ->
         let response, results = Service.Response.create Results.init_pointer in
-        Results.callback_set results (Some logger);
+        Results.logger_set results (Some logger);
         Capability.dec_ref logger;
         Ok response
 ```
 
-You'll need to pass `db` and `restore` to `Echo.local` too to make this work.
+<!-- $MDX dir=examples/sturdy-refs-4,non-deterministic -->
+```sh
+$ dune exec -- ./main.exe serve --capnp-secret-key=server.key --capnp-listen-address unix:/tmp/demo.sock &
+Wrote admin.cap
 
-The client can call `createLogger` and then use `Persistence.save` to get the sturdy ref for it:
+$ dune exec -- ./main.exe log admin.cap "Hello from Admin"
+[server] "root" says "Hello from Admin"
 
-```ocaml
-let run_client service =
-  let my_logger = Echo.create_logger service "Alice" in
-  let uri = Persistence.save_exn my_logger in
-  Echo.Callback.log_exn my_logger "Pipelined call to logger!" >>= fun () ->
-  uri >>= fun uri ->    (* Wait for results from [save] *)
-  Fmt.pr "The new logger's URI is %a.@." Uri.pp_hum uri;
-  Lwt.return_unit
+$ dune exec -- ./main.exe sub admin.cap alice
+Wrote "alice.cap"
+
+$ dune exec -- ./main.exe log alice.cap "Hello from Alice"
+[server] "root/alice" says "Hello from Alice"
+
+$ dune exec -- ./main.exe sub alice.cap bob
+Wrote "bob.cap"
+
+$ dune exec ./main.exe log bob.cap "Hello from Bob"
+[server] "root/alice/bob" says "Hello from Bob"
 ```
 
-Notice the pipelining here.
-The client sends three messages in quick succession: create the logger, get its sturdy ref, and log a message to it.
-The client receives the sturdy ref and prints it in a total of one network round-trip.
-
-Exercise: Implement `Echo.create_logger`. You should find that the new loggers still work after the server is restarted.
+You should find that the loggers now persist even if the service is restarted.
 
 
-### Summary
-
-Congratulations! You now know how to:
-
-- Define Cap'n Proto services and clients, independently of any networking.
-- Pass capability references in method arguments and results.
-- Stretch capabilities over a network link, with encryption, authentication and access control.
-- Configure a vat using command-line arguments.
-- Pipeline messages to avoid network round-trips.
-- Persist services to disk and restore them later.
-
-### Further reading
+## Further reading
 
 * [`capnp_rpc_lwt.mli`](capnp-rpc-lwt/capnp_rpc_lwt.mli) and [`s.ml`](capnp-rpc-lwt/s.ml) describe the OCaml API.
 * [Cap'n Proto schema file format][schema] shows how to build more complex structures, and the "Evolving Your Protocol" section explains how to change the schema without breaking backwards compatibility.
@@ -1083,6 +1255,7 @@ Creating the frontend vat requires passing a restorer, which needs `Frontend`!
 
 The solution here is to construct `Frontend` with a *promise* for the sturdy ref, e.g.
 
+<!-- $MDX skip -->
 ```ocaml
 let run_frontend backend_uri =
   let backend_promise, resolver = Lwt.wait () in
@@ -1101,6 +1274,7 @@ Override the `release` method. It gets called when there are no more references 
 [The Python bindings][pycapnp] provide a good interactive environment.
 For example, start the test service above and leave it running:
 
+<!-- $MDX skip -->
 ```
 $ ./_build/default/main.exe
 Connecting to server at capnp://insecure@127.0.0.1:7000
@@ -1109,6 +1283,7 @@ Connecting to server at capnp://insecure@127.0.0.1:7000
 
 Note that you must run without encryption for this, and use a non-secret ID:
 
+<!-- $MDX skip -->
 ```ocaml
 let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key listen_address in
 let service_id = Restorer.Id.public "" in
@@ -1184,6 +1359,7 @@ Note: `capnp` uses the `stdint` library, which has C stubs and
 
 Here is a suitable `config.ml`:
 
+<!-- $MDX skip -->
 ```ocaml
 open Mirage
 
@@ -1200,6 +1376,7 @@ let () =
 
 This should work as the `unikernel.ml`:
 
+<!-- $MDX skip -->
 ```ocaml
 open Lwt.Infix
 
