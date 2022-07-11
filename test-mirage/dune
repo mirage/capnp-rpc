@@ -1,6 +1,6 @@
 (test
  (name test_mirage)
  (package capnp-rpc-mirage)
- (libraries io-page-unix capnp-rpc-lwt capnp-rpc-mirage alcotest-lwt examples
+ (libraries io-page-unix capnp-rpc-lwt capnp-rpc-mirage alcotest-lwt testlib
    logs.fmt testbed tcpip.ipv4 tcpip.ipv6 tcpip.stack-direct mirage-vnetif ethernet
    arp.mirage tcpip.tcp tcpip.icmpv4 mirage-crypto-rng.lwt))
