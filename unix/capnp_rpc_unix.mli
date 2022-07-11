@@ -92,6 +92,9 @@ module Cap_file : sig
   val save_service : Vat.t -> Capnp_rpc_net.Restorer.Id.t -> string ->
     (unit, [> `Msg of string]) result
   (** [save_service vat id path] saves [vat/id] to [path], with a mode of [0o600]. *)
+
+  val save_uri : Uri.t -> string -> (unit, [> `Msg of string]) result
+  (** [save_url uri path] saves [uri] to [path], with a mode of [0o600]. *)
 end
 
 val sturdy_uri : Uri.t Cmdliner.Arg.conv
