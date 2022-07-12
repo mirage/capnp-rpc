@@ -1,14 +1,10 @@
-(library
- (name examples)
- (libraries astring capnp-rpc-lwt capnp-rpc-net)
- (flags :standard -w -53-55))
-
-(rule
- (targets test_api.ml test_api.mli)
- (deps test_api.capnp)
- (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
-
-(rule
- (targets calculator.ml calculator.mli)
- (deps calculator.capnp)
- (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
+(data_only_dirs
+  v1
+  v2
+  v3
+  v4
+  pipelining
+  sturdy-refs
+  sturdy-refs-2
+  sturdy-refs-3
+  sturdy-refs-4)

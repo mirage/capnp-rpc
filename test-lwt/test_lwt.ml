@@ -1,5 +1,5 @@
 open Astring
-open Examples
+open Testlib
 open Lwt.Infix
 open Capnp_rpc_lwt
 open Capnp_rpc_net
@@ -653,8 +653,8 @@ let test_file_store _switch =
   let module S = Capnp_rpc_unix.File_store in
   let s = S.create tmpdir in
   Alcotest.(check (option reject)) "Missing file" None @@ S.load s ~digest:"missing";
-  let module Builder = Examples.Api.Builder.Simple in
-  let module Reader = Examples.Api.Reader.Simple in
+  let module Builder = Testlib.Api.Builder.Simple in
+  let module Reader = Testlib.Api.Reader.Simple in
   let data =
     let b = Builder.init_root () in
     Builder.text_set b "Test";

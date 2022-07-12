@@ -1,0 +1,8 @@
+(mdx
+ (package capnp-rpc-unix)
+ (files README.md)
+ (preludes examples/prelude.ml)
+ (enabled_if (<> %{os_type} "Win32"))
+ (deps
+  (source_tree examples)
+  (package capnp-rpc-unix)))

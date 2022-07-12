@@ -1,7 +1,7 @@
 open Lwt.Infix
 
 module Vat = Capnp_rpc_unix.Vat
-module Calc = Examples.Calc
+module Calc = Testlib.Calc
 
 (* Verbose logging *)
 
@@ -32,7 +32,7 @@ let reporter =
 let serve vat_config =
   Lwt_main.run begin
     let service_id = Capnp_rpc_net.Restorer.Id.public "" in
-    let restore = Capnp_rpc_net.Restorer.single service_id Examples.Calc.local in
+    let restore = Capnp_rpc_net.Restorer.single service_id Calc.local in
     Capnp_rpc_unix.serve vat_config ~restore >>= fun vat ->
     let sr = Vat.sturdy_uri vat service_id in
     Fmt.pr "Waiting for incoming connections at:@.%a@." Uri.pp_hum sr;

@@ -1,7 +1,7 @@
 open Lwt.Infix
 open Capnp_rpc_lwt
 open Capnp_rpc_net
-open Examples
+open Testlib
 
 module Time = struct
   let sleep_ns ns = Lwt_unix.sleep (Duration.to_f ns)

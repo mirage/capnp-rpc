@@ -3,7 +3,7 @@
 
 open Lwt.Infix
 
-module Calc = Examples.Calc
+module Calc = Testlib.Calc
 
 let service_name = Capnp_rpc_net.Restorer.Id.public "my-service"
 (* The name of the service that the child offers and the parent requests.

@@ -1,0 +1,9 @@
+(executables
+ (names client server)
+ (libraries lwt.unix capnp-rpc-lwt logs.fmt capnp-rpc-unix)
+ (flags (:standard -w -53-55)))
+
+(rule
+ (targets echo_api.ml echo_api.mli)
+ (deps    echo_api.capnp)
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
