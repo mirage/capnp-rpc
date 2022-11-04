@@ -284,8 +284,9 @@ The service is now usable:
 
 <!-- $MDX skip -->
 ```bash
-$ opam depext -i capnp-rpc-lwt
+$ opam install capnp-rpc-lwt
 ```
+(note: or `$ opam depext -i capnp-rpc-lwt` for opam < 2.1)
 
 <!-- $MDX dir=examples/v1 -->
 ```bash
