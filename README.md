@@ -87,6 +87,10 @@ Until that is implemented, Carol can ask Bob for a persistent reference (sturdy 
 
 To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
 
+    opam install capnp-rpc-unix
+    
+(note: if you are using opam < 2.1, direct install is not possible, so do the following):
+
     opam depext -i capnp-rpc-unix
 
 ## Structure of the library
@@ -280,8 +284,9 @@ The service is now usable:
 
 <!-- $MDX skip -->
 ```bash
-$ opam depext -i capnp-rpc-lwt
+$ opam install capnp-rpc-lwt
 ```
+(note: or `$ opam depext -i capnp-rpc-lwt` for opam < 2.1)
 
 <!-- $MDX dir=examples/v1 -->
 ```bash
