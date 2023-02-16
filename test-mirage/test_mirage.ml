@@ -75,7 +75,7 @@ let create_iface network cidr =
   let dns = Mirage.Network.Dns.create stack in
   Mirage.network ~dns stack
 
-let () = Mirage_crypto_rng_lwt.initialize ()
+let () = Mirage_crypto_rng_lwt.initialize (module Mirage_crypto_rng.Fortuna)
 let server_key = Auth.Secret_key.generate ()
 let client_key = Auth.Secret_key.generate ()
 
