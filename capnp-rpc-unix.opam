@@ -23,7 +23,7 @@ depends: [
   "alcotest" {>= "1.0.1" & with-test}
   "alcotest-lwt" { >= "1.0.1" & with-test}
   "mirage-crypto-rng-lwt" {>= "0.11.0"}
-  "mdx" {with-test}
+  "mdx" {>= "2.2.1" & with-test}
   "lwt"
   "asetmap" {with-test}
 ]
