@@ -28,7 +28,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: ocaml/setup-ocaml@v2
         with:
-          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          ocaml-compiler: ocaml-variants.4.14.0+mingw64c,ocaml-config.2
           opam-repositories: |
             default: https://github.com/fdopen/opam-repository-mingw.git#opam2
             opam: https://github.com/ocaml/opam-repository.git
