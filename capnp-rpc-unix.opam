@@ -27,6 +27,9 @@ depends: [
   "lwt" {>= "5.6.1"}
   "asetmap" {with-test}
 ]
+conflicts: [
+  "jbuilder" {with-test}
+]
 build: [
   ["dune" "build" "-p" name "-j" jobs]
   ["dune" "runtest" "-p" name "-j" jobs] {with-test}
