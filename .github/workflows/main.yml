@@ -25,6 +25,16 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Use OCaml ${{ matrix.ocaml-compiler }}
+        if: runner.os == 'Windows'
+        uses: ocaml/setup-ocaml@v2
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          opam-repositories: |
+            default: https://github.com/fdopen/opam-repository-mingw.git#opam2
+            opam: https://github.com/ocaml/opam-repository.git
+
+      - name: Use OCaml ${{ matrix.ocaml-compiler }}
+        if: runner.os != 'Windows'
         uses: ocaml/setup-ocaml@v2
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
