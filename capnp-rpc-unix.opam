@@ -28,7 +28,7 @@ depends: [
   "asetmap" {with-test}
 ]
 conflicts: [
-  "jbuilder" {with-test}
+  "jbuilder"
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]
