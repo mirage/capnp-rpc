@@ -43,7 +43,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         env:
-          CAPNP_VERSION: 0.10.3
+          CAPNP_VERSION: 0.10.4
         run: |
           curl -LO https://capnproto.org/capnproto-c++-win32-$CAPNP_VERSION.zip && \
           unzip -j capnproto-c++-win32-$CAPNP_VERSION.zip capnproto-tools-win32-$CAPNP_VERSION/capnp.exe -d /usr/bin
