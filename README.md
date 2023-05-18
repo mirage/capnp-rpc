@@ -1536,7 +1536,7 @@ In future, more properties should be tested (e.g. forked references, that messag
 We should also test with some malicious vats (that don't follow the protocol correctly).
 
 [schema]: https://capnproto.org/language.html
-[capnp-ocaml]: https://github.com/pelzlpj/capnp-ocaml
+[capnp-ocaml]: https://github.com/capnproto/capnp-ocaml
 [Cap'n Proto]: https://capnproto.org/
 [Cap'n Proto RPC Protocol]: https://capnproto.org/rpc.html
 [E-Order]: http://erights.org/elib/concurrency/partial-order.html
@@ -1544,7 +1544,7 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [pycapnp]: http://jparyani.github.io/pycapnp/
 [Persistence API]: https://github.com/capnproto/capnproto/blob/master/c%2B%2B/src/capnp/persistent.capnp
 [Mirage]: https://mirage.io/
-[ocaml-ci]: https://github.com/ocaml-ci/ocaml-ci
+[ocaml-ci]: https://github.com/ocurrent/ocaml-ci
 [api]: https://mirage.github.io/capnp-rpc/
 [NETWORK]: https://mirage.github.io/capnp-rpc/capnp-rpc-net/Capnp_rpc_net/S/module-type-NETWORK/index.html
 [calc_direct.ml]: ./test-bin/calc_direct.ml
