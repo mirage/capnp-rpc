@@ -49,6 +49,17 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
       );
     t
 
+  (* If the vat switch has been turned off by the time we finish accepting a connection
+     then cancel the connection now, because if the vat switch was turned off before
+     then we might have missed it. *)
+  let maybe_disconnect t conn =
+    match t.switch with
+    | Some vat_switch when not (Lwt_switch.is_on vat_switch) ->
+      Lwt.pause () >>= fun () ->
+      CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off")
+    | _ ->
+      Lwt.return_unit
+
   let add_tls_connection t ~switch endpoint =
     let conn = CapTP.connect ~tags:t.tags ~restore:t.restore endpoint in
     let peer_id = Endpoint.peer_id endpoint in
@@ -62,6 +73,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
         CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off") >|= fun () ->
         Lwt_condition.broadcast t.connection_removed ()
       );
+    maybe_disconnect t conn >|= fun () ->
     conn
 
   let add_connection t ~switch ~(mode:[`Accept|`Connect]) endpoint =
@@ -75,9 +87,10 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
           CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off") >|= fun () ->
           Lwt_condition.broadcast t.connection_removed ()
         );
+      maybe_disconnect t conn >>= fun () ->
       Lwt.return conn
     ) else match ID_map.find peer_id t.connections with
-      | None -> Lwt.return @@ add_tls_connection t ~switch endpoint
+      | None -> add_tls_connection t ~switch endpoint
       | Some existing ->
         Log.info (fun f -> f ~tags:t.tags "Trying to add a connection, but we already have one for this vat");
         (* This can happen if two vats call each other at exactly the same time.
@@ -127,7 +140,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
         let my_id = Auth.Secret_key.digest ~hash (Lazy.force t.secret_key) in
         let keep_new = (my_id > peer_id) = (mode = `Connect) in
         if keep_new then (
-          let conn = add_tls_connection t ~switch endpoint in
+          add_tls_connection t ~switch endpoint >>= fun conn ->
           let reason = Capnp_rpc.Exception.v "Closing duplicate connection" in
           CapTP.disconnect existing reason >|= fun () ->
           conn

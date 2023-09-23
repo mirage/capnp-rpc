@@ -527,8 +527,9 @@ let test_parallel_fails switch =
   service >>= fun service ->
   service2 >>= fun service2 ->
   Lwt_switch.turn_off cs.server_switch >>= fun () ->
-  Capability.await_settled_exn service >>= fun () ->
-  Capability.await_settled_exn service2 >>= fun () ->
+  let p, r = Lwt.wait () in
+  Capability.when_broken (Lwt.wakeup r) service2;
+  p >>= fun _ ->
   Alcotest.check cap "Shared failure" service service2;
   Capability.dec_ref service;
   Capability.dec_ref service2;
