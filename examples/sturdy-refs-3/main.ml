@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc_lwt
 
 module Restorer = Capnp_rpc_net.Restorer
@@ -14,10 +14,11 @@ let or_fail = function
   | Ok x -> x
   | Error (`Msg m) -> failwith m
 
-let start_server () =
+let start_server ~sw net =
   let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
+  Switch.on_release sw (fun () -> Restorer.Table.clear services);
   let restore = Restorer.of_table services in
   (* $MDX part-begin=root *)
   let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
@@ -27,28 +28,29 @@ let start_server () =
   in
   (* $MDX part-end *)
   Restorer.Table.add services root_id root;
-  Capnp_rpc_unix.serve config ~restore >|= fun _vat ->
+  let _vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
   Capnp_rpc_unix.Vat_config.sturdy_uri config root_id
 
-let run_client cap_file =
-  let vat = Capnp_rpc_unix.client_only_vat () in
+let run_client ~sw ~net cap_file =
+  let vat = Capnp_rpc_unix.client_only_vat ~sw net in
   let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
   Sturdy_ref.with_cap_exn sr @@ fun for_alice ->
   Logger.log for_alice "Message from Alice"
 
 let () =
-  Lwt_main.run begin
-    start_server () >>= fun root_uri ->
-    let vat = Capnp_rpc_unix.client_only_vat () in
-    let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
-    Sturdy_ref.with_cap_exn root_sr @@ fun root ->
-    Logger.log root "Message from Admin" >>= fun () ->
-    (* $MDX part-begin=save *)
-    (* The admin creates a logger for Alice and saves it: *)
-    let for_alice = Logger.sub root "alice" in
-    Persistence.save_exn for_alice >>= fun uri ->
-    Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail;
-    (* Alice uses it: *)
-    run_client "alice.cap"
-    (* $MDX part-end *)
-  end
+  Eio_main.run @@ fun env ->
+  Switch.run @@ fun sw ->
+  let net = env#net in
+  let root_uri = start_server ~sw net in
+  let vat = Capnp_rpc_unix.client_only_vat ~sw net in
+  let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
+  Sturdy_ref.with_cap_exn root_sr @@ fun root ->
+  Logger.log root "Message from Admin";
+  (* $MDX part-begin=save *)
+  (* The admin creates a logger for Alice and saves it: *)
+  let uri = Capability.with_ref (Logger.sub root "alice") Persistence.save_exn in
+  Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail;
+  (* Alice uses it: *)
+  run_client ~sw ~net "alice.cap";
+  raise Exit
+  (* $MDX part-end *)

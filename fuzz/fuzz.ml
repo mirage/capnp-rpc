@@ -214,9 +214,11 @@ module Endpoint = struct
   let check t =
     Conn.check t.conn
 
+  let fork f = f ()
+
   let create ~restore ~tags ~dump ~local_id ~remote_id xmit_queue recv_queue =
     let queue_send x = Queue.add x xmit_queue in
-    let conn = Conn.create ~restore ~tags ~queue_send in
+    let conn = Conn.create ~restore ~tags ~queue_send ~fork in
     {
       local_id;
       remote_id;

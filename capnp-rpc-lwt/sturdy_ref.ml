@@ -1,13 +1,11 @@
-open Lwt.Infix
-
 class type [+'a] t = Capnp_core.sturdy_ref
 
 let connect t = t#connect
 
 let connect_exn t =
-  connect t >>= function
-  | Ok x -> Lwt.return x
-  | Error e -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Exception.pp e)
+  match connect t with
+  | Ok x -> x
+  | Error e -> failwith (Fmt.to_to_string Capnp_rpc.Exception.pp e)
 
 let reader fn s =
   fn s |> Schema.ReaderOps.string_of_pointer |> Uri.of_string
@@ -18,10 +16,10 @@ let builder fn (s : 'a Capnp.BytesMessage.StructStorage.builder_t) (sr : 'a t) =
 let cast t = t
 
 let with_cap t f =
-  connect t >>= function
+  match connect t with
   | Ok x -> Capability.with_ref x f
-  | Error e -> Lwt_result.fail (`Capnp e)
+  | Error e -> Error (`Capnp e)
 
 let with_cap_exn t f =
-  connect_exn t >>= fun x ->
+  let x = connect_exn t in
   Capability.with_ref x f

@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc_lwt
 
 type t = Api.Service.Registry.t Capability.t
@@ -17,12 +17,12 @@ let version_service =
       Service.return resp
   end
 
-let local () =
+let local ~sw () =
   let module Registry = Api.Service.Registry in
   Registry.local @@ object
     inherit Registry.service
 
-    val mutable blocked = Lwt.wait ()
+    val mutable blocked = Promise.create ()
     val mutable echo_service = Echo.local ()
 
     method! release = Capability.dec_ref echo_service
@@ -45,9 +45,8 @@ let local () =
       let open Registry.EchoService in
       let resp, results = Service.Response.create Results.init_pointer in
       Results.service_set results (Some echo_service);
-      Service.return_lwt (fun () ->
-        fst blocked >|= fun () -> Ok resp
-      )
+      Promise.await (fst blocked);
+      Service.return resp
 
     method echo_service_promise_impl _params release_params =
       release_params ();
@@ -56,8 +55,8 @@ let local () =
       let promise, resolver = Capability.promise () in
       Results.service_set results (Some promise);
       Capability.dec_ref promise;
-      Lwt.async (fun () ->
-          fst blocked >|= fun () ->
+      Fiber.fork ~sw (fun () ->
+          Promise.await (fst blocked);
           Capability.inc_ref echo_service;
           Capability.resolve_ok resolver echo_service
         );
@@ -65,8 +64,8 @@ let local () =
 
     method unblock_impl _ release_params =
       release_params ();
-      Lwt.wakeup (snd blocked) ();
-      blocked <- Lwt.wait ();
+      Promise.resolve (snd blocked) ();
+      blocked <- Promise.create ();
       Service.return_empty ()
 
     method complex_impl _ release_params =
@@ -131,5 +130,5 @@ module Version = struct
   let read t =
     let open Version.Read in
     let req = Capability.Request.create_no_args () in
-    Capability.call_for_value_exn t method_id req >|= Results.version_get
+    Capability.call_for_value_exn t method_id req |> Results.version_get
 end

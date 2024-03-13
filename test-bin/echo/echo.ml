@@ -1,6 +1,5 @@
 module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
 
-open Lwt.Infix
 open Capnp_rpc_lwt
 
 (*-- Server ----------------------------------------*)
@@ -29,4 +28,4 @@ let ping t msg =
   let message_size = 200 + String.length msg in  (* (rough estimate) *)
   let request, params = Capability.Request.create ~message_size Params.init_pointer in
   Params.msg_set params msg;
-  Capability.call_for_value_exn t method_id request >|= Results.reply_get
+  Capability.call_for_value_exn t method_id request |> Results.reply_get

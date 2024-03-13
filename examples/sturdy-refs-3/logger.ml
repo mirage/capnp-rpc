@@ -23,11 +23,13 @@ let rec local ~services sr label =
       let id = Capnp_rpc_net.Restorer.Id.generate () in
       let sr = Capnp_rpc_net.Restorer.Table.sturdy_ref services id in
       let sub = local ~services sr (Printf.sprintf "%s/%s" label sub_label) in
-      Capnp_rpc_net.Restorer.Table.add services id sub;
       let response, results = Service.Response.create Results.init_pointer in
       Results.logger_set results (Some sub);
-      Capability.dec_ref sub;
+      Capnp_rpc_net.Restorer.Table.add services id sub; (* Takes ownership of [sub] *)
       Service.return response
+
+    method! pp f =
+      Fmt.pf f "Logger(%s)" label
   end
 
 module Logger = Api.Client.Logger

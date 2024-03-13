@@ -1,5 +1,5 @@
 (test
  (package capnp-rpc-unix)
  (name test_lwt)
- (libraries capnp-rpc-lwt capnp-rpc-unix alcotest-lwt testlib logs.fmt
-   testbed))
+ (libraries capnp-rpc-lwt capnp-rpc-unix testlib logs.fmt
+   testbed eio_main))

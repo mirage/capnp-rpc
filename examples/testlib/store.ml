@@ -1,4 +1,3 @@
-open Lwt.Infix
 open Capnp_rpc_lwt
 open Capnp_rpc_net
 
@@ -57,7 +56,7 @@ module File = struct
   let get t =
     let open Api.Client.File.Get in
     let request = Capability.Request.create_no_args () in
-    Capability.call_for_value_exn t method_id request >|= Results.data_get
+    Capability.call_for_value_exn t method_id request |> Results.data_get
 
   let local (db:DB.t) sr digest =
     let module File = Api.Service.File in
@@ -92,14 +91,14 @@ module File = struct
     let load t sr digest =
       if DB.mem t.db digest then (
         let sr = Sturdy_ref.cast sr in
-        Lwt.return @@ Restorer.grant @@ local t.db sr digest
+        Restorer.grant @@ local t.db sr digest
       ) else (
-        Lwt.return Restorer.unknown_service_id
+        Restorer.unknown_service_id
       )
   end
 
-  let table ~make_sturdy db =
-    Restorer.Table.of_loader (module Loader) {Loader.db; make_sturdy}
+  let table ~sw ~make_sturdy db =
+    Restorer.Table.of_loader ~sw (module Loader) {Loader.db; make_sturdy}
 end
 
 type t = Api.Client.Store.t Capability.t
@@ -121,12 +120,11 @@ let local ~restore db =
       let open Store.CreateFile in
       release_params ();
       let id = DB.add db in
-      Service.return_lwt @@ fun () ->
-      Restorer.restore restore id >|= function
-      | Error e -> Error (`Capnp (`Exception e))
+      match Restorer.restore restore id with
+      | Error e -> Service.error (`Exception e)
       | Ok x ->
         let resp, results = Service.Response.create Results.init_pointer in
         Results.file_set results (Some x);
         Capability.dec_ref x;
-        Ok resp
+        Service.return resp
   end

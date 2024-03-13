@@ -1,9 +1,7 @@
-open Lwt.Infix
-
 module Api = Persistent.Make(Capnp.BytesMessage)
 
 class type ['a] persistent = object
-  method save : ('a Sturdy_ref.t, Capnp_rpc.Exception.t) result Lwt.t
+  method save : ('a Sturdy_ref.t, Capnp_rpc.Exception.t) result
 end
 
 let with_persistence
@@ -16,13 +14,12 @@ let with_persistence
     if method_id = Capnp.RPC.MethodID.method_id Api.Client.Persistent.Save.method_id then (
       let open Api.Service.Persistent.Save in
       release_params ();
-      Service.return_lwt @@ fun () ->
-      persistent#save >|= function
-      | Error e -> Error (`Capnp (`Exception e))
+      match persistent#save with
+      | Error e -> Service.error (`Exception e)
       | Ok sr ->
         let resp, results = Service.Response.create Results.init_pointer in
         Sturdy_ref.builder Results.sturdy_ref_get results sr;
-        Ok resp
+        Service.return resp
     ) else (
       release_params ();
       Service.fail ~ty:`Unimplemented "Unknown persistence method %d" method_id
@@ -39,18 +36,18 @@ let with_persistence
 
 let with_sturdy_ref sr local impl =
   let persistent = object
-    method save = Lwt.return (Ok sr)
+    method save = Ok sr
   end in
   with_persistence persistent local impl
 
 let save cap =
   let open Api.Client.Persistent.Save in
   let request = Capability.Request.create_no_args () in
-  Capability.call_for_value cap method_id request >|= function
+  match Capability.call_for_value cap method_id request with
   | Error _ as e -> e
   | Ok response -> Ok (Sturdy_ref.reader Results.sturdy_ref_get response)
 
 let save_exn cap =
-  save cap >>= function
-  | Error (`Capnp e) -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Error.pp e)
-  | Ok x -> Lwt.return x
+  match save cap with
+  | Error (`Capnp e) -> failwith (Fmt.to_to_string Capnp_rpc.Error.pp e)
+  | Ok x -> x

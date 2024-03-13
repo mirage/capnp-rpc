@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc_lwt
 
 type t = Api.Service.Echo.t Capability.t
@@ -10,7 +10,7 @@ let local () =
   Echo.local @@ object
     inherit Echo.service
 
-    val mutable blocked = Lwt.wait ()
+    val mutable blocked = Promise.create ()
     val mutable count = 0
 
     val id = Capnp_rpc.Debug.OID.next ()
@@ -25,16 +25,15 @@ let local () =
       Results.reply_set results (Fmt.str "got:%d:%s" count msg);
       count <- count + 1;
       if Params.slow_get params then (
-        Service.return_lwt (fun () ->
-          fst blocked >|= fun () -> Ok resp
-        )
+        Promise.await (fst blocked);
+        Service.return resp
       )
       else Service.return resp
 
     method unblock_impl _ release_params =
       release_params ();
-      Lwt.wakeup (snd blocked) ();
-      blocked <- Lwt.wait ();
+      Promise.resolve (snd blocked) ();
+      blocked <- Promise.create ();
       Service.return_empty ()
   end
 
@@ -45,14 +44,14 @@ let ping t ?(slow=false) msg =
   let req, p = Capability.Request.create Params.init_pointer in
   Params.slow_set p slow;
   Params.msg_set p msg;
-  Capability.call_for_value_exn t method_id req >|= Results.reply_get
+  Capability.call_for_value_exn t method_id req |> Results.reply_get
 
 let ping_result t ?(slow=false) msg =
   let open Echo.Ping in
   let req, p = Capability.Request.create Params.init_pointer in
   Params.slow_set p slow;
   Params.msg_set p msg;
-  Capability.call_for_value t method_id req >|= function
+  match Capability.call_for_value t method_id req with
   | Ok x -> Ok (Results.reply_get x)
   | Error _ as e -> e
 

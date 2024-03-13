@@ -15,13 +15,13 @@ depends: [
   "conf-capnproto" {build}
   "capnp" {>= "3.4.0"}
   "capnp-rpc" {= version}
-  "lwt"
   "astring"
   "fmt" {>= "0.8.7"}
   "logs"
   "asetmap"
   "uri" {>= "1.6.0"}
   "dune" {>= "3.0"}
+  "eio" {>= "0.15"}
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

@@ -1,5 +1,4 @@
 open Capnp_core
-open Lwt.Infix
 
 module Log = Capnp_rpc.Debug.Log
 
@@ -61,27 +60,6 @@ let return resp =
 let return_empty () =
   return @@ Response.create_empty ()
 
-(* A convenient way to implement a simple blocking local function, where
-   pipelining is not supported (messages sent to the result promise will be
-   queued up at this host until it returns). *)
-let return_lwt fn =
-  let result, resolver = Local_struct_promise.make () in
-  Lwt.async (fun () ->
-      Lwt.catch (fun () ->
-          fn () >|= function
-          | Ok resp      -> Core_types.resolve_ok resolver @@ Response.finish resp;
-          | Error (`Capnp e) -> Core_types.resolve_payload resolver (Error e)
-        )
-        (fun ex ->
-           Log.warn (fun f -> f "Uncaught exception: %a" Fmt.exn ex);
-           Core_types.resolve_exn resolver @@ Capnp_rpc.Exception.v "Internal error";
-           Lwt.return_unit
-        );
-    );
-  result
-
 let fail = Core_types.fail
 
-let fail_lwt ?ty fmt =
-  fmt |> Fmt.kstr @@ fun msg ->
-  Lwt_result.fail (`Capnp (`Exception (Capnp_rpc.Exception.v ?ty msg)))
+let error = Core_types.broken_struct

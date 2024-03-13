@@ -81,13 +81,15 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
         | _ -> k @@ Error (Capnp_rpc.Exception.v "Only a main interface is available")
       )
 
+  let fork fn = fn ()
+
   let create ?bootstrap ~tags
     (xmit_queue:[EP.Out.t | `Unimplemented of EP.In.t] Queue.t)
     (recv_queue:[EP.In.t | `Unimplemented of EP.Out.t] Queue.t) =
     let queue_send x = Queue.add (x :> [EP.Out.t | `Unimplemented of EP.In.t]) xmit_queue in
     let bootstrap = (bootstrap :> EP.Core_types.cap option) in
     let restore = restore_single bootstrap in
-    let conn = Conn.create ?restore ~tags ~queue_send in
+    let conn = Conn.create ?restore ~tags ~queue_send ~fork in
     {
       conn;
       recv_queue;

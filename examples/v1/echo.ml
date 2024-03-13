@@ -1,7 +1,6 @@
 (* $MDX part-begin=server *)
 module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
 
-open Lwt.Infix
 open Capnp_rpc_lwt
 
 let local =
@@ -26,5 +25,5 @@ let ping t msg =
   let open Echo.Ping in
   let request, params = Capability.Request.create Params.init_pointer in
   Params.msg_set params msg;
-  Capability.call_for_value_exn t method_id request >|= Results.reply_get
+  Capability.call_for_value_exn t method_id request |> Results.reply_get
 (* $MDX part-end *)
