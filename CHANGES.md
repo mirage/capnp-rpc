@@ -64,7 +64,7 @@ API changes:
 
 Performance and bug fixes:
 
-- Add buffering of outgoing messages (@talex5 #287).  
+- Add buffering of outgoing messages (@talex5 #287 #303).  
   Sending each message in its own TCP packet isn't very efficient, and also interacts very badly with Nagle's algorithm.
   See <https://roscidus.com/blog/blog/2024/07/22/performance/> for details.
 
