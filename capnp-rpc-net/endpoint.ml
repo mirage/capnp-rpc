@@ -58,7 +58,6 @@ let rec recv t =
       Capnp.Codecs.FramedStream.add_fragment t.decoder (Cstruct.to_string buf ~len:got);
       recv t
     | exception End_of_file ->
-      Log.info (fun f -> f "Connection closed");
       Error `Closed
     | exception (Eio.Io (Eio.Net.E Connection_reset _, _) as ex) ->
       Log.info (fun f -> f "%a" Eio.Exn.pp ex);
