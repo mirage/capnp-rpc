@@ -1,33 +1,5 @@
 open Eio.Std
 
-module Metrics = struct
-  open Prometheus
-
-  let namespace = "capnp"
-
-  let subsystem = "net"
-
-  let connections =
-    let help = "Number of live capnp-rpc connections" in
-    Gauge.v ~help ~namespace ~subsystem "connections"
-
-  let messages_inbound_received_total =
-    let help = "Total number of messages received" in
-    Counter.v ~help ~namespace ~subsystem "messages_inbound_received_total"
-
-  let messages_outbound_enqueued_total =
-    let help = "Total number of messages enqueued to be transmitted" in
-    Counter.v ~help ~namespace ~subsystem "messages_outbound_enqueued_total"
-
-  let messages_outbound_sent_total =
-    let help = "Total number of messages transmitted" in
-    Counter.v ~help ~namespace ~subsystem "messages_outbound_sent_total"
-
-  let messages_outbound_dropped_total =
-    let help = "Total number of messages lost due to disconnections" in
-    Counter.v ~help ~namespace ~subsystem "messages_outbound_dropped_total"
-end
-
 module Log = Capnp_rpc.Debug.Log
 
 module Builder = Capnp_rpc.Private.Schema.Builder
@@ -42,10 +14,8 @@ module Make (Network : S.NETWORK) = struct
   module Serialise = Serialise.Make(Endpoint_types)
 
   type t = {
-    sw : Switch.t;
     endpoint : Endpoint.t;
     conn : Conn.t;
-    xmit_queue : Capnp.Message.rw Capnp.BytesMessage.Message.t Queue.t;
     mutable disconnecting : bool;
   }
 
@@ -60,94 +30,49 @@ module Make (Network : S.NETWORK) = struct
 
   let tags t = Conn.tags t.conn
 
-  let drop_queue q =
-    Prometheus.Counter.inc Metrics.messages_outbound_dropped_total (float_of_int (Queue.length q));
-    Queue.clear q
-
-  (* [flush ~xmit_queue endpoint] writes each message in the queue until it is empty.
-     Invariant:
-       Whenever Eio blocks or switches threads, a flush thread is running iff the
-       queue is non-empty. *)
-  let rec flush ~xmit_queue endpoint =
-    (* We keep the item on the queue until it is transmitted, as the queue state
-       tells us whether there is a [flush] currently running. *)
-    let next = Queue.peek xmit_queue in
-    match Endpoint.send endpoint next with
-    | Error `Closed ->
-      Endpoint.disconnect endpoint;      (* We'll read a close soon *)
-      drop_queue xmit_queue
-    | Error (`Msg msg) ->
-      Log.warn (fun f -> f "Error sending messages: %s (will shutdown connection)" msg);
-      Endpoint.disconnect endpoint;
-      drop_queue xmit_queue
-    | Ok () ->
-      Prometheus.Counter.inc_one Metrics.messages_outbound_sent_total;
-      ignore (Queue.pop xmit_queue);
-      if not (Queue.is_empty xmit_queue) then
-        flush ~xmit_queue endpoint
-      (* else queue is empty and flush thread is done *)
-    | exception ex ->
-      drop_queue xmit_queue;
-      raise ex
-
-  (* Enqueue [message] in [xmit_queue] and ensure the flush thread is running. *)
-  let queue_send ~sw ~xmit_queue endpoint message =
-    Log.debug (fun f ->
-        let module M = Capnp_rpc.Private.Schema.MessageWrapper.Message in
-        f "queue_send: %d/%d allocated bytes in %d segs"
-                  (M.total_size message)
-                  (M.total_alloc_size message)
-                  (M.num_segments message));
-    let was_idle = Queue.is_empty xmit_queue in
-    Queue.add message xmit_queue;
-    Prometheus.Counter.inc_one Metrics.messages_outbound_enqueued_total;
-    if was_idle then Eio.Fiber.fork ~sw (fun () -> flush ~xmit_queue endpoint)
-
   let return_not_implemented t x =
     Log.debug (fun f -> f ~tags:(tags t) "Returning Unimplemented");
     let open Builder in
     let m = Message.init_root () in
     let _ : Builder.Message.t = Message.unimplemented_set_reader m x in
-    queue_send ~sw:t.sw ~xmit_queue:t.xmit_queue t.endpoint (Message.to_message m)
+    Endpoint.send t.endpoint (Message.to_message m)
 
-  let listen t =
-    let rec loop () =
-      match Endpoint.recv t.endpoint with
-      | Error e -> e
-      | Ok msg ->
-        let open Reader.Message in
-        let msg = of_message msg in
-        Prometheus.Counter.inc_one Metrics.messages_inbound_received_total;
-        match Parse.message msg with
-        | #Endpoint_types.In.t as msg ->
-          Log.debug (fun f ->
-              let tags = Endpoint_types.In.with_qid_tag (Conn.tags t.conn) msg in
-              f ~tags "<- %a" (Endpoint_types.In.pp_recv pp_msg) msg);
-          begin match msg with
-            | `Abort _ ->
-              t.disconnecting <- true;
-              Conn.handle_msg t.conn msg;
-              Endpoint.disconnect t.endpoint;
-              `Aborted
-            | _ ->
-              Conn.handle_msg t.conn msg;
-              loop ()
-          end
-        | `Unimplemented x as msg ->
-          Log.info (fun f ->
-              let tags = Endpoint_types.Out.with_qid_tag (Conn.tags t.conn) x in
-              f ~tags "<- Unimplemented(%a)" (Endpoint_types.Out.pp_recv pp_msg) x);
-          Conn.handle_msg t.conn msg;
-          loop ()
-        | `Not_implemented ->
-          Log.info (fun f -> f "<- unsupported message type");
-          return_not_implemented t msg;
-          loop ()
-    in
-    loop ()
+  let rec listen t =
+    match Endpoint.recv ~tags:(tags t) t.endpoint with
+    | Error e -> e
+    | Ok msg ->
+      let open Reader.Message in
+      let msg = of_message msg in
+      match Parse.message msg with
+      | #Endpoint_types.In.t as msg ->
+        Log.debug (fun f ->
+            let tags = Endpoint_types.In.with_qid_tag (Conn.tags t.conn) msg in
+            f ~tags "<- %a" (Endpoint_types.In.pp_recv pp_msg) msg);
+        begin match msg with
+          | `Abort _ ->
+            t.disconnecting <- true;
+            Conn.handle_msg t.conn msg;
+            Endpoint.disconnect t.endpoint;
+            Conn.disconnect t.conn (Capnp_rpc_proto.Exception.v "Received Abort from peer");
+            `Aborted
+          | _ ->
+            Conn.handle_msg t.conn msg;
+            listen t
+        end
+      | `Unimplemented x as msg ->
+        Log.info (fun f ->
+            let tags = Endpoint_types.Out.with_qid_tag (Conn.tags t.conn) x in
+            f ~tags "<- Unimplemented(%a)" (Endpoint_types.Out.pp_recv pp_msg) x);
+        Conn.handle_msg t.conn msg;
+        listen t
+      | `Not_implemented ->
+        Log.info (fun f -> f "<- unsupported message type");
+        return_not_implemented t msg;
+        listen t
 
   let send_abort t ex =
-    queue_send ~sw:t.sw ~xmit_queue:t.xmit_queue t.endpoint (Serialise.message (`Abort ex))
+    Endpoint.send t.endpoint (Serialise.message (`Abort ex));
+    Endpoint.flush t.endpoint   (* We're probably about to disconnect *)
 
   let disconnect t ex =
     if not t.disconnecting then (
@@ -160,21 +85,17 @@ module Make (Network : S.NETWORK) = struct
   let disconnecting t = t.disconnecting
 
   let connect ~sw ~restore ?(tags=Logs.Tag.empty) endpoint =
-    let xmit_queue = Queue.create () in
-    let queue_send msg = queue_send ~sw ~xmit_queue endpoint (Serialise.message msg) in
+    let queue_send msg = Endpoint.send endpoint (Serialise.message msg) in
     let restore = Restorer.fn restore in
     let fork = Fiber.fork ~sw in
     let conn = Conn.create ~restore ~tags ~fork ~queue_send in
     {
-      sw;
       conn;
       endpoint;
-      xmit_queue;
       disconnecting = false;
     }
 
   let listen t =
-    Prometheus.Gauge.inc_one Metrics.connections;
     let tags = Conn.tags t.conn in
     begin
       match listen t with
@@ -187,8 +108,6 @@ module Make (Network : S.NETWORK) = struct
           );
         send_abort t (Capnp_rpc.Exception.v ~ty:`Failed (Printexc.to_string ex))
     end;
-    Log.info (fun f -> f ~tags "Connection closed");
-    Prometheus.Gauge.dec_one Metrics.connections;
     Eio.Cancel.protect (fun () ->
         disconnect t (Capnp_rpc.Exception.v ~ty:`Disconnected "Connection closed")
       );

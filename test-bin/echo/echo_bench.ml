@@ -7,12 +7,11 @@ let () =
   Logs.set_reporter (Logs_fmt.reporter ())
 
 let run_client service = 
-  (*   let n = 100000 in *)   (* XXX: improve speed *)
-  let n = 1000 in
+  let n = 100000 in
   let ops = List.init n (fun i -> 
       let payload = Int.to_string i in
       let desired_result = "echo:" ^ payload in
-      fun () -> 
+      fun () ->
         let res = Echo.ping service payload in
         assert (res = desired_result)
     ) in
@@ -20,7 +19,7 @@ let run_client service =
   ops |> Fiber.List.iter ~max_fibers:12 (fun v -> v ());
   let ed = Unix.gettimeofday () in 
   let rate = (Int.to_float n) /. (ed -. st) in
-  Logs.info (fun m -> m "rate = %f" rate )
+  Logs.info (fun m -> m "rate = %f" rate)
 
 let secret_key = `Ephemeral
 let listen_address = `TCP ("127.0.0.1", 7000)
@@ -35,9 +34,10 @@ let start_server ~sw net =
 let () =
   Eio_main.run @@ fun env ->
   Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
-  Switch.run @@ fun sw ->
+  Switch.run ~name:"main" @@ fun sw ->
   let uri = start_server ~sw env#net in
   Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
+  Switch.run ~name:"client" @@ fun sw ->
   let client_vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
   let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
   Sturdy_ref.with_cap_exn sr run_client

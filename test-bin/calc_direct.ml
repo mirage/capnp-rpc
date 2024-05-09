@@ -29,18 +29,24 @@ module Logging = struct
     Logs.set_reporter (reporter id)
 end
 
+let run_connection conn endpoint =
+  Fiber.all [
+    (* Normally the vat runs a leak handler to free resources that get GC'd
+       with a non-zero reference count. We're not using a vat, so run it ourselves. *)
+    Capnp_rpc.Leak_handler.run;
+    (fun () -> Capnp_rpc_unix.CapTP.listen conn);
+    (fun () -> Capnp_rpc_net.Endpoint.run_writer ~tags:Logs.Tag.empty endpoint);
+  ]
+
 module Parent = struct
   let run socket =
     Logging.init "parent";
     Switch.run @@ fun sw -> 
-    (* Normally the vat runs a leak handler to free resources that get GC'd
-       with a non-zero reference count. We're not using a vat, so run it ourselves. *)
-    Fiber.fork_daemon ~sw Capnp_rpc.Leak_handler.run;
     (* Run Cap'n Proto RPC protocol on [socket]: *)
     let p = Capnp_rpc_net.Endpoint.of_flow socket ~peer_id:Capnp_rpc_net.Auth.Digest.insecure in
     Logs.info (fun f -> f "Connecting to child process...");
     let conn = Capnp_rpc_unix.CapTP.connect ~sw ~restore:Capnp_rpc_net.Restorer.none p in
-    Fiber.fork_daemon ~sw (fun () -> Capnp_rpc_unix.CapTP.listen conn; `Stop_daemon);
+    Fiber.fork_daemon ~sw (fun () -> run_connection conn p; `Stop_daemon);
     (* Get the child's service object: *)
     let calc = Capnp_rpc_unix.CapTP.bootstrap conn service_name in
     (* Use the service: *)
@@ -56,17 +62,14 @@ module Child = struct
   let run socket =
     Logging.init "child";
     Switch.run @@ fun sw -> 
-    Fiber.fork_daemon ~sw Capnp_rpc.Leak_handler.run;
     let socket = Eio_unix.Net.import_socket_stream ~sw ~close_unix:false socket in
     let service = Calc.local ~sw in
     let restore = Capnp_rpc_net.Restorer.single service_name service in
     (* Run Cap'n Proto RPC protocol on [socket]: *)
-    let endpoint = Capnp_rpc_net.Endpoint.of_flow socket
-        ~peer_id:Capnp_rpc_net.Auth.Digest.insecure
-    in
+    let endpoint = Capnp_rpc_net.Endpoint.of_flow socket ~peer_id:Capnp_rpc_net.Auth.Digest.insecure in
     let conn = Capnp_rpc_unix.CapTP.connect ~sw ~restore endpoint in
     Logs.info (fun f -> f "Serving requests...");
-    Capnp_rpc_unix.CapTP.listen conn
+    run_connection conn endpoint
 end
 
 let () =
