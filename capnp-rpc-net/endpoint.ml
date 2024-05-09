@@ -64,4 +64,8 @@ let rec recv t =
       Error `Closed
 
 let disconnect t =
-  Eio.Flow.shutdown t.flow `All
+  try
+    Eio.Flow.shutdown t.flow `All
+  with Eio.Io (Eio.Net.E Connection_reset _, _) ->
+    (* TCP connection already shut down, so TLS shutdown failed. Ignore. *)
+    ()
