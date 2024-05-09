@@ -7,8 +7,7 @@ let () =
   Logs.set_reporter (Logs_fmt.reporter ())
 
 let run_client service = 
-  (*   let n = 100000 in *)   (* XXX: improve speed *)
-  let n = 1000 in
+  let n = 100000 in
   let ops = List.init n (fun i -> 
       let payload = Int.to_string i in
       let desired_result = "echo:" ^ payload in

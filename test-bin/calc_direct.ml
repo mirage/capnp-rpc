@@ -35,7 +35,7 @@ module Parent = struct
     Switch.run @@ fun sw -> 
     (* Run Cap'n Proto RPC protocol on [socket]: *)
     let p = Eio_unix.Net.import_socket_stream ~sw ~close_unix:true socket
-            |> Capnp_rpc_net.Endpoint.of_flow
+            |> Capnp_rpc_net.Endpoint.of_flow ~sw
               ~peer_id:Capnp_rpc_net.Auth.Digest.insecure
     in
     Logs.info (fun f -> f "Connecting to child process...");
@@ -60,7 +60,7 @@ module Child = struct
     let service = Calc.local ~sw in
     let restore = Capnp_rpc_net.Restorer.single service_name service in
     (* Run Cap'n Proto RPC protocol on [socket]: *)
-    let endpoint = Capnp_rpc_net.Endpoint.of_flow socket
+    let endpoint = Capnp_rpc_net.Endpoint.of_flow socket ~sw
         ~peer_id:Capnp_rpc_net.Auth.Digest.insecure
     in
     let conn = Capnp_rpc_unix.CapTP.connect ~sw ~restore endpoint in

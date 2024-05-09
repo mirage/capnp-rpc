@@ -33,10 +33,11 @@ include Capnp_rpc_net.S.NETWORK with
 val v : _ Eio.Net.t -> t
 
 val accept_connection :
+  sw:Switch.t ->
   secret_key:Capnp_rpc_net.Auth.Secret_key.t option ->
   [> Eio.Flow.two_way_ty | Eio.Resource.close_ty] r ->
   (Capnp_rpc_net.Endpoint.t, [> `Msg of string]) result
-(** [accept_connection ~switch ~secret_key flow] is a new endpoint for [flow].
+(** [accept_connection ~sw ~secret_key flow] is a new endpoint for [flow].
     If [secret_key] is not [None], it is used to perform a TLS server-side handshake.
     Otherwise, the connection is not encrypted. *)
 

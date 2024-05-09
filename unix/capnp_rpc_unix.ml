@@ -150,8 +150,8 @@ let with_cap_exn ?progress sr f =
   | Error ex -> Fmt.failwith "%a" Capnp_rpc.Exception.pp ex
   | Ok x -> Capnp_rpc.Capability.with_ref x f
 
-let handle_connection ?tags ~secret_key vat client =
-  match Network.accept_connection ~secret_key client with
+let handle_connection ?tags ~sw ~secret_key vat client =
+  match Network.accept_connection ~sw ~secret_key client with
   | Error (`Msg msg) ->
     Log.warn (fun f -> f ?tags "Rejecting new connection: %s" msg)
   | Ok ep ->
@@ -189,7 +189,7 @@ let listen ?tags ~sw (config, vat, socket) =
     let secret_key = if config.Vat_config.serve_tls then Some (Vat_config.secret_key config) else None in
     Fiber.fork ~sw (fun () ->
         (* We don't use [Net.accept_fork] here because this returns immediately after connecting. *)
-        handle_connection ?tags ~secret_key vat client
+        handle_connection ?tags ~sw ~secret_key vat client
       )
   done
 

@@ -96,14 +96,14 @@ let connect net ~sw ~secret_key (addr, auth) =
         try_set_nodelay socket;
         Keepalive.try_set_idle socket 60
     end;
-    Tls_wrapper.connect_as_client socket secret_key auth
+    Tls_wrapper.connect_as_client ~sw socket secret_key auth
   | exception ex ->
     Fiber.check ();
     error "@[<v2>Network connection for %a failed:@,%a@]" Location.pp addr Fmt.exn ex
 
-let accept_connection ~secret_key flow =
+let accept_connection ~sw ~secret_key flow =
   Eio_unix.Resource.fd_opt flow
   |> Option.iter (fun fd -> Eio_unix.Fd.use_exn "TCP_NODELAY" fd try_set_nodelay);
-  Tls_wrapper.connect_as_server flow secret_key
+  Tls_wrapper.connect_as_server ~sw flow secret_key
 
 let v t = (t :> [`Generic] Eio.Net.ty r)
