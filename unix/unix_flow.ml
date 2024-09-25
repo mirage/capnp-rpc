@@ -23,7 +23,12 @@ let close t =
     t.closed <- true;
     opt_cancel t.current_read;
     opt_cancel t.current_write;
-    Lwt_unix.close t.fd
+    Lwt.catch
+      (fun () -> Lwt_unix.close t.fd)
+      (function
+        | Unix.Unix_error (Unix.ECONNRESET, _, _) -> Lwt.return_unit    (* FreeBSD *)
+        | ex -> raise ex
+      )
   )
 
 let pp_error f = function
