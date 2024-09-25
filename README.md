@@ -909,8 +909,8 @@ let () =
     let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
     Sturdy_ref.with_cap_exn root_sr @@ fun root ->
     Logger.log root "Message from Admin" >>= fun () ->
-    let for_alice = Logger.sub root "alice" in
-    let for_bob = Logger.sub root "bob" in
+    Capability.with_ref (Logger.sub root "alice") @@ fun for_alice ->
+    Capability.with_ref (Logger.sub root "bob") @@ fun for_bob ->
     Logger.log for_alice "Message from Alice" >>= fun () ->
     Logger.log for_bob "Message from Bob"
   end
@@ -939,9 +939,10 @@ the admin can request the sturdy ref like this:
 <!-- $MDX include,file=examples/sturdy-refs-3/main.ml,part=save -->
 ```ocaml
     (* The admin creates a logger for Alice and saves it: *)
-    let for_alice = Logger.sub root "alice" in
-    Persistence.save_exn for_alice >>= fun uri ->
-    Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail;
+    Capability.with_ref (Logger.sub root "alice") (fun for_alice ->
+        Persistence.save_exn for_alice >|= fun uri ->
+        Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail
+      ) >>= fun () ->
     (* Alice uses it: *)
     run_client "alice.cap"
 ```

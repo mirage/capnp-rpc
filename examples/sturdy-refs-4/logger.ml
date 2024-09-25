@@ -31,6 +31,9 @@ let local ~persist_new sr label =
         Capability.dec_ref logger;
         Ok response
 (* $MDX part-end *)
+
+    method! pp f =
+      Fmt.pf f "Logger(%s)" label
   end
 
 module Logger = Api.Client.Logger

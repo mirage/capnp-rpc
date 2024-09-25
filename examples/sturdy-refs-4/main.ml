@@ -57,7 +57,7 @@ let sub cap_file label =
     let vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
     Sturdy_ref.with_cap_exn sr @@ fun logger ->
-    let sub = Logger.sub logger label in
+    Capability.with_ref (Logger.sub logger label) @@ fun sub ->
     Persistence.save_exn sub >>= fun uri ->
     Capnp_rpc_unix.Cap_file.save_uri uri sub_file |> or_fail;
     Printf.printf "Wrote %S\n%!" sub_file;
