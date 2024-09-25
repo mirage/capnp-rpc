@@ -93,3 +93,12 @@ let connect ?switch fd =
 let socketpair ?switch () =
   let a, b = Lwt_unix.(socketpair PF_UNIX SOCK_STREAM 0) in
   connect ?switch a, connect ?switch b
+
+let shutdown t cmd =
+  Lwt_unix.shutdown t.fd
+    (match cmd with
+      | `read -> SHUTDOWN_RECEIVE
+      | `read_write -> SHUTDOWN_ALL
+      | `write -> SHUTDOWN_SEND
+    );
+  Lwt.return_unit
