@@ -47,7 +47,7 @@ module Digest = struct
   let of_certificate cert : t =
     let hash = default_hash in
     let digest = X509.Public_key.fingerprint ~hash (X509.Certificate.public_key cert) in
-    `Fingerprint (hash, Cstruct.to_string digest)
+    `Fingerprint (hash, digest)
 
   let add_to_uri t uri =
     match t with
@@ -76,9 +76,8 @@ module Digest = struct
   let authenticator = function
     | `Insecure -> None
     | `Fingerprint (hash, digest) ->
-      let hash = (hash :> Mirage_crypto.Hash.hash) in
-      let fingerprint = Cstruct.of_string digest in
-      Some (X509.Authenticator.server_key_fingerprint ~hash ~fingerprint ~time:(fun _ -> None))
+      let hash = (hash :> Digestif.hash') in
+      Some (X509.Authenticator.key_fingerprint ~hash ~fingerprint:digest ~time:(fun _ -> None))
 
   module Map = Map.Make(struct
       type nonrec t = t
@@ -98,12 +97,14 @@ module Secret_key = struct
   let tls_server_config t = t.tls_server_config
 
   let tls_client_config t ~authenticator =
-    Tls.Config.client ~certificates:t.certificates ~authenticator ()
+    match Tls.Config.client ~certificates:t.certificates ~authenticator () with
+    | Ok x -> x
+    | Error (`Msg msg) -> Fmt.failwith "tls_client_config: %s" msg
 
   let digest ?(hash=default_hash) t =
-    let nc_hash = (hash :> Mirage_crypto.Hash.hash) in
+    let nc_hash = (hash :> Digestif.hash') in
     let pub = X509.Private_key.public t.priv in
-    let value = X509.Public_key.fingerprint ~hash:nc_hash pub |> Cstruct.to_string in
+    let value = X509.Public_key.fingerprint ~hash:nc_hash pub in
     `Fingerprint (hash, value)
 
   let pp_fingerprint hash f t =
@@ -139,8 +140,9 @@ module Secret_key = struct
        if we later need to resolve a sturdy ref hosted at the client, we can
        reuse this connection. *)
     let authenticator ?ip:_ ~host:_ _ = Ok None in
-    let tls_server_config = Tls.Config.server ~certificates ~authenticator () in
-    { priv; certificates; tls_server_config }
+    match Tls.Config.server ~certificates ~authenticator () with
+    | Ok tls_server_config -> { priv; certificates; tls_server_config }
+    | Error (`Msg m) -> Fmt.failwith "Invalid TLS configuration: %s" m
 
   let generate () =
     Log.info (fun f -> f "Generating new private key...");
@@ -150,10 +152,10 @@ module Secret_key = struct
     t
 
   let of_pem_data data =
-    match X509.Private_key.decode_pem (Cstruct.of_string data) with
+    match X509.Private_key.decode_pem data with
     | Ok priv -> of_priv priv
     | Error (`Msg msg) -> Fmt.failwith "Failed to parse secret key!@ %s" msg
 
   let to_pem_data t =
-    X509.Private_key.encode_pem t.priv |> Cstruct.to_string
+    X509.Private_key.encode_pem t.priv
 end

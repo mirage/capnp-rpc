@@ -8,18 +8,18 @@ module Id = struct
   type t = string
 
   let generate () =
-    Mirage_crypto_rng.generate 20 |> Cstruct.to_string
+    Mirage_crypto_rng.generate 20
 
   let public x = x
 
   let derived ~secret name =
-    Mirage_crypto.Hash.mac `SHA256 ~key:(Cstruct.of_string secret) (Cstruct.of_string name)
-    |> Cstruct.to_string
+    Digestif.SHA256.hmac_string ~key:secret name
+    |> Digestif.SHA256.to_raw_string
 
   let digest alg t =
-    let alg = (alg :> Mirage_crypto.Hash.hash) in
-    Mirage_crypto.Hash.digest alg (Cstruct.of_string t)
-    |> Cstruct.to_string
+    let alg = (alg :> Digestif.hash') in
+    let module H = (val Digestif.module_of_hash' alg : Digestif.S) in
+    H.digest_string t |> H.to_raw_string
 
   let to_string x = x
 
@@ -64,10 +64,10 @@ let none : t = fun _ ->
 let single id cap =
   let cap = Cast.cap_to_raw cap in
   (* Hash the ID to prevent timing attacks. *)
-  let id = Mirage_crypto.Hash.digest `SHA256 (Cstruct.of_string id) in
+  let id = Digestif.SHA256.digest_string id |> Digestif.SHA256.to_raw_string in
   fun requested_id ->
-    let requested_id = Mirage_crypto.Hash.digest `SHA256 (Cstruct.of_string requested_id) in
-    if Cstruct.equal id requested_id then (
+    let requested_id = Digestif.SHA256.digest_string requested_id |> Digestif.SHA256.to_raw_string in
+    if String.equal id requested_id then (
       Core_types.inc_ref cap;
       Lwt.return (Ok cap)
     ) else Lwt.return unknown_service_id
@@ -80,7 +80,7 @@ module Table = struct
     | Manual of Core_types.cap          (* We hold a ref on the cap *)
 
   type t = {
-    hash : Mirage_crypto.Hash.hash;
+    hash : Digestif.hash';
     cache : (digest, entry) Hashtbl.t;
     load : Id.t -> digest -> resolution Lwt.t;
     make_sturdy : Id.t -> Uri.t;
@@ -131,7 +131,7 @@ module Table = struct
         )
 
   let of_loader (type l) (module L : LOADER with type t = l) loader =
-    let hash = (L.hash loader :> Mirage_crypto.Hash.hash) in
+    let hash = (L.hash loader :> Digestif.hash') in
     let cache = Hashtbl.create 53 in
     let rec load id digest =
       let sr : Private.Capnp_core.sturdy_ref = object

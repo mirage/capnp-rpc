@@ -33,8 +33,8 @@ let () =
     let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
     Sturdy_ref.with_cap_exn root_sr @@ fun root ->
     Logger.log root "Message from Admin" >>= fun () ->
-    let for_alice = Logger.sub root "alice" in
-    let for_bob = Logger.sub root "bob" in
+    Capability.with_ref (Logger.sub root "alice") @@ fun for_alice ->
+    Capability.with_ref (Logger.sub root "bob") @@ fun for_bob ->
     Logger.log for_alice "Message from Alice" >>= fun () ->
     Logger.log for_bob "Message from Bob"
   end

@@ -38,7 +38,6 @@ See [LICENSE.md](LICENSE.md) for details.
   * [How can I release other resources when my service is released?](#how-can-i-release-other-resources-when-my-service-is-released)
   * [Is there an interactive version I can use for debugging?](#is-there-an-interactive-version-i-can-use-for-debugging)
   * [Can I set up a direct 2-party connection over a pre-existing channel?](#can-i-set-up-a-direct-2-party-connection-over-a-pre-existing-channel)
-  * [How can I use this with Mirage?](#how-can-i-use-this-with-mirage)
 * [Contributing](#contributing)
   * [Conceptual model](#conceptual-model)
   * [Building](#building)
@@ -107,8 +106,6 @@ The code is split into several packages:
 
 - `capnp-rpc-unix` adds helper functions for parsing command-line arguments and setting up connections over Unix sockets.
   The tests in `test-lwt` test this by sending Cap'n Proto messages over a Unix-domain socket.
-
-- `capnp-rpc-mirage` is an alternative to `-unix` that works with [Mirage][] unikernels.
 
 **Libraries** that consume or provide Cap'n Proto services should normally depend only on `capnp-rpc-lwt`,
 since they shouldn't care whether the services they use are local or accessed over some kind of network.
@@ -912,8 +909,8 @@ let () =
     let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
     Sturdy_ref.with_cap_exn root_sr @@ fun root ->
     Logger.log root "Message from Admin" >>= fun () ->
-    let for_alice = Logger.sub root "alice" in
-    let for_bob = Logger.sub root "bob" in
+    Capability.with_ref (Logger.sub root "alice") @@ fun for_alice ->
+    Capability.with_ref (Logger.sub root "bob") @@ fun for_bob ->
     Logger.log for_alice "Message from Alice" >>= fun () ->
     Logger.log for_bob "Message from Bob"
   end
@@ -942,9 +939,10 @@ the admin can request the sturdy ref like this:
 <!-- $MDX include,file=examples/sturdy-refs-3/main.ml,part=save -->
 ```ocaml
     (* The admin creates a logger for Alice and saves it: *)
-    let for_alice = Logger.sub root "alice" in
-    Persistence.save_exn for_alice >>= fun uri ->
-    Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail;
+    Capability.with_ref (Logger.sub root "alice") (fun for_alice ->
+        Persistence.save_exn for_alice >|= fun uri ->
+        Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail
+      ) >>= fun () ->
     (* Alice uses it: *)
     run_client "alice.cap"
 ```
@@ -1356,58 +1354,6 @@ parent: application: Waiting for child to exit...
 parent: application: Done
 ```
 
-### How can I use this with Mirage?
-
-Note: `capnp` uses the `stdint` library, which has C stubs and
-[might need patching](https://github.com/mirage/mirage/issues/885) to work with the Xen backend.
-<https://github.com/ocaml/ocaml/pull/1201#issuecomment-333941042> explains why OCaml doesn't have unsigned integer support.
-
-Here is a suitable `config.ml`:
-
-<!-- $MDX skip -->
-```ocaml
-open Mirage
-
-let main =
-  foreign
-    ~packages:[package "capnp-rpc-mirage"; package "mirage-dns"]
-    "Unikernel.Make" (random @-> mclock @-> stackv4 @-> job)
-
-let stack = generic_stackv4 default_network
-
-let () =
-  register "test" [main $ default_random $ default_monotonic_clock $ stack]
-```
-
-This should work as the `unikernel.ml`:
-
-<!-- $MDX skip -->
-```ocaml
-open Lwt.Infix
-
-open Capnp_rpc_lwt
-
-module Make (R : Mirage_random.S) (C : Mirage_clock.MCLOCK) (Stack : Mirage_stack.V4) = struct
-  module Mirage_capnp = Capnp_rpc_mirage.Make (R) (C) (Stack)
-
-  let secret_key = `Ephemeral
-
-  let listen_address = `TCP 7000
-  let public_address = `TCP ("localhost", 7000)
-
-  let start () () stack =
-    let dns = Mirage.Network.Dns.create stack in
-    let net = Mirage_capnp.network ~dns stack in
-    let config = Mirage_capnp.Vat_config.create ~secret_key ~public_address listen_address in
-    let service_id = Mirage_capnp.Vat_config.derived_id config "main" in
-    let restore = Restorer.single service_id Echo.local in
-    Mirage_capnp.serve net config ~restore >>= fun vat ->
-    let uri = Mirage_capnp.Vat.sturdy_uri vat service_id in
-    Logs.app (fun f -> f "Main service: %a" Uri.pp_hum uri);
-    Lwt.wait () |> fst
-end
-```
-
 ## Contributing
 
 ### Conceptual model
@@ -1543,7 +1489,6 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [E Reference Mechanics]: http://www.erights.org/elib/concurrency/refmech.html
 [pycapnp]: http://jparyani.github.io/pycapnp/
 [Persistence API]: https://github.com/capnproto/capnproto/blob/master/c%2B%2B/src/capnp/persistent.capnp
-[Mirage]: https://mirage.io/
 [ocaml-ci]: https://github.com/ocurrent/ocaml-ci
 [api]: https://mirage.github.io/capnp-rpc/
 [NETWORK]: https://mirage.github.io/capnp-rpc/capnp-rpc-net/Capnp_rpc_net/S/module-type-NETWORK/index.html
