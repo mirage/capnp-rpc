@@ -1,5 +1,5 @@
 (library
  (name capnp_rpc_net)
  (public_name capnp-rpc-net)
- (libraries astring capnp capnp-rpc-lwt fmt logs mirage-flow mirage-crypto mirage-crypto-rng
-   tls-mirage base64 uri ptime prometheus))
+ (libraries astring capnp capnp-rpc-lwt fmt logs mirage-crypto-rng
+   tls-eio base64 uri ptime prometheus))

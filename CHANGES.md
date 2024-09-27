@@ -1,3 +1,23 @@
+### v1.2.3
+
+- Update to cmdliner 1.1.0 (@MisterDA #249).
+
+- Fix tests on Windows, avoid using Unix domain sockets (@talex5 #251).
+
+- Fix warning on `Unix.ENOTCONN` under macos (@talex5 #252).
+
+- Add `Capnp_rpc_unix.Cap_file.save_uri` (@talex5 #253).
+
+- Update README to use MDX (@talex5 #254).
+
+- Update tests to Cap'n Proto 0.10.3 (@MisterDA #257 #260).
+
+- Update to mirage-crypto-rng 0.11 and dns 7.0.0 API changes (@hannesm #261).
+
+- Update for opam 2.1+ installations (@frumioj #259).
+
+- Install Cap'n Proto binaries in Windows GHA (@MisterDA #248).
+
 ### v1.2.2
 
 - Switch from mirage-{stack,protocols} to tcpip (@MisterDA #246).

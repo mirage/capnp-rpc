@@ -29,15 +29,14 @@ module type NETWORK = sig
 
   val connect :
     t ->
-    switch:Lwt_switch.t ->
+    sw:Eio.Switch.t ->
     secret_key:Auth.Secret_key.t Lazy.t ->
     Address.t ->
-    (Endpoint.t, [> `Msg of string]) result Lwt.t
-  (** [connect t ~switch ~secret_key address] connects to [address], proves ownership of
+    (Endpoint.t, [> `Msg of string]) result
+  (** [connect t ~sw ~secret_key address] connects to [address], proves ownership of
       [secret_key] (if TLS is being used), and returns the resulting endpoint.
       Returns an error if no connection can be established or the target fails
-      to authenticate itself.
-      If [switch] is turned off, the connection should be terminated. *)
+      to authenticate itself. *)
 
   val parse_third_party_cap_id : Private.Schema.Reader.pointer_t -> Types.third_party_cap_id
 end
@@ -48,9 +47,6 @@ module type VAT_NETWORK = sig
 
   type +'a capability
   (** An ['a capability] is a capability reference to a service of type ['a]. *)
-
-  type flow
-  (** A bi-directional byte-stream. *)
 
   type restorer
   (** A function for restoring persistent capabilities from sturdy ref service IDs. *)
@@ -69,17 +65,22 @@ module type VAT_NETWORK = sig
     type t
     (** A CapTP connection to a remote peer. *)
 
-    val connect : restore:restorer -> ?tags:Logs.Tag.set -> Endpoint.t -> t
-    (** [connect ~restore ~switch endpoint] is fresh CapTP protocol handler that sends and
+    val connect : sw:Eio.Switch.t -> restore:restorer -> ?tags:Logs.Tag.set -> Endpoint.t -> t
+    (** [connect ~sw ~restore ~switch endpoint] is fresh CapTP protocol handler that sends and
         receives messages using [endpoint].
         [restore] is used to respond to "Bootstrap" messages.
-        If the connection fails then [endpoint] will be disconnected. *)
+        If the connection fails then [endpoint] will be disconnected.
+        You must call {!listen} to run the loop handling messages.
+        @param sw Used to run methods and to run the transmit thread. *)
+
+    val listen : t -> unit
+    (** [listen t] reads and handles incoming messages until the connection is finished. *)
 
     val bootstrap : t -> service_id -> 'a capability
     (** [bootstrap t object_id] is the peer's bootstrap object [object_id], if any.
         Use [object_id = ""] for the main, public object. *)
 
-    val disconnect : t -> Capnp_rpc.Exception.t -> unit Lwt.t
+    val disconnect : t -> Capnp_rpc.Exception.t -> unit
     (** [disconnect reason] closes the connection, sending [reason] to the peer to explain why.
         Capabilities and questions at both ends will break, with [reason] as the problem. *)
 
@@ -99,23 +100,21 @@ module type VAT_NETWORK = sig
     (** A local Vat. *)
 
     val create :
-      ?switch:Lwt_switch.t ->
       ?tags:Logs.Tag.set ->
       ?restore:restorer ->
       ?address:Network.Address.t ->
+      sw:Eio.Switch.t ->
       secret_key:Auth.Secret_key.t Lazy.t ->
       Network.t -> t
-    (** [create ~switch ~restore ~address ~secret_key network] is a new Vat that
+    (** [create ~sw ~restore ~address ~secret_key network] is a new Vat that
         uses [restore] to restore sturdy refs hosted at this vat to live
         capabilities for peers.
         The Vat will suggest that other parties connect to it using [address].
         Turning off the switch will disconnect any active connections. *)
 
-    val add_connection : t -> switch:Lwt_switch.t -> mode:[`Accept|`Connect] -> Endpoint.t -> CapTP.t Lwt.t
-    (** [add_connection t ~switch ~mode endpoint] runs the CapTP protocol over [endpoint],
+    val add_connection : t -> mode:[`Accept|`Connect] -> Endpoint.t -> CapTP.t
+    (** [add_connection t ~mode endpoint] runs the CapTP protocol over [endpoint],
         which is a connection to another vat.
-        When the connection ends, [switch] will be turned off, and turning off [switch] will
-        end the connection.
         [mode] is used if two Vats connect to each other at the same time to
         decide which connection to drop. Use [`Connect] if [t] initiated the new
         connection. Note that [add_connection] may return an existing connection. *)

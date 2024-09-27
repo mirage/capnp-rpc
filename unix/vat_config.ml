@@ -21,7 +21,7 @@ module Secret_hash : sig
 end = struct
   type t = string
 
-  let of_pem_data data = Mirage_crypto.Hash.SHA256.digest (Cstruct.of_string data) |> Cstruct.to_string
+  let of_pem_data data = Digestif.SHA256.digest_string data |> Digestif.SHA256.to_raw_string
   let to_string x = x
 end
 

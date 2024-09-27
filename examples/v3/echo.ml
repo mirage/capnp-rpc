@@ -1,6 +1,5 @@
 module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
 
-open Lwt.Infix
 open Capnp_rpc_lwt
 
 module Callback = struct
@@ -27,21 +26,21 @@ module Callback = struct
 end
 
 (* $MDX part-begin=notify *)
-let (>>!=) = Lwt_result.bind		(* Return errors *)
-
-let notify callback ~msg =
+let notify ~clock msg callback =
   let rec loop = function
     | 0 ->
-      Lwt.return @@ Ok (Service.Response.create_empty ())
+      Service.return_empty ()
     | i ->
-      Callback.log callback msg >>!= fun () ->
-      Lwt_unix.sleep 1.0 >>= fun () ->
-      loop (i - 1)
+      match Callback.log callback msg with
+      | Error (`Capnp e) -> Service.error e
+      | Ok () ->
+        Eio.Time.sleep clock 1.0;
+        loop (i - 1)
   in
   loop 3
 (* $MDX part-end *)
 
-let local =
+let local ~clock =
   let module Echo = Api.Service.Echo in
   Echo.local @@ object
     inherit Echo.service
@@ -63,8 +62,7 @@ let local =
       match callback with
       | None -> Service.fail "No callback parameter!"
       | Some callback ->
-        Service.return_lwt @@ fun () ->
-        Capability.with_ref callback (notify ~msg)
+        Capability.with_ref callback (notify ~clock msg)
     (* $MDX part-end *)
   end
 
@@ -74,7 +72,7 @@ let ping t msg =
   let open Echo.Ping in
   let request, params = Capability.Request.create Params.init_pointer in
   Params.msg_set params msg;
-  Capability.call_for_value_exn t method_id request >|= Results.reply_get
+  Capability.call_for_value_exn t method_id request |> Results.reply_get
 
 (* $MDX part-begin=client-heartbeat *)
 let heartbeat t msg callback =

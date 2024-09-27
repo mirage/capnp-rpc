@@ -13,22 +13,25 @@ depends: [
   "ocaml" {>= "4.08.0"}
   "capnp-rpc-net" {= version}
   "cmdliner" {>= "1.1.0"}
-  "cstruct-lwt"
   "astring"
   "fmt" {>= "0.8.7"}
   "logs"
   "extunix"
   "base64" {>= "3.0.0"}
   "dune" {>= "3.0"}
-  "alcotest" {>= "1.0.1" & with-test}
-  "alcotest-lwt" { >= "1.0.1" & with-test}
-  "mirage-crypto-rng" {>= "0.7.0"}
-  "mdx" {with-test}
-  "lwt"
+  "alcotest" {>= "1.6.0" & with-test}
+  "mirage-crypto-rng-lwt" {>= "0.11.0"}
+  "mdx" {>= "2.4.1" & with-test}
   "asetmap" {with-test}
+  "eio_main" {with-test}
+  "cstruct" {>= "6.2.0"}
+  "eio" {>= "1.1"}
+]
+conflicts: [
+  "jbuilder"
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]
-  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test & os != "macos"}
 ]
 dev-repo: "git+https://github.com/mirage/capnp-rpc.git"

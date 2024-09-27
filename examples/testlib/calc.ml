@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc_lwt
 
 module Api = Calculator.MakeRPC(Capnp_rpc_lwt)
@@ -85,10 +85,10 @@ module Value = struct
   let read v =
     let open Api.Client.Calculator.Value.Read in
     let req = Capability.Request.create_no_args () in
-    Capability.call_for_value_exn v method_id req >|= Results.value_get
+    Capability.call_for_value_exn v method_id req |> Results.value_get
 
   let final_read v =
-    read v >|= fun result ->
+    let result = read v in
     Capability.dec_ref v;
     result
 
@@ -114,26 +114,31 @@ let call_fn fn args =
   let open Api.Client.Calculator.Function.Call in
   let req, p = Capability.Request.create Params.init_pointer in
   ignore (Params.params_set_list p args);
-  Capability.call_for_value_exn fn method_id req >|= Results.value_get
+  Capability.call_for_value_exn fn method_id req |> Results.value_get
 
-let pp_result_lwt f x =
-  match Lwt.state x with
-  | Lwt.Return v -> Fmt.float f v
-  | Lwt.Fail ex -> Fmt.exn f ex
-  | Lwt.Sleep -> Fmt.string f "(still calculating)"
+let pp_result_promise f x =
+  match Promise.peek x with
+  | Some (Ok v) -> Fmt.float f v
+  | Some (Error ex) -> Fmt.exn f ex
+  | None -> Fmt.string f "(still calculating)"
 
-(* Evaluate an expression, where some sub-expressions may require remote calls. *)
-let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t =
+(* Evaluate an expression, where some sub-expressions may require remote calls.
+   Immediately returns a service for the result, while the calculation continues in [sw]. *)
+let rec eval ~sw ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t =
   let open Expr in function
   | Float f -> Value.local f
   | Prev v -> Capability.inc_ref v; v
   | Param p -> Value.local args.(p)
   | Call (f, params) ->
-    let params = params |> Lwt_list.map_p (fun p ->
-        let value = eval ~args p in
-        Value.final_read value
-      ) in
-    let result = params >>= call_fn f in
+    let result = Fiber.fork_promise ~sw (fun () ->
+        params
+        |> Fiber.List.map (fun p ->
+            let value = eval ~sw ~args p in
+            Value.final_read value
+          )
+        |> call_fn f
+      )
+    in
     let open Api.Service.Calculator in
     Value.local @@ object
       inherit Value.service
@@ -141,17 +146,15 @@ let rec eval ?(args=[||]) : _ -> Api.Reader.Calculator.Value.t Capability.t =
       val id = Capnp_rpc.Debug.OID.next ()
 
       method! pp f =
-        Fmt.pf f "EvalResultValue(%a) = %a" Capnp_rpc.Debug.OID.pp id pp_result_lwt result
+        Fmt.pf f "EvalResultValue(%a) = %a" Capnp_rpc.Debug.OID.pp id pp_result_promise result
 
       method read_impl _ release_params =
         let open Value.Read in
         release_params ();
-        Service.return_lwt (fun () ->
-            result >|= fun result ->
-            let resp, c = Service.Response.create Results.init_pointer in
-            Results.value_set c result;
-            Ok resp
-          )
+        let result = Promise.await_exn result in
+        let resp, c = Service.Response.create Results.init_pointer in
+        Results.value_set c result;
+        Service.return resp
     end
 
 module Fn = struct
@@ -168,15 +171,14 @@ module Fn = struct
         let open Function.Call in
         let args = Params.params_get_array params in
         assert (Array.length args = n_args);
-        let value = eval ~args body in
-        release_params ();
         (* Functions return floats, not Value objects, so we have to wait here. *)
-        Service.return_lwt (fun () ->
-            Value.final_read value >|= fun value ->
-            let resp, r = Service.Response.create ~message_size:200 Results.init_pointer in
-            Results.value_set r value;
-            Ok resp
-          )
+        Switch.run @@ fun sw ->
+        let value = eval ~sw ~args body in
+        release_params ();
+        let value = Value.final_read value in
+        let resp, r = Service.Response.create ~message_size:200 Results.init_pointer in
+        Results.value_set r value;
+        Service.return resp
     end
 
   let local_binop op : Api.Builder.Calculator.Function.t Capability.t =
@@ -204,7 +206,7 @@ module Fn = struct
 end
 
 (* The main calculator service *)
-let local =
+let local ~sw =
   let module Calculator = Api.Service.Calculator in
   Calculator.local @@ object
     inherit Calculator.service
@@ -224,7 +226,7 @@ let local =
       let open Calculator.Evaluate in
       let expr = Expr.parse (Params.expression_get params) in
       release_params ();
-      let value_obj = eval expr in
+      let value_obj = eval ~sw expr in
       Expr.release expr;
       let resp, results = Service.Response.create ~message_size:200 Results.init_pointer in
       Results.value_set results (Some value_obj);

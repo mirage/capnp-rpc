@@ -3,7 +3,7 @@
  (public_name capnp-rpc-lwt)
  (ocamlc_flags :standard -w -55-53)
  (ocamlopt_flags :standard -w -55-53)
- (libraries astring capnp capnp-rpc fmt logs lwt uri))
+ (libraries astring capnp capnp-rpc fmt logs eio uri))
 
 (rule
  (targets rpc_schema.ml rpc_schema.mli)

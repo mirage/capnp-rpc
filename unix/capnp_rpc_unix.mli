@@ -3,10 +3,7 @@
 open Capnp_rpc_lwt
 open Capnp_rpc_net
 
-module Unix_flow = Unix_flow
-
 include Capnp_rpc_net.VAT_NETWORK with
-  type flow = Unix_flow.flow and
   module Network = Network
 
 (** Configuration for a {!Vat}. *)
@@ -66,7 +63,7 @@ module File_store : sig
   type 'a t
   (** A store of values of type ['a]. *)
 
-  val create : string -> 'a t
+  val create : _ Eio.Path.t -> 'a t
   (** [create dir] is a store for Cap'n Proto structs.
       Items are stored inside [dir]. *)
 
@@ -102,7 +99,7 @@ val sturdy_uri : Uri.t Cmdliner.Arg.conv
 
 val connect_with_progress :
   ?mode:[`Auto | `Log | `Batch | `Console | `Silent] ->
-  'a Sturdy_ref.t -> ('a Capability.t, Capnp_rpc.Exception.t) Lwt_result.t
+  'a Sturdy_ref.t -> ('a Capability.t, Capnp_rpc.Exception.t) result
 (** [connect_with_progress sr] is like [Sturdy_ref.connect], but shows that a connection is in progress.
     Note: On failure, it does {e not} display the error, which should instead be handled by the caller.
     @param mode Controls how progress is displayed:
@@ -116,26 +113,27 @@ val connect_with_progress :
 val with_cap_exn :
   ?progress:[`Auto | `Log | `Batch | `Console | `Silent] ->
   'a Sturdy_ref.t ->
-  ('a Capability.t -> 'b Lwt.t) ->
-  'b Lwt.t
+  ('a Capability.t -> 'b) ->
+  'b
 (** Like [Sturdy_ref.with_cap_exn], but using [connect_with_progress] to show progress. *)
 
 val serve :
-  ?switch:Lwt_switch.t ->
   ?tags:Logs.Tag.set ->
   ?restore:Restorer.t ->
+  sw:Eio.Switch.t ->
+  net:_ Eio.Net.t ->
   Vat_config.t ->
-  Vat.t Lwt.t
-(** [serve ~restore vat_config] is a new vat that is listening for new connections
+  Vat.t
+(** [serve ~restore ~sw ~net vat_config] is a new vat that is listening for new connections
     as specified by [vat_config]. After connecting to it, clients can get access
     to services using [restore]. *)
 
 val client_only_vat :
-  ?switch:Lwt_switch.t ->
   ?tags:Logs.Tag.set ->
   ?restore:Restorer.t ->
-  unit -> Vat.t
-(** [client_only_vat ()] is a new vat that does not listen for incoming connections. *)
+  sw:Eio.Switch.t ->
+  _ Eio.Net.t -> Vat.t
+(** [client_only_vat net] is a new vat that does not listen for incoming connections. *)
 
 val manpage_capnp_options : string
 (** [manpage_capnp_options] is the title of the section of the man-page containing the Cap'n Proto options.

@@ -1,6 +1,6 @@
 (executables
  (names client server)
- (libraries lwt.unix capnp-rpc-lwt logs.fmt capnp-rpc-unix)
+ (libraries eio_main capnp-rpc-lwt logs.fmt capnp-rpc-unix)
  (flags (:standard -w -53-55)))
 
 (rule

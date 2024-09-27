@@ -1,3 +1,3 @@
 (executables
  (names calc calc_direct)
- (libraries testlib cmdliner astring logs.fmt fmt.tty capnp-rpc-unix))
+ (libraries testlib cmdliner astring logs.fmt fmt.tty capnp-rpc-unix eio_main))

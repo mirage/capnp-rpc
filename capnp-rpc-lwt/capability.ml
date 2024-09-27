@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 open Capnp_core
 
 module Log = Capnp_rpc.Debug.Log
@@ -14,9 +14,9 @@ let inc_ref = Core_types.inc_ref
 let dec_ref = Core_types.dec_ref
 
 let with_ref t fn =
-  Lwt.finalize
+  Fun.protect
     (fun () -> fn t)
-    (fun () -> dec_ref t; Lwt.return_unit)
+    ~finally:(fun () -> dec_ref t)
 
 let pp f x = x#pp f
 
@@ -26,10 +26,10 @@ let when_released (x:Core_types.cap) f = x#when_released f
 let problem x = x#problem
 
 let wait_until_settled (x : _ t) =
-  let result, set_result = Lwt.wait () in
+  let result, set_result = Promise.create () in
   let rec aux x =
     if x#blocker = None then (
-      Lwt.wakeup set_result ()
+      Promise.resolve set_result ()
     ) else (
       x#when_more_resolved (fun x ->
           Core_types.dec_ref x;
@@ -38,16 +38,16 @@ let wait_until_settled (x : _ t) =
     )
   in
   aux x;
-  result
+  Promise.await result
 
 let await_settled t =
-  wait_until_settled t >|= fun () ->
+  wait_until_settled t;
   match problem t with
   | None -> Ok ()
   | Some ex -> Error ex
 
 let await_settled_exn t =
-  wait_until_settled t >|= fun () ->
+  wait_until_settled t;
   match problem t with
   | None -> ()
   | Some e -> Fmt.failwith "%a" Capnp_rpc.Exception.pp e
@@ -72,31 +72,33 @@ let call (target : 't capability_t) (m : ('t, 'a, 'b) method_t) (req : 'a Reques
   results
 
 let call_and_wait cap (m : ('t, 'a, 'b StructStorage.reader_t) method_t) req =
-  let p, r = Lwt.task () in
+  let p, r = Promise.create () in
   let result = call cap m req in
   let finish = lazy (Core_types.dec_ref result) in
-  Lwt.on_cancel p (fun () -> Lazy.force finish);
   result#when_resolved (function
-      | Error e -> Lwt.wakeup r (Error (`Capnp e))
+      | Error e -> Promise.resolve_error r (`Capnp e)
       | Ok resp ->
         Lazy.force finish;
         let payload = Msg.Response.readable resp in
         let release_response_caps () = Core_types.Response_payload.release resp in
         let contents = Schema.Reader.Payload.content_get payload |> Schema.Reader.of_pointer in
-        Lwt.wakeup r @@ Ok (contents, release_response_caps)
+        Promise.resolve_ok r (contents, release_response_caps)
     );
-  p
+  try Promise.await p
+  with ex ->
+    Lazy.force finish;
+    raise ex
 
 let call_for_value cap m req =
-  call_and_wait cap m req >|= function
+  match call_and_wait cap m req with
   | Error _ as response -> response
   | Ok (response, release_response_caps) ->
     release_response_caps ();
     Ok response
 
 let call_for_value_exn cap m req =
-  call_for_value cap m req >>= function
-  | Ok x -> Lwt.return x
+  match call_for_value cap m req with
+  | Ok x -> x
   | Error (`Capnp e) ->
     Log.debug (fun f -> f "Error calling %t(%a): %a"
                   cap#pp
@@ -105,11 +107,11 @@ let call_for_value_exn cap m req =
     Fmt.failwith "%a: %a" Capnp.RPC.MethodID.pp m Capnp_rpc.Error.pp e
 
 let call_for_unit cap m req =
-  call_for_value cap m req >|= function
+  match call_for_value cap m req with
   | Ok _ -> Ok ()
   | Error _ as e -> e
 
-let call_for_unit_exn cap m req = call_for_value_exn cap m req >|= ignore
+let call_for_unit_exn cap m req = call_for_value_exn cap m req |> ignore
 
 let call_for_caps cap m req fn =
   let q = call cap m req in

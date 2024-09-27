@@ -705,6 +705,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     tags : Logs.Tag.set;
     embargoes : (EmbargoId.t * Cap_proxy.resolver_cap) Embargoes.t;
     restore : restorer;
+    fork : (unit -> unit) -> unit;
 
     questions : Question.t Questions.t;
     answers : Answer.t Answers.t;
@@ -740,11 +741,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let default_restore k _object_id =
     k @@ Error (Exception.v "This vat has no restorer")
 
-  let create ?(restore=default_restore) ~tags ~queue_send =
+  let create ?(restore=default_restore) ~tags ~fork ~queue_send =
     {
       queue_send = (queue_send :> EP.Out.t -> unit);
       tags;
       restore = restore;
+      fork;
       questions = Questions.make ();
       answers = Answers.make ();
       imports = Imports.make ();
@@ -1465,8 +1467,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Local target ->
         Log.debug (fun f -> f ~tags:t.tags "Handling call: (%t).call %a"
                       target#pp Core_types.Request_payload.pp msg);
-        target#call answer_resolver msg;  (* Takes ownership of [caps]. *)
-        dec_ref target
+        t.fork (fun () ->
+            target#call answer_resolver msg;  (* Takes ownership of [caps]. *)
+            dec_ref target
+          )
       | #message_target_cap as target ->
         Log.debug (fun f -> f ~tags:t.tags "Forwarding call: (%a).call %a"
                       pp_message_target_cap target Core_types.Request_payload.pp msg);
@@ -1476,6 +1480,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let promise, answer_resolver = Local_struct_promise.make () in
       let answer = Answer.create id ~answer:promise in
       Answers.set t.answers id answer;
+      t.fork @@ fun () ->
       object_id |> t.restore @@ fun service ->
       if Answer.needs_return answer && t.disconnected = None then (
         let results =
