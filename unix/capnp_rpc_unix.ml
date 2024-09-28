@@ -169,14 +169,10 @@ let handle_connection ?tags ~secret_key vat client =
     )
 
 let addr_of_host host =
-  match Unix.gethostbyname host with
-  | exception Not_found ->
-    Capnp_rpc.Debug.failf "Unknown host %S" host
-  | addr ->
-    if Array.length addr.Unix.h_addr_list = 0 then
-      Capnp_rpc.Debug.failf "No addresses found for host name %S" host
-    else
-      addr.Unix.h_addr_list.(0)
+  match Unix.getaddrinfo host "" [Unix.AI_SOCKTYPE Unix.SOCK_STREAM] with
+  | {ai_addr = ADDR_INET(addr, _) ; _} :: _ -> addr
+  | [] -> Capnp_rpc.Debug.failf "No addresses found for host name %S" host
+  | _ -> Capnp_rpc.Debug.failf "Unknown host %S" host
 
 let serve ?switch ?tags ?restore config =
   let {Vat_config.backlog; secret_key = _; serve_tls; listen_address; public_address} = config in
@@ -197,11 +193,13 @@ let serve ?switch ?tags ?restore config =
       Unix.bind socket (Unix.ADDR_UNIX path);
       socket
     | `TCP (host, port) ->
-      let socket = Unix.(socket PF_INET SOCK_STREAM 0) in
+      let addr = addr_of_host host in
+      let socket_domain = if Unix.is_inet6_addr addr then Unix.PF_INET6 else PF_INET in
+      let socket = Unix.(socket socket_domain SOCK_STREAM 0) in
       Unix.setsockopt socket Unix.SO_REUSEADDR true;
       Unix.setsockopt socket Unix.SO_KEEPALIVE true;
       Keepalive.try_set_idle socket 60;
-      Unix.bind socket (Unix.ADDR_INET (addr_of_host host, port));
+      Unix.bind socket (Unix.ADDR_INET (addr, port));
       socket
   in
   Unix.listen socket backlog;
