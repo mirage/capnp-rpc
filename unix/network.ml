@@ -21,7 +21,7 @@ module Location = struct
   let tcp ~host ~port = `TCP (host, port)
 
   let parse_tcp s =
-    match String.cut ~sep:":" s with
+    match String.cut ~rev:true ~sep:":" s with
     | None -> Error (`Msg "Missing :PORT in listen address")
     | Some (host, port) ->
       match String.to_int port with
@@ -59,14 +59,10 @@ let error fmt =
 let parse_third_party_cap_id _ = `Two_party_only
 
 let addr_of_host host =
-  match Unix.gethostbyname host with
-  | exception Not_found ->
-    Capnp_rpc.Debug.failf "Unknown host %S" host
-  | addr ->
-    if Array.length addr.Unix.h_addr_list = 0 then
-      Capnp_rpc.Debug.failf "No addresses found for host name %S" host
-    else
-      addr.Unix.h_addr_list.(0)
+  match Unix.getaddrinfo host "" [Unix.AI_SOCKTYPE Unix.SOCK_STREAM] with
+  | {ai_addr = ADDR_INET(addr, _) ; _} :: _ -> addr
+  | [] -> Capnp_rpc.Debug.failf "No addresses found for host name %S" host
+  | _ -> Capnp_rpc.Debug.failf "Unknown host %S" host
 
 let connect_socket = function
   | `Unix path ->
@@ -77,12 +73,14 @@ let connect_socket = function
       (fun ex -> Lwt_unix.close socket >>= fun () -> Lwt.fail ex)
   | `TCP (host, port) ->
     Log.info (fun f -> f "Connecting to %s:%d..." host port);
-    let socket = Lwt_unix.(socket PF_INET SOCK_STREAM 0) in
+    let addr = addr_of_host host in
+    let socket_domain = if Unix.is_inet6_addr addr then Unix.PF_INET6 else PF_INET in
+    let socket = Lwt_unix.(socket socket_domain SOCK_STREAM 0) in
     Lwt.catch
       (fun () ->
          Lwt_unix.setsockopt socket Unix.SO_KEEPALIVE true;
          Keepalive.try_set_idle (Lwt_unix.unix_file_descr socket) 60;
-         Lwt_unix.connect socket (Unix.ADDR_INET (addr_of_host host, port)) >|= fun () ->
+         Lwt_unix.connect socket (Unix.ADDR_INET (addr, port)) >|= fun () ->
          socket
       )
       (fun ex -> Lwt_unix.close socket >>= fun () -> Lwt.fail ex)
