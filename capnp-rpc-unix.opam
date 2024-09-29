@@ -19,7 +19,7 @@ depends: [
   "logs"
   "extunix"
   "base64" {>= "3.0.0"}
-  "dune" {>= "3.0"}
+  "dune" {>= "3.16"}
   "alcotest" {>= "1.6.0" & with-test}
   "alcotest-lwt" { >= "1.6.0" & with-test}
   "mirage-crypto-rng-lwt" {>= "0.11.0"}

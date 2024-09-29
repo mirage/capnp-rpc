@@ -92,7 +92,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       mutable ref_count : RC.t; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
       mutable count : int;     (* Number of times remote sent us this. *)
       mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
-      mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
+      settled : bool;          (* This was a SenderHosted - it can't resolve except to an exception. *)
       mutable resolution : disembargo_info;
       proxy : Cap_proxy.resolver_cap Weak_ptr.t; (* Our switchable ([Weak_ptr.t] is mutable). *)
       strong_proxy : < > option ref;    (* Keeps the switchable alive if there are callbacks registered. *)
