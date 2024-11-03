@@ -61,8 +61,8 @@ let parse_third_party_cap_id _ = `Two_party_only
 let addr_of_host host =
   match Unix.getaddrinfo host "" [Unix.AI_SOCKTYPE Unix.SOCK_STREAM] with
   | {ai_addr = ADDR_INET(addr, _) ; _} :: _ -> addr
+  | {ai_addr = ADDR_UNIX _ ; _} :: _ -> Capnp_rpc.Debug.failf "Unknown host %S" host
   | [] -> Capnp_rpc.Debug.failf "No addresses found for host name %S" host
-  | _ -> Capnp_rpc.Debug.failf "Unknown host %S" host
 
 let connect_socket = function
   | `Unix path ->

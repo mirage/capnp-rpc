@@ -171,8 +171,8 @@ let handle_connection ?tags ~secret_key vat client =
 let addr_of_host host =
   match Unix.getaddrinfo host "" [Unix.AI_SOCKTYPE Unix.SOCK_STREAM] with
   | {ai_addr = ADDR_INET(addr, _) ; _} :: _ -> addr
+  | {ai_addr = ADDR_UNIX _ ; _} :: _ -> Capnp_rpc.Debug.failf "Unknown host %S" host
   | [] -> Capnp_rpc.Debug.failf "No addresses found for host name %S" host
-  | _ -> Capnp_rpc.Debug.failf "Unknown host %S" host
 
 let serve ?switch ?tags ?restore config =
   let {Vat_config.backlog; secret_key = _; serve_tls; listen_address; public_address} = config in
