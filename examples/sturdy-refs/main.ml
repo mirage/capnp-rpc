@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 module Restorer = Capnp_rpc_net.Restorer
 

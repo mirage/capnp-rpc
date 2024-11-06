@@ -1,4 +1,4 @@
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 type t = [`Echo_bb48258560861cec] Capability.t
 

@@ -1,4 +1,4 @@
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 include Restorer.LOADER

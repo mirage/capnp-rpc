@@ -13,7 +13,7 @@ module Vat = Vat_network.Vat
 module Network = Network
 module Vat_config = Vat_config
 module File_store = File_store
-module Sturdy_ref = Capnp_rpc_lwt.Sturdy_ref
+module Sturdy_ref = Capnp_rpc.Sturdy_ref
 
 let error fmt =
   fmt |> Fmt.kstr @@ fun msg ->
@@ -110,7 +110,7 @@ module Console = struct
 end
 
 let addr_of_sr sr =
-  match Capnp_rpc_net.Capnp_address.parse_uri (Capnp_rpc_lwt.Cast.sturdy_to_raw sr)#to_uri_with_secrets with
+  match Capnp_rpc_net.Capnp_address.parse_uri (Capnp_rpc.Cast.sturdy_to_raw sr)#to_uri_with_secrets with
   | Ok ((addr, _auth), _id) -> addr
   | Error (`Msg m) -> failwith m
 
@@ -149,7 +149,7 @@ let rec connect_with_progress ?(mode=`Auto) sr =
 let with_cap_exn ?progress sr f =
   connect_with_progress ?mode:progress sr >>= function
   | Error ex -> Fmt.failwith "%a" Capnp_rpc.Exception.pp ex
-  | Ok x -> Capnp_rpc_lwt.Capability.with_ref x f
+  | Ok x -> Capnp_rpc.Capability.with_ref x f
 
 let handle_connection ?tags ~secret_key vat client =
   Lwt.catch (fun () ->

@@ -2,7 +2,7 @@
     The user can create a new file, get and set its contents, and get a sturdy ref to it.
     See [test_store] for an example using this. *)
 
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 module DB : sig

@@ -1,8 +1,10 @@
 (** Cap'n Proto RPC using the Cap'n Proto serialisation and Lwt for concurrency. *)
 
-open Capnp.RPC
-
 include (module type of Capnp.BytesMessage)
+(** @closed *)
+
+module Exception = Capnp_rpc_proto.Exception
+module Error = Capnp_rpc_proto.Error
 
 module StructRef : sig
   (** A promise for a response structure.
@@ -33,11 +35,11 @@ module Capability : sig
   type +'a t
   (** An ['a t] is a capability reference to a service of type ['a]. *)
 
-  val broken : Capnp_rpc.Exception.t -> 'a t
+  val broken : Exception.t -> 'a t
   (** [broken ex] is a broken capability, with problem [ex].
       Any attempt to call methods on it will fail with [ex]. *)
 
-  val when_broken : (Capnp_rpc.Exception.t -> unit) -> 'a t -> unit
+  val when_broken : (Exception.t -> unit) -> 'a t -> unit
   (** [when_broken fn x] calls [fn problem] when [x] becomes broken.
       If [x] is already broken, [fn] is called immediately.
       If [x] can never become broken (e.g. it is a near ref), this does nothing.
@@ -50,12 +52,12 @@ module Capability : sig
       For promises, [fn] will be transferred to the resolution if resolved.
       For broken caps, this method does nothing (exceptions are never released). *)
 
-  val problem : 'a t -> Capnp_rpc.Exception.t option
+  val problem : 'a t -> Exception.t option
   (** [problem t] is [Some ex] if [t] is broken, or [None] if it is still
       believed to be healthy. Once a capability is broken, it will never
       work again and any calls made on it will fail with exception [ex]. *)
 
-  val await_settled : 'a t -> (unit, Capnp_rpc.Exception.t) Lwt_result.t
+  val await_settled : 'a t -> (unit, Exception.t) Lwt_result.t
   (** [await_settled t] resolves once [t] is a "settled" (non-promise) reference.
       If [t] is a near, far or broken reference, this returns immediately.
       If it is currently a local or remote promise, it waits until it isn't.
@@ -95,7 +97,7 @@ module Capability : sig
         when you send a message, but you might need it if you decide to abort. *)
   end
 
-  val call : 't t -> ('t, 'a, 'b) MethodID.t -> 'a Request.t -> 'b StructRef.t
+  val call : 't t -> ('t, 'a, 'b) Capnp.RPC.MethodID.t -> 'a Request.t -> 'b StructRef.t
   (** [call target m req] invokes [target#m req] and returns a promise for the result.
       Messages may be sent to the capabilities that will be in the result
       before the result arrives - they will be pipelined to the service
@@ -103,8 +105,8 @@ module Capability : sig
       when finished with the result (consider using one of the [call_*] functions below
       instead for a simpler interface). *)
 
-  val call_and_wait : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
-    'a Request.t -> (('b StructStorage.reader_t * (unit -> unit)), [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
+  val call_and_wait : 't t -> ('t, 'a, 'b StructStorage.reader_t) Capnp.RPC.MethodID.t ->
+    'a Request.t -> (('b StructStorage.reader_t * (unit -> unit)), [> `Capnp of Error.t]) Lwt_result.t
   (** [call_and_wait t m req] does [call t m req] and waits for the response.
       This is simpler than using [call], but doesn't support pipelining
       (you can't use any capabilities in the response in another message until the
@@ -117,25 +119,25 @@ module Capability : sig
       Doing [Lwt.cancel] on the result will send a cancel message to the target
       for remote calls. *)
 
-  val call_for_value : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
-    'a Request.t -> ('b StructStorage.reader_t, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
+  val call_for_value : 't t -> ('t, 'a, 'b StructStorage.reader_t) Capnp.RPC.MethodID.t ->
+    'a Request.t -> ('b StructStorage.reader_t, [> `Capnp of Error.t]) Lwt_result.t
   (** [call_for_value t m req] is similar to [call_and_wait], but automatically
       releases any capabilities in the response before returning. Use this if
       you aren't expecting any capabilities in the response. *)
 
-  val call_for_value_exn : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
+  val call_for_value_exn : 't t -> ('t, 'a, 'b StructStorage.reader_t) Capnp.RPC.MethodID.t ->
     'a Request.t -> 'b StructStorage.reader_t Lwt.t
   (** Wrapper for [call_for_value] that turns errors into Lwt failures. *)
 
-  val call_for_unit : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
-    'a Request.t -> (unit, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
+  val call_for_unit : 't t -> ('t, 'a, 'b StructStorage.reader_t) Capnp.RPC.MethodID.t ->
+    'a Request.t -> (unit, [> `Capnp of Error.t]) Lwt_result.t
   (** Wrapper for [call_for_value] that ignores the result. *)
 
-  val call_for_unit_exn : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
+  val call_for_unit_exn : 't t -> ('t, 'a, 'b StructStorage.reader_t) Capnp.RPC.MethodID.t ->
     'a Request.t -> unit Lwt.t
   (** Wrapper for [call_for_unit] that turns errors into Lwt failures. *)
 
-  val call_for_caps : 't t -> ('t, 'a, 'b StructStorage.reader_t) MethodID.t ->
+  val call_for_caps : 't t -> ('t, 'a, 'b StructStorage.reader_t) Capnp.RPC.MethodID.t ->
     'a Request.t -> ('b StructRef.t -> 'c) -> 'c
   (** [call_for_caps target m req extract] is a wrapper for [call] that passes the results promise to
       [extract], which should extract any required capability promises from it.
@@ -154,7 +156,7 @@ module Capability : sig
   (** [resolve_ok r x] resolves [r]'s promise to [x]. [r] takes ownership of [x]
       (the caller must use [inc_ref] first if they want to continue using it). *)
 
-  val resolve_exn : 'a resolver -> Capnp_rpc.Exception.t -> unit
+  val resolve_exn : 'a resolver -> Exception.t -> unit
   (** [resolve_exn r x] breaks [r]'s promise with exception [x]. *)
 
   val inc_ref : _ t -> unit
@@ -185,7 +187,7 @@ module Sturdy_ref : sig
         (e.g. a "Swiss number")
     *)
 
-  val connect : 'a t -> ('a Capability.t, Capnp_rpc.Exception.t) result Lwt.t
+  val connect : 'a t -> ('a Capability.t, Exception.t) result Lwt.t
   (** [connect t] returns a live reference to [t]'s service. *)
 
   val connect_exn : 'a t -> 'a Capability.t Lwt.t
@@ -193,7 +195,7 @@ module Sturdy_ref : sig
 
   val with_cap :
     'a t ->
-    ('a Capability.t -> ('b, [> `Capnp of Capnp_rpc.Exception.t] as 'e) Lwt_result.t) ->
+    ('a Capability.t -> ('b, [> `Capnp of Exception.t] as 'e) Lwt_result.t) ->
     ('b, 'e) Lwt_result.t
   (** [with_cap t f] uses [connect t] to get a live-ref [x],
       then does [Capability.with_ref x f]. *)
@@ -251,7 +253,7 @@ module Service : sig
   val return_empty : unit -> 'a StructRef.t
   (** [return_empty ()] is a promise for a response with no payload. *)
 
-  val return_lwt : (unit -> ('a Response.t, [< `Capnp of Capnp_rpc.Error.t]) Lwt_result.t) -> 'a StructRef.t
+  val return_lwt : (unit -> ('a Response.t, [< `Capnp of Error.t]) Lwt_result.t) -> 'a StructRef.t
   (** [return_lwt fn] is a local promise for the result of Lwt thread [fn ()].
       If [fn ()] fails, the error is logged and an "Internal error" returned to the caller.
       If it returns an [Error] value then that error is returned to the caller.
@@ -259,14 +261,23 @@ module Service : sig
       will be queued locally until it [fn] has produced a result), so it may be better
       to return immediately a result containing a promise in some cases. *)
 
-  val fail : ?ty:Capnp_rpc.Exception.ty -> ('a, Format.formatter, unit, 'b StructRef.t) format4 -> 'a
+  val fail : ?ty:Exception.ty -> ('a, Format.formatter, unit, 'b StructRef.t) format4 -> 'a
   (** [fail msg] is an exception with reason [msg]. *)
 
   val fail_lwt :
-    ?ty:Capnp_rpc.Exception.ty ->
-    ('a, Format.formatter, unit, (_, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t) format4 ->
+    ?ty:Exception.ty ->
+    ('a, Format.formatter, unit, (_, [> `Capnp of Error.t]) Lwt_result.t) format4 ->
      'a
   (** [fail_lwt msg] is like [fail msg], but can be used with [return_lwt]. *)
+end
+
+(** Some aliases for common modules.
+
+    This is intended to be opened, as [open Capnp_rpc.Std]. *)
+module Std : sig
+  module Sturdy_ref = Sturdy_ref
+  module Capability = Capability
+  module Service = Service
 end
 
 (**/**)
@@ -275,6 +286,8 @@ module Untyped : sig
   (** This module is only for use by the code generated by the capnp-ocaml
       schema compiler. The generated code provides type-safe wrappers for
       everything here. *)
+
+  open Stdint
 
   type abstract_method_t
 
@@ -310,11 +323,13 @@ module Cast : sig
   val sturdy_to_raw : 'a Sturdy_ref.t -> Capnp_core.sturdy_ref
 end
 
+module Debug = Capnp_rpc_proto.Debug
+
 (**/**)
 
 module Persistence : sig
   class type ['a] persistent = object
-    method save : ('a Sturdy_ref.t, Capnp_rpc.Exception.t) result Lwt.t
+    method save : ('a Sturdy_ref.t, Exception.t) result Lwt.t
   end
 
   val with_persistence :
@@ -333,7 +348,7 @@ module Persistence : sig
   (** [with_sturdy_ref sr Service.Foo.local obj] is like [Service.Foo.local obj],
       but responds to [save] calls by returning [sr]. *)
 
-  val save : 'a Capability.t -> (Uri.t, [> `Capnp of Capnp_rpc.Error.t]) Lwt_result.t
+  val save : 'a Capability.t -> (Uri.t, [> `Capnp of Error.t]) Lwt_result.t
   (** [save cap] calls the persistent [save] method on [cap].
       Note that not all capabilities can be saved.
       todo: this should return an ['a Sturdy_ref.t]; see {!Sturdy_ref.reader}. *)

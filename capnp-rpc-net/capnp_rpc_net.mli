@@ -3,7 +3,7 @@
     this package (just use capnp-rpc-lwt instead), since they generally shouldn't
     care whether services are local or remote. *)
 
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 module S = S
 

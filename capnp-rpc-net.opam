@@ -15,7 +15,6 @@ depends: [
   "conf-capnproto" {build}
   "capnp" {>= "3.4.0"}
   "capnp-rpc" {= version}
-  "capnp-rpc-lwt" {= version}
   "astring"
   "fmt" {>= "0.8.7"}
   "logs"

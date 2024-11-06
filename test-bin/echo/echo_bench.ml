@@ -1,7 +1,7 @@
 
 open Lwt.Infix
 
-open Capnp_rpc_lwt 
+open Capnp_rpc.Std 
 
 let () =
   Logs.set_level (Some Logs.Info);

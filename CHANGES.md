@@ -1,3 +1,22 @@
+### v2.x
+
+- Rename `Capnp_rpc_lwt` to `Capnp_rpc` (which is now `Capnp_rpc_proto`).
+  The new `Capnp_rpc` now provides `Error`, `Exception` and `Debug` aliases
+  to the same modules in `Capnp_rpc_proto`, so that `Capnp_rpc_proto` doesn't
+  need to be used directly.
+
+- Add `Capnp_rpc.Std` with some common module aliases, to reduce the need
+  to `open Capnp_rpc` (which is rather large).
+
+To update to the new API:
+
+1. Replace `open Capnp_rpc_lwt` with `open Capnp_rpc.Std`.
+2. Replace all other uses of `Capnp_rpc_lwt` with just `Capnp_rpc`.
+3. In `dune` and `opam` files, replace `capnp-rpc-lwt` with `capnp-rpc`.
+4. Some modules are in `Capnp_rpc` but not the `Capnp_rpc.Std` subset.
+   Those should now be fully qualified (e.g. replace `Persistence` with
+   `Capnp_rpc.Persistence`).
+
 ### v1.2.3
 
 - Update to cmdliner 1.1.0 (@MisterDA #249).

@@ -1,8 +1,8 @@
 (* $MDX part-begin=server *)
-module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
+module Api = Echo_api.MakeRPC(Capnp_rpc)
 
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 let local =
   let module Echo = Api.Service.Echo in

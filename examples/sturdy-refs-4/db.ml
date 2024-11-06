@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 module File_store = Capnp_rpc_unix.File_store
@@ -36,7 +36,7 @@ let load t sr digest =
   | Some saved_service ->
     let logger = Store.Reader.SavedService.logger_get saved_service in
     let label = Store.Reader.SavedLogger.label_get logger in
-    let sr = Capnp_rpc_lwt.Sturdy_ref.cast sr in
+    let sr = Capnp_rpc.Sturdy_ref.cast sr in
     t.loader >|= fun loader ->
     loader sr ~label
 

@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc
 
 module Core_types = Private.Capnp_core.Core_types
 module Log = Capnp_rpc.Debug.Log

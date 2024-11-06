@@ -1,4 +1,4 @@
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 module S = S
 
@@ -20,7 +20,6 @@ module Networking (N : S.NETWORK) (F : Mirage_flow.S) = struct
 end
 
 module Capnp_address = Capnp_address
-module Persistence = Persistence
 module Two_party_network = Two_party_network
 module Auth = Auth
 module Tls_wrapper = Tls_wrapper

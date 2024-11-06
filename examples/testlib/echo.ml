@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 type t = Api.Service.Echo.t Capability.t
 

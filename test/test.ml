@@ -6,9 +6,9 @@ module Response = Testbed.Capnp_direct.String_content.Response
 module Test_utils = Testbed.Test_utils
 module Services = Testbed.Services
 module CS = Testbed.Connection.Pair ( )    (* A client-server pair *)
-module RO_array = Capnp_rpc.RO_array
-module Error = Capnp_rpc.Error
-module Exception = Capnp_rpc.Exception
+module RO_array = Capnp_rpc_proto.RO_array
+module Error = Capnp_rpc_proto.Error
+module Exception = Capnp_rpc_proto.Exception
 module Local_struct_promise = Testbed.Capnp_direct.Local_struct_promise
 module Cap_proxy = Testbed.Capnp_direct.Cap_proxy
 
@@ -25,11 +25,11 @@ let response_equal a b =
   Response.data a = Response.data b &&
   RO_array.equal (=) a_caps b_caps
 
-let error = Alcotest.of_pp Capnp_rpc.Error.pp
+let error = Alcotest.of_pp Capnp_rpc_proto.Error.pp
 let response = Alcotest.testable Core_types.Response_payload.pp response_equal
 let response_promise = Alcotest.(option (result response error))
 
-let exn = Alcotest.of_pp Capnp_rpc.Exception.pp
+let exn = Alcotest.of_pp Capnp_rpc_proto.Exception.pp
 
 let call target msg caps =
   let caps = List.map (fun x -> (x :> Core_types.cap)) caps in
@@ -695,7 +695,7 @@ let test_local_embargo_13 () =
   let to_client = S.bootstrap s in
   let to_server = C.bootstrap c in
   CS.flush c s;
-  let broken = Core_types.broken_cap (Capnp_rpc.Exception.v "broken") in   (* (at server) *)
+  let broken = Core_types.broken_cap (Capnp_rpc_proto.Exception.v "broken") in   (* (at server) *)
   (* Server calls client, passing a broken cap.
      Due to a protocol limitation, we first send this as an export and then break it. *)
   let q1 = call_for_cap to_client "q1" [broken] in
@@ -1316,10 +1316,10 @@ let test_ref_counts () =
   let make () =
     let o = object (self)
       inherit Core_types.service
-      val id = Capnp_rpc.Debug.OID.next ()
+      val id = Capnp_rpc_proto.Debug.OID.next ()
       method call results _ = Core_types.resolve_ok results (Response.v "answer")
       method! private release = Hashtbl.remove objects self
-      method! pp f = Fmt.pf f "Service(%a, %t)" Capnp_rpc.Debug.OID.pp id self#pp_refcount
+      method! pp f = Fmt.pf f "Service(%a, %t)" Capnp_rpc_proto.Debug.OID.pp id self#pp_refcount
     end in
     Hashtbl.add objects o true;
     o
@@ -1541,7 +1541,7 @@ let test_import_callbacks () =
   in
   dec_ref q1;
   Gc.full_major ();
-  promise#resolve (Core_types.broken_cap (Capnp_rpc.Exception.v "broken"));
+  promise#resolve (Core_types.broken_cap (Capnp_rpc_proto.Exception.v "broken"));
   CS.flush c s;
   dec_ref bs;
   Alcotest.(check string) "ok set" "resolved" !ok;

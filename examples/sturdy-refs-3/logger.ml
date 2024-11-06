@@ -1,11 +1,11 @@
-module Api = Api.MakeRPC(Capnp_rpc_lwt)
+module Api = Api.MakeRPC(Capnp_rpc)
 
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 (* $MDX part-begin=local *)
 let rec local ~services sr label =
   let module Logger = Api.Service.Logger in
-  Persistence.with_sturdy_ref sr Logger.local @@ object
+  Capnp_rpc.Persistence.with_sturdy_ref sr Logger.local @@ object
 (* $MDX part-end *)
     inherit Logger.service
 

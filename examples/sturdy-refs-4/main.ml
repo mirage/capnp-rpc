@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 module Restorer = Capnp_rpc_net.Restorer
 
@@ -58,7 +58,7 @@ let sub cap_file label =
     let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
     Sturdy_ref.with_cap_exn sr @@ fun logger ->
     Capability.with_ref (Logger.sub logger label) @@ fun sub ->
-    Persistence.save_exn sub >>= fun uri ->
+    Capnp_rpc.Persistence.save_exn sub >>= fun uri ->
     Capnp_rpc_unix.Cap_file.save_uri uri sub_file |> or_fail;
     Printf.printf "Wrote %S\n%!" sub_file;
     Lwt.return_unit

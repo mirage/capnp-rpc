@@ -1,9 +1,9 @@
 (library
- (name capnp_rpc_lwt)
- (public_name capnp-rpc-lwt)
+ (name capnp_rpc)
+ (public_name capnp-rpc)
  (ocamlc_flags :standard -w -55-53)
  (ocamlopt_flags :standard -w -55-53)
- (libraries astring capnp capnp-rpc fmt logs lwt uri))
+ (libraries astring capnp capnp-rpc.proto fmt logs lwt uri))
 
 (rule
  (targets rpc_schema.ml rpc_schema.mli)

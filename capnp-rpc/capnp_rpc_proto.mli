@@ -1,5 +1,5 @@
 (** The abstract and untyped Cap'n Proto RPC protocol.
-    Users will normally want to use the {!module:Capnp_rpc_lwt} API instead,
+    Users will normally want to use the {!module:Capnp_rpc} API instead,
     which provides a typed interface using the Cap'n Proto serialisation. *)
 
 module S = S

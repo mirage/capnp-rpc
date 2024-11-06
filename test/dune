@@ -1,4 +1,4 @@
 (test
  (name test)
  (package capnp-rpc)
- (libraries capnp-rpc alcotest logs.fmt testbed))
+ (libraries capnp-rpc.proto alcotest logs.fmt testbed))

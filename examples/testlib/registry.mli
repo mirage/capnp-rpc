@@ -1,4 +1,4 @@
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 module Version : sig
   type t = [`Version_ed7d11372e0a7243] Capability.t

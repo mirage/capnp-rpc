@@ -1,11 +1,11 @@
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 module Request = Capnp_direct.String_content.Request
 module Response = Capnp_direct.String_content.Response
 
 let src = Logs.Src.create "test-net" ~doc:"Cap'n Proto RPC tests"
 module Log = (val Logs.src_log src: Logs.LOG)
 
-module Stats = Capnp_rpc.Stats
+module Stats = Capnp_rpc_proto.Stats
 let stats_t = Alcotest.of_pp Stats.pp
 
 let summary_of_msg = function
@@ -13,7 +13,7 @@ let summary_of_msg = function
   | `Bootstrap _ -> "bootstrap"
   | `Call (_, _, msg, _, _) -> "call:" ^ (Request.data msg)
   | `Return (_, `Results (msg, _), _) -> "return:" ^ (Response.data msg)
-  | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
+  | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc_proto.Exception.reason
   | `Return (_, `Cancelled, _) -> "return:(cancelled)"
   | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
   | `Return (_, `ResultsSentElsewhere, _) -> "return:sent-elsewhere"
@@ -47,15 +47,15 @@ module type ENDPOINT = sig
 
   val bootstrap : t -> cap
 
-  val stats : t -> Capnp_rpc.Stats.t
+  val stats : t -> Capnp_rpc_proto.Stats.t
   val check_invariants : t -> unit
   val check_finished : t -> name:string -> unit
 
-  val disconnect : t -> Capnp_rpc.Exception.t -> unit
+  val disconnect : t -> Capnp_rpc_proto.Exception.t -> unit
 end
 
 module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
-  module Conn = Capnp_rpc.CapTP.Make(EP)
+  module Conn = Capnp_rpc_proto.CapTP.Make(EP)
 
   type t = {
     conn : Conn.t;
@@ -78,7 +78,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
     | None -> None
     | Some bootstrap -> Some (fun k -> function
         | "" -> Capnp_direct.Core_types.inc_ref bootstrap; k @@ Ok bootstrap
-        | _ -> k @@ Error (Capnp_rpc.Exception.v "Only a main interface is available")
+        | _ -> k @@ Error (Capnp_rpc_proto.Exception.v "Only a main interface is available")
       )
 
   let create ?bootstrap ~tags
@@ -117,7 +117,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
       pop_msg ?expect t |> Conn.handle_msg t.conn;
       Conn.check t.conn
     with ex ->
-      Logs.err (fun f -> f ~tags:(Conn.tags t.conn) "@[<v2>%a:@,%a@]" Capnp_rpc.Debug.pp_exn ex Conn.dump t.conn);
+      Logs.err (fun f -> f ~tags:(Conn.tags t.conn) "@[<v2>%a:@,%a@]" Capnp_rpc_proto.Debug.pp_exn ex Conn.dump t.conn);
       raise ex
 
   let maybe_handle_msg t =
@@ -131,7 +131,7 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 
   let stats t = Conn.stats t.conn
 
-  let finished = Capnp_rpc.Exception.v "Tests finished"
+  let finished = Capnp_rpc_proto.Exception.v "Tests finished"
 
   let check_invariants t =
     Conn.check t.conn
@@ -149,12 +149,12 @@ module Endpoint (EP : Capnp_direct.ENDPOINT) = struct
 end
 
 module Pair ( ) = struct
-  module Table_types = Capnp_rpc.Message_types.Table_types ( )
-  module ProtoC = Capnp_rpc.Message_types.Endpoint(Capnp_direct.Core_types)(Capnp_direct.Network_types)(Table_types)
+  module Table_types = Capnp_rpc_proto.Message_types.Table_types ( )
+  module ProtoC = Capnp_rpc_proto.Message_types.Endpoint(Capnp_direct.Core_types)(Capnp_direct.Network_types)(Table_types)
   module ProtoS = struct
     module Core_types = Capnp_direct.Core_types
     module Network_types = Capnp_direct.Network_types
-    module Table = Capnp_rpc.Message_types.Flip(ProtoC.Table)
+    module Table = Capnp_rpc_proto.Message_types.Flip(ProtoC.Table)
     module In = ProtoC.Out
     module Out = ProtoC.In
   end
