@@ -12,11 +12,13 @@ module Make (EP : Message_types.ENDPOINT) : sig
       capability. *)
 
   val create : ?restore:restorer -> tags:Logs.Tag.set ->
+    fork:((unit -> unit) -> unit) ->
     queue_send:([> EP.Out.t] -> unit) -> t
-  (** [create ~bootstrap ~tags ~queue_send] is a handler for a connection to a remote peer.
+  (** [create ~restore ~tags ~queue_send] is a handler for a connection to a remote peer.
       Messages will be sent to the peer by calling [queue_send] (which MUST deliver them in order).
-      If the remote peer asks for the bootstrap object, it will be given a reference to [bootstrap].
-      Log messages will be tagged with [tags]. *)
+      If the remote peer asks for a bootstrap object, [restore] will be used to get it.
+      Log messages will be tagged with [tags].
+      @param fork is used when dispatching a local method handler. *)
 
   val bootstrap : t -> string -> EP.Core_types.cap
   (** [bootstrap t object_id] returns a reference to the remote peer's bootstrap object, if any.

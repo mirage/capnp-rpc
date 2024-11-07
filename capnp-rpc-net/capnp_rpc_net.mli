@@ -90,7 +90,7 @@ module Restorer : sig
     (** [make_sturdy t id] converts an ID to a full URI, by adding the
         hosting vat's address and fingerprint. *)
 
-    val load : t -> 'a Sturdy_ref.t -> string -> resolution Lwt.t
+    val load : t -> 'a Sturdy_ref.t -> string -> resolution
     (** [load t sr digest] is called to restore the service with key [digest].
         [sr] is a sturdy ref that refers to the service, which the service
         might want to hand out to clients.
@@ -109,9 +109,10 @@ module Restorer : sig
         [make_sturdy id] converts an ID to a full URI, by adding the
         hosting vat's address and fingerprint. *)
 
-    val of_loader : (module LOADER with type t = 'loader) -> 'loader -> t
-    (** [of_loader (module Loader) l] is a new caching table that uses
-        [Loader.load l sr (Loader.hash id)] to restore services that aren't in the cache. *)
+    val of_loader : sw:Eio.Switch.t -> (module LOADER with type t = 'loader) -> 'loader -> t
+    (** [of_loader ~sw (module Loader) l] is a new caching table that uses
+        [Loader.load l sr (Loader.hash id)] to restore services that aren't in the cache.
+        The load function runs in a new fiber in [sw]. *)
 
     val add : t -> Id.t -> 'a Capability.t -> unit
     (** [add t id cap] adds a mapping to [t].
@@ -130,7 +131,7 @@ module Restorer : sig
 
   val of_table : Table.t -> t
 
-  val restore : t -> Id.t -> ('a Capability.t, Capnp_rpc.Exception.t) result Lwt.t
+  val restore : t -> Id.t -> ('a Capability.t, Capnp_rpc.Exception.t) result
   (** [restore t id] restores [id] using [t].
       You don't normally need to call this directly, as the Vat will do it automatically. *)
 end
@@ -141,8 +142,7 @@ module type VAT_NETWORK = S.VAT_NETWORK with
   type service_id := Restorer.Id.t and
   type 'a sturdy_ref := 'a Sturdy_ref.t
 
-module Networking (N : S.NETWORK) (Flow : Mirage_flow.S) : VAT_NETWORK with
-  module Network = N and
-  type flow = Flow.flow
+module Networking (N : S.NETWORK) : VAT_NETWORK with
+  module Network = N
 
 module Capnp_address = Capnp_address

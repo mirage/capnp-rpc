@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 
 let src = Logs.Src.create "endpoint" ~doc:"Send and receive Cap'n'Proto messages"
 module Log = (val Logs.src_log src: Logs.LOG)
@@ -7,21 +7,20 @@ let compression = `None
 
 let record_sent_messages = false
 
-type flow = Flow : (module Mirage_flow.S with type flow = 'a) * 'a -> flow
+type flow = Eio.Flow.two_way_ty r
 
 type t = {
   flow : flow;
   decoder : Capnp.Codecs.FramedStream.t;
-  switch : Lwt_switch.t;
   peer_id : Auth.Digest.t;
 }
 
 let peer_id t = t.peer_id
 
-let of_flow (type flow) ~switch ~peer_id (module F : Mirage_flow.S with type flow = flow) (flow:flow) =
-  let generic_flow = Flow ((module F), flow) in
+let of_flow ~peer_id flow =
   let decoder = Capnp.Codecs.FramedStream.empty compression in
-  { flow = generic_flow; decoder; switch; peer_id }
+  let flow = (flow :> flow) in
+  { flow; decoder; peer_id }
 
 let dump_msg =
   let next = ref 0 in
@@ -34,37 +33,36 @@ let dump_msg =
     close_out ch
 
 let send t msg =
-  let (Flow ((module F), flow)) = t.flow in
   let data = Capnp.Codecs.serialize ~compression msg in
   if record_sent_messages then dump_msg data;
-  F.write flow (Cstruct.of_string data) >|= function
-  | Ok ()
-  | Error `Closed as e -> e
-  | Error e -> Error (`Msg (Fmt.to_to_string F.pp_write_error e))
+  match Eio.Flow.copy_string data t.flow with
+  | ()
+  | exception End_of_file -> Ok ()
+  | exception (Eio.Io (Eio.Net.E Connection_reset _, _) as ex) ->
+    Log.info (fun f -> f "%a" Eio.Exn.pp ex);
+    Error `Closed
+  | exception ex ->
+    Eio.Fiber.check ();
+    Error (`Msg (Printexc.to_string ex))
 
 let rec recv t =
-  let (Flow ((module F), flow)) = t.flow in
   match Capnp.Codecs.FramedStream.get_next_frame t.decoder with
-  | _ when not (Lwt_switch.is_on t.switch) -> Lwt.return @@ Error `Closed
-  | Ok msg -> Lwt.return (Ok (Capnp.BytesMessage.Message.readonly msg))
+  | Ok msg -> Ok (Capnp.BytesMessage.Message.readonly msg)
   | Error Capnp.Codecs.FramingError.Unsupported -> failwith "Unsupported Cap'n'Proto frame received"
   | Error Capnp.Codecs.FramingError.Incomplete ->
     Log.debug (fun f -> f "Incomplete; waiting for more data...");
-    F.read flow >>= function
-    | Ok (`Data data) ->
-      Log.debug (fun f -> f "Read %d bytes" (Cstruct.length data));
-      Capnp.Codecs.FramedStream.add_fragment t.decoder (Cstruct.to_string data);
+    let buf = Cstruct.create 4096 in    (* TODO: make this efficient *)
+    match Eio.Flow.single_read t.flow buf with
+    | got ->
+      Log.debug (fun f -> f "Read %d bytes" got);
+      Capnp.Codecs.FramedStream.add_fragment t.decoder (Cstruct.to_string buf ~len:got);
       recv t
-    | Ok `Eof ->
+    | exception End_of_file ->
       Log.info (fun f -> f "Connection closed");
-      Lwt_switch.turn_off t.switch >|= fun () ->
       Error `Closed
-    | Error ex when Lwt_switch.is_on t.switch -> Capnp_rpc.Debug.failf "recv: %a" F.pp_error ex
-    | Error _ -> Lwt.return (Error `Closed)
+    | exception (Eio.Io (Eio.Net.E Connection_reset _, _) as ex) ->
+      Log.info (fun f -> f "%a" Eio.Exn.pp ex);
+      Error `Closed
 
 let disconnect t =
-  Lwt_switch.turn_off t.switch
-
-let pp_error f = function
-  | `Closed -> Fmt.string f "Connection closed"
-  | `Msg m -> Fmt.string f m
+  Eio.Flow.shutdown t.flow `All

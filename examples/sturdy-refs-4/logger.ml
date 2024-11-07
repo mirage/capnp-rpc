@@ -1,5 +1,3 @@
-open Lwt.Infix
-
 module Api = Api.MakeRPC(Capnp_rpc)
 
 open Capnp_rpc.Std
@@ -22,14 +20,13 @@ let local ~persist_new sr label =
       let sub_label = Params.label_get params in
       release_param_caps ();
       let label = Printf.sprintf "%s/%s" label sub_label in
-      Service.return_lwt @@ fun () ->
-      persist_new ~label >|= function
-      | Error e -> Error (`Capnp (`Exception e))
+      match persist_new ~label with
+      | Error e -> Service.error (`Exception e)
       | Ok logger ->
         let response, results = Service.Response.create Results.init_pointer in
         Results.logger_set results (Some logger);
         Capability.dec_ref logger;
-        Ok response
+        Service.return response
 (* $MDX part-end *)
 
     method! pp f =
