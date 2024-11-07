@@ -57,16 +57,16 @@ module type WIRE = sig
     (** The (empty) content for the reply to the bootstrap message. *)
   end
 
-  val ref_leak_detected : (unit -> unit) -> unit
-  (** [ref_leak_detected fn] is called when a promise or capability is GC'd while
+  val ref_leak_detected : int -> (unit -> unit) -> unit
+  (** [ref_leak_detected thread_id fn] is called when a promise or capability is GC'd while
       its ref-count is non-zero, indicating that resources may have been leaked.
       [fn ()] will log a warning about this and free the resources itself.
       The reason for going via [ref_leak_detected] rather than calling [fn] directly
       is because the OCaml GC may detect the problem at any point (e.g. while we're
       sending another message). The implementation should arrange for [fn] to be
-      called at a safe point (e.g. when returning to the main loop).
-      Unit-tests may wish to call [fn] immediately to show the error and then
-      fail the test. *)
+      called at a safe point in thread [thread_id] (e.g. when returning to the
+      thread's main loop). Unit-tests may wish to call [fn] immediately to show
+      the error and then fail the test. *)
 end
 
 module type PAYLOAD = sig

@@ -8,14 +8,21 @@
 - Add `Capnp_rpc.Std` with some common module aliases, to reduce the need
   to `open Capnp_rpc` (which is rather large).
 
+- Convert API from Lwt to Eio.
+
 To update to the new API:
 
-1. Replace `open Capnp_rpc_lwt` with `open Capnp_rpc.Std`.
-2. Replace all other uses of `Capnp_rpc_lwt` with just `Capnp_rpc`.
-3. In `dune` and `opam` files, replace `capnp-rpc-lwt` with `capnp-rpc`.
-4. Some modules are in `Capnp_rpc` but not the `Capnp_rpc.Std` subset.
+1. Use [lwt_eio][] during the migration to allow using Eio and Lwt together in your application.
+2. Replace `open Capnp_rpc_lwt` with `open Capnp_rpc.Std`.
+3. Replace all other uses of `Capnp_rpc_lwt` with just `Capnp_rpc`.
+4. In `dune` and `opam` files, replace `capnp-rpc-lwt` with `capnp-rpc`.
+5. Some modules are in `Capnp_rpc` but not the `Capnp_rpc.Std` subset.
    Those should now be fully qualified (e.g. replace `Persistence` with
    `Capnp_rpc.Persistence`).
+6. Replace `Service.return_lwt` with `Lwt_eio.run_lwt`.
+7. Once all Lwt code is gone, `lwt_eio` can be removed.
+
+[lwt_eio]: https://github.com/ocaml-multicore/lwt_eio
 
 ### v1.2.3
 

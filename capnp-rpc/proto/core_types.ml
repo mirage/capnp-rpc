@@ -51,6 +51,7 @@ module Make(Wire : S.WIRE) = struct
 
   class virtual ref_counted =
     object (self : #base_ref)
+      val thread_id = Thread.(id (self ()))
       val mutable ref_count = RC.one
       method private virtual release : unit
       method virtual pp : Format.formatter -> unit
@@ -72,7 +73,7 @@ module Make(Wire : S.WIRE) = struct
       method sealed_dispatch : type a. a S.brand -> a option = function
         | Gc ->
           if not (RC.is_zero ref_count) then (
-            ref_leak_detected (fun () ->
+            ref_leak_detected thread_id (fun () ->
                 if RC.is_zero ref_count then (
                   Log.warn (fun f -> f "@[<v2>Reference GC'd with non-zero ref-count!@,%t@,\
                                         But, ref-count is now zero, so a previous GC leak must have fixed it.@]"

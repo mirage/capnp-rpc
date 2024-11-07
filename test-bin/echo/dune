@@ -1,6 +1,6 @@
 (executable
  (name echo_bench)
- (libraries lwt.unix capnp-rpc capnp-rpc-net capnp-rpc-unix logs.fmt))
+ (libraries eio_main capnp-rpc capnp-rpc-net capnp-rpc-unix mirage-crypto-rng-eio logs.fmt))
 
 (rule
  (targets echo_api.ml echo_api.mli)

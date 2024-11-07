@@ -1,4 +1,4 @@
 (library
  (name capnp_rpc_proto)
  (public_name capnp-rpc.proto)
- (libraries astring fmt logs stdint asetmap))
+ (libraries astring fmt logs stdint asetmap threads))

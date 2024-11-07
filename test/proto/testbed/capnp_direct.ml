@@ -42,7 +42,7 @@ module String_content = struct
 
   module Response = Request
 
-  let ref_leak_detected fn =
+  let ref_leak_detected _ fn =
     fn ();
     incr ref_leaks
 end
