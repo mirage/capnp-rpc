@@ -17,7 +17,7 @@ module String_content = struct
   type response = request
   type 'a msg = {
     data : string;
-    caps : Capnp_rpc.S.attachments;
+    caps : Capnp_rpc_proto.S.attachments;
   }
 
   module Request = struct
@@ -30,7 +30,7 @@ module String_content = struct
 
     let v data = {
       data;
-      caps = Capnp_rpc.S.No_attachments;
+      caps = Capnp_rpc_proto.S.No_attachments;
     }
 
     let data t = t.data
@@ -47,7 +47,7 @@ module String_content = struct
     incr ref_leaks
 end
 
-module Core_types = Capnp_rpc.Core_types(String_content)
+module Core_types = Capnp_rpc_proto.Core_types(String_content)
 
 module Network_types = struct
   type provision_id
@@ -56,9 +56,9 @@ module Network_types = struct
   type join_key_part
 end
 
-module type ENDPOINT = Capnp_rpc.Message_types.ENDPOINT with
+module type ENDPOINT = Capnp_rpc_proto.Message_types.ENDPOINT with
   module Core_types = Core_types and
   module Network_types = Network_types
 
-module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)
-module Cap_proxy = Capnp_rpc.Cap_proxy.Make(Core_types)
+module Local_struct_promise = Capnp_rpc_proto.Local_struct_promise.Make(Core_types)
+module Cap_proxy = Capnp_rpc_proto.Cap_proxy.Make(Core_types)

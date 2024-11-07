@@ -1,7 +1,7 @@
 open Lwt.Infix
 open Capnp_core
 
-module Log = Capnp_rpc.Debug.Log
+module Log = Capnp_rpc_proto.Debug.Log
 module StructStorage = Capnp.BytesMessage.StructStorage
 
 type 'a t = Core_types.cap
@@ -50,7 +50,7 @@ let await_settled_exn t =
   wait_until_settled t >|= fun () ->
   match problem t with
   | None -> ()
-  | Some e -> Fmt.failwith "%a" Capnp_rpc.Exception.pp e
+  | Some e -> Fmt.failwith "%a" Capnp_rpc_proto.Exception.pp e
 
 let equal a b =
   match a#blocker, b#blocker with
@@ -101,8 +101,8 @@ let call_for_value_exn cap m req =
     Log.debug (fun f -> f "Error calling %t(%a): %a"
                   cap#pp
                   Capnp.RPC.MethodID.pp m
-                  Capnp_rpc.Error.pp e);
-    Fmt.failwith "%a: %a" Capnp.RPC.MethodID.pp m Capnp_rpc.Error.pp e
+                  Capnp_rpc_proto.Error.pp e);
+    Fmt.failwith "%a: %a" Capnp.RPC.MethodID.pp m Capnp_rpc_proto.Error.pp e
 
 let call_for_unit cap m req =
   call_for_value cap m req >|= function

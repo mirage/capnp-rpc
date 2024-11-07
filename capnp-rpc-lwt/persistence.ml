@@ -3,7 +3,7 @@ open Lwt.Infix
 module Api = Persistent.Make(Capnp.BytesMessage)
 
 class type ['a] persistent = object
-  method save : ('a Sturdy_ref.t, Capnp_rpc.Exception.t) result Lwt.t
+  method save : ('a Sturdy_ref.t, Capnp_rpc_proto.Exception.t) result Lwt.t
 end
 
 let with_persistence
@@ -52,5 +52,5 @@ let save cap =
 
 let save_exn cap =
   save cap >>= function
-  | Error (`Capnp e) -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Error.pp e)
+  | Error (`Capnp e) -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc_proto.Error.pp e)
   | Ok x -> Lwt.return x

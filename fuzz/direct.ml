@@ -1,4 +1,4 @@
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 
 let next = ref 0
 

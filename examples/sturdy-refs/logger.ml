@@ -1,6 +1,6 @@
-module Api = Api.MakeRPC(Capnp_rpc_lwt)
+module Api = Api.MakeRPC(Capnp_rpc)
 
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 let local label =
   let module Logger = Api.Service.Logger in

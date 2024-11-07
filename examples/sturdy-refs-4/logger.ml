@@ -1,12 +1,12 @@
 open Lwt.Infix
 
-module Api = Api.MakeRPC(Capnp_rpc_lwt)
+module Api = Api.MakeRPC(Capnp_rpc)
 
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 let local ~persist_new sr label =
   let module Logger = Api.Service.Logger in
-  Persistence.with_sturdy_ref sr Logger.local @@ object
+  Capnp_rpc.Persistence.with_sturdy_ref sr Logger.local @@ object
     inherit Logger.service
 
     method log_impl params release_param_caps =

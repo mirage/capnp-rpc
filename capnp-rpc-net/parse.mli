@@ -1,5 +1,5 @@
 (** Parsing of Cap'n Proto RPC messages received from a remote peer. *)
-open Capnp_rpc_lwt.Private
+open Capnp_rpc.Private
 
 module Make (EP : Capnp_core.ENDPOINT) (Network : S.NETWORK with module Types = EP.Network_types) : sig
   val message :

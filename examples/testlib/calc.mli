@@ -1,6 +1,6 @@
 (** This is the OCaml version of the C++ capnp calculator example. *)
 
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 type t = [`Calculator_97983392df35cc36] Capability.t
 

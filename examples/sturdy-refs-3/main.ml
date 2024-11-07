@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 module Restorer = Capnp_rpc_net.Restorer
 
@@ -49,7 +49,7 @@ let () =
     (* $MDX part-begin=save *)
     (* The admin creates a logger for Alice and saves it: *)
     Capability.with_ref (Logger.sub root "alice") (fun for_alice ->
-        Persistence.save_exn for_alice >|= fun uri ->
+        Capnp_rpc.Persistence.save_exn for_alice >|= fun uri ->
         Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail
       ) >>= fun () ->
     (* Alice uses it: *)

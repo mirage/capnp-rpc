@@ -1,5 +1,5 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 type digest = string
@@ -61,7 +61,7 @@ module File = struct
 
   let local (db:DB.t) sr digest =
     let module File = Api.Service.File in
-    Persistence.with_sturdy_ref sr File.local @@ object
+    Capnp_rpc.Persistence.with_sturdy_ref sr File.local @@ object
       inherit File.service
 
       method get_impl _ release_params =

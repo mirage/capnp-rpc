@@ -1,7 +1,7 @@
 open Asetmap
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 module Test_utils = Testbed.Test_utils
-module OID = Capnp_rpc.Debug.OID
+module OID = Capnp_rpc_proto.Debug.OID
 module IntSet = Set.Make(struct type t = int let compare = compare end)
 
 let running_under_afl =
@@ -9,7 +9,7 @@ let running_under_afl =
   | [] -> assert false
   | [_] -> false
   | [_; "--fuzz"] -> true
-  | prog :: _ -> Capnp_rpc.Debug.failf "Usage: %s < input-data" prog
+  | prog :: _ -> Capnp_rpc_proto.Debug.failf "Usage: %s < input-data" prog
 
 let test_script_path = "test_script.ml"
 
@@ -75,7 +75,7 @@ let pp_counters f {next_to_send; next_expected; _} = Fmt.pf f "{send=%d; expect=
 module Msg = struct
   type 'a msg = {
     contents : 'a;
-    attachments : Capnp_rpc.S.attachments;
+    attachments : Capnp_rpc_proto.S.attachments;
   }
 
   let pp_msg pp_contents f {contents; attachments = _} = pp_contents f contents
@@ -125,7 +125,7 @@ module Msg = struct
             counters.cancelled <- IntSet.add seq counters.cancelled;
           )
         );
-      { contents; attachments = Capnp_rpc.S.No_attachments }
+      { contents; attachments = Capnp_rpc_proto.S.No_attachments }
   end
 
   module Response = struct
@@ -133,11 +133,11 @@ module Msg = struct
     type t = contents msg
     let pp = pp_msg Fmt.string
     let cap_index _ i = Some i
-    let bootstrap () = {contents = "(boot)"; attachments = Capnp_rpc.S.No_attachments}
+    let bootstrap () = {contents = "(boot)"; attachments = Capnp_rpc_proto.S.No_attachments}
     let with_attachments attachments x = {x with attachments}
     let attachments x = x.attachments
     let v contents =
-      { contents; attachments = Capnp_rpc.S.No_attachments }
+      { contents; attachments = Capnp_rpc_proto.S.No_attachments }
   end
 
   type request = Request.contents
@@ -152,7 +152,7 @@ module Msg = struct
     | `Bootstrap _ -> "bootstrap"
     | `Call (_, _, msg, _, _) -> Fmt.str "call:%a:%d" OID.pp msg.contents.Request.sender msg.contents.Request.seq
     | `Return (_, `Results (msg, _), _) -> "return:" ^ msg.contents
-    | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc.Exception.reason
+    | `Return (_, `Exception ex, _) -> "return:" ^ ex.Capnp_rpc_proto.Exception.reason
     | `Return (_, `Cancelled, _) -> "return:(cancelled)"
     | `Return (_, `AcceptFromThirdParty, _) -> "return:accept"
     | `Return (_, `ResultsSentElsewhere, _) -> "return:sent-elsewhere"
@@ -166,7 +166,7 @@ module Msg = struct
 
 end
 
-module Core_types = Capnp_rpc.Core_types(Msg)
+module Core_types = Capnp_rpc_proto.Core_types(Msg)
 
 module Network_types = struct
   type provision_id
@@ -175,18 +175,18 @@ module Network_types = struct
   type join_key_part
 end
 
-module Local_struct_promise = Capnp_rpc.Local_struct_promise.Make(Core_types)
+module Local_struct_promise = Capnp_rpc_proto.Local_struct_promise.Make(Core_types)
 
 module Table_types = struct
-  module QuestionId = Capnp_rpc.Id.Make ( )
+  module QuestionId = Capnp_rpc_proto.Id.Make ( )
   module AnswerId = QuestionId
-  module ImportId = Capnp_rpc.Id.Make ( )
+  module ImportId = Capnp_rpc_proto.Id.Make ( )
   module ExportId = ImportId
 end
-module EP = Capnp_rpc.Message_types.Endpoint(Core_types)(Network_types)(Table_types)
+module EP = Capnp_rpc_proto.Message_types.Endpoint(Core_types)(Network_types)(Table_types)
 
 module Endpoint = struct
-  module Conn = Capnp_rpc.CapTP.Make(EP)
+  module Conn = Capnp_rpc_proto.CapTP.Make(EP)
 
   type t = {
     local_id : int;
@@ -256,7 +256,7 @@ module Endpoint = struct
     ) else false
 
   let disconnect t =
-    Conn.disconnect t.conn (Capnp_rpc.Exception.v "Tests finished")
+    Conn.disconnect t.conn (Capnp_rpc_proto.Exception.v "Tests finished")
 end
 
 let () =
@@ -297,7 +297,7 @@ let pp_error f base =
   with ex ->
     Fmt.pf f "@,[%a] %a"
       Fmt.(styled `Red string) "ERROR"
-      Capnp_rpc.Debug.pp_exn ex
+      Capnp_rpc_proto.Debug.pp_exn ex
 
 module Struct_info = struct
   type t = {
@@ -375,7 +375,7 @@ module Vat = struct
       t.caps |> WrapArray.iter (fun c -> c.cr_cap#check_invariants);
       t.structs |> WrapArray.iter Struct_info.check_invariants
     with ex ->
-      Logs.err (fun f -> f ~tags:(tags t) "Invariants check failed: %a" Capnp_rpc.Debug.pp_exn ex);
+      Logs.err (fun f -> f ~tags:(tags t) "Invariants check failed: %a" Capnp_rpc_proto.Debug.pp_exn ex);
       raise ex
 
   let do_action state =
@@ -471,11 +471,11 @@ module Vat = struct
         Direct.return answer_id RO_array.empty;
         let msg = "(simulated-failure)" in
         code (fun f ->
-            Fmt.pf f "resolve_exn %a (Capnp_rpc.Exception.v %S);"
+            Fmt.pf f "resolve_exn %a (Capnp_rpc_proto.Exception.v %S);"
               pp_resolver answer_var
               msg
           );
-        Core_types.resolve_exn answer (Capnp_rpc.Exception.v msg)
+        Core_types.resolve_exn answer (Capnp_rpc_proto.Exception.v msg)
       | `Return_results (args, arg_refs) ->
         let arg_ids = List.map (fun cr -> cr.cr_target) arg_refs in
         RO_array.iter Core_types.inc_ref args;
@@ -496,10 +496,10 @@ module Vat = struct
     object (self : test_service)
       inherit Core_types.service as super
 
-      val id = Capnp_rpc.Debug.OID.next ()
+      val id = Capnp_rpc_proto.Debug.OID.next ()
 
       method! pp f = Fmt.pf f "test-service(%a, %t) %a"
-          Capnp_rpc.Debug.OID.pp id
+          Capnp_rpc_proto.Debug.OID.pp id
           super#pp_refcount
           Direct.pp self_id
 
@@ -617,7 +617,7 @@ module Vat = struct
   let restore t k object_id =
     match object_id, t.bootstrap with
     | "", Some (cap, _) -> Core_types.inc_ref cap; k @@ Ok (cap :> Core_types.cap)
-    | _ -> k @@ Error (Capnp_rpc.Exception.v "Bad object_id for restore")
+    | _ -> k @@ Error (Capnp_rpc_proto.Exception.v "Bad object_id for restore")
 
   let free_all t =
     WrapArray.free t.caps;
@@ -642,9 +642,9 @@ module Vat = struct
     in
     let free_answer (ans, _, answer_var) =
       code (fun f ->
-          Fmt.pf f "Core_types.resolve_exn %a (Capnp_rpc.Exception.v \"Operation rejected\");" pp_resolver answer_var
+          Fmt.pf f "Core_types.resolve_exn %a (Capnp_rpc_proto.Exception.v \"Operation rejected\");" pp_resolver answer_var
         );
-      Core_types.resolve_exn ans @@ Capnp_rpc.Exception.v "Operation rejected"
+      Core_types.resolve_exn ans @@ Capnp_rpc_proto.Exception.v "Operation rejected"
     in
     let t = {
       id;

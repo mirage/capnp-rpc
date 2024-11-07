@@ -1,4 +1,4 @@
-open Capnp_rpc
+open Capnp_rpc_proto
 
 (* For each capability and struct_ref in the real system, we make a corresponding
    "direct" object. While a real capability must be converted to an export

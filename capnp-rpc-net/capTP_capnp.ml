@@ -1,4 +1,3 @@
-open Capnp_rpc_lwt
 open Lwt.Infix
 
 module Metrics = struct
@@ -31,14 +30,14 @@ end
 
 module Log = Capnp_rpc.Debug.Log
 
-module Builder = Private.Schema.Builder
-module Reader = Private.Schema.Reader
+module Builder = Capnp_rpc.Private.Schema.Builder
+module Reader = Capnp_rpc.Private.Schema.Reader
 
-module Table_types = Capnp_rpc.Message_types.Table_types ( )
+module Table_types = Capnp_rpc_proto.Message_types.Table_types ( )
 
 module Make (Network : S.NETWORK) = struct
-  module Endpoint_types = Capnp_rpc.Message_types.Endpoint(Private.Capnp_core.Core_types)(Network.Types)(Table_types)
-  module Conn = Capnp_rpc.CapTP.Make(Endpoint_types)
+  module Endpoint_types = Capnp_rpc_proto.Message_types.Endpoint(Capnp_rpc.Private.Capnp_core.Core_types)(Network.Types)(Table_types)
+  module Conn = Capnp_rpc_proto.CapTP.Make(Endpoint_types)
   module Parse = Parse.Make(Endpoint_types)(Network)
   module Serialise = Serialise.Make(Endpoint_types)
 
@@ -49,7 +48,7 @@ module Make (Network : S.NETWORK) = struct
     mutable disconnecting : bool;
   }
 
-  let bootstrap t id = Conn.bootstrap t.conn id |> Cast.cap_of_raw
+  let bootstrap t id = Conn.bootstrap t.conn id |> Capnp_rpc.Cast.cap_of_raw
 
   let async_tagged label fn =
     Lwt.async
@@ -63,7 +62,7 @@ module Make (Network : S.NETWORK) = struct
 
   let pp_msg f call =
     let open Reader in
-    let call = Private.Msg.Request.readable call in
+    let call = Capnp_rpc.Private.Msg.Request.readable call in
     let interface_id = Call.interface_id_get call in
     let method_id = Call.method_id_get call in
     Capnp.RPC.Registry.pp_method f (interface_id, method_id)
@@ -101,7 +100,7 @@ module Make (Network : S.NETWORK) = struct
   (* Enqueue [message] in [xmit_queue] and ensure the flush thread is running. *)
   let queue_send ~xmit_queue endpoint message =
     Log.debug (fun f ->
-        let module M = Capnp_rpc_lwt.Private.Schema.MessageWrapper.Message in
+        let module M = Capnp_rpc.Private.Schema.MessageWrapper.Message in
         f "queue_send: %d/%d allocated bytes in %d segs"
                   (M.total_size message)
                   (M.total_alloc_size message)

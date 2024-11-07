@@ -1,6 +1,6 @@
-open Capnp_rpc_lwt
+open Capnp_rpc
 
-module ReaderOps = Capnp.Runtime.ReaderInc.Make(Capnp_rpc_lwt)
+module ReaderOps = Capnp.Runtime.ReaderInc.Make(Capnp_rpc)
 
 type 'a t = {
   dir : string;

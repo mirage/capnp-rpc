@@ -7,7 +7,7 @@ let connect t = t#connect
 let connect_exn t =
   connect t >>= function
   | Ok x -> Lwt.return x
-  | Error e -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc.Exception.pp e)
+  | Error e -> Lwt.fail_with (Fmt.to_to_string Capnp_rpc_proto.Exception.pp e)
 
 let reader fn s =
   fn s |> Schema.ReaderOps.string_of_pointer |> Uri.of_string

@@ -2,8 +2,11 @@ open Capnp_core
 
 include Capnp.Message.BytesMessage
 
-module Log = Capnp_rpc.Debug.Log
-module RO_array = Capnp_rpc.RO_array
+module Exception = Capnp_rpc_proto.Exception
+module Error = Capnp_rpc_proto.Error
+module Log = Capnp_rpc_proto.Debug.Log
+module RO_array = Capnp_rpc_proto.RO_array
+module Debug = Capnp_rpc_proto.Debug
 
 module Capability = Capability
 
@@ -72,3 +75,9 @@ module Cast = struct
 end
 
 module Persistence = Persistence
+
+module Std = struct
+  module Sturdy_ref = Sturdy_ref
+  module Capability = Capability
+  module Service = Service
+end

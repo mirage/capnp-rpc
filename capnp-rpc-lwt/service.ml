@@ -1,10 +1,10 @@
 open Capnp_core
 open Lwt.Infix
 
-module Log = Capnp_rpc.Debug.Log
+module Log = Capnp_rpc_proto.Debug.Log
 
 module Response = Response
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 
 type abstract_response_promise = Core_types.struct_ref
 
@@ -51,7 +51,7 @@ let local (s:#generic) =
         release_params ();
         Log.warn (fun f -> f "Uncaught exception handling %a: %a" pp_method (interface_id, method_id) Fmt.exn ex);
         Core_types.resolve_payload results
-          (Error (Capnp_rpc.Error.exn "Internal error from %a" pp_method (interface_id, method_id)))
+          (Error (Capnp_rpc_proto.Error.exn "Internal error from %a" pp_method (interface_id, method_id)))
   end
 
 (* The simple case for returning a message (rather than another value). *)
@@ -74,7 +74,7 @@ let return_lwt fn =
         )
         (fun ex ->
            Log.warn (fun f -> f "Uncaught exception: %a" Fmt.exn ex);
-           Core_types.resolve_exn resolver @@ Capnp_rpc.Exception.v "Internal error";
+           Core_types.resolve_exn resolver @@ Capnp_rpc_proto.Exception.v "Internal error";
            Lwt.return_unit
         );
     );
@@ -84,4 +84,4 @@ let fail = Core_types.fail
 
 let fail_lwt ?ty fmt =
   fmt |> Fmt.kstr @@ fun msg ->
-  Lwt_result.fail (`Capnp (`Exception (Capnp_rpc.Exception.v ?ty msg)))
+  Lwt_result.fail (`Capnp (`Exception (Capnp_rpc_proto.Exception.v ?ty msg)))

@@ -1,7 +1,7 @@
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
-module Api = Calculator.MakeRPC(Capnp_rpc_lwt)
+module Api = Calculator.MakeRPC(Capnp_rpc)
 
 type calc = [`Calculator_97983392df35cc36]
 type value = [`Value_c3e69d34d3ee48d2]

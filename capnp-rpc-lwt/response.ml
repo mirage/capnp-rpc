@@ -1,6 +1,6 @@
 open Capnp_core
 open Schema.Builder
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 module StructStorage = Capnp.Message.BytesMessage.StructStorage
 
 type 'a cap = Core_types.cap

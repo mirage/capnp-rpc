@@ -1,6 +1,6 @@
-(** Helpers for using {!Capnp_rpc_lwt} on traditional operating systems. *)
+(** Helpers for using {!Capnp_rpc} on traditional operating systems. *)
 
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 module Unix_flow = Unix_flow
@@ -70,10 +70,10 @@ module File_store : sig
   (** [create dir] is a store for Cap'n Proto structs.
       Items are stored inside [dir]. *)
 
-  val save : 'a t -> digest:string -> 'a StructStorage.reader_t -> unit
+  val save : 'a t -> digest:string -> 'a Capnp_rpc.StructStorage.reader_t -> unit
   (** [save t ~digest data] saves [data] to disk in a file named [base64_encode digest]. *)
 
-  val load : 'a t -> digest:string -> 'a StructStorage.reader_t option
+  val load : 'a t -> digest:string -> 'a Capnp_rpc.StructStorage.reader_t option
   (** [load t ~digest] is the data passed to [save t ~digest],
       or [None] if the digest is not known. *)
 

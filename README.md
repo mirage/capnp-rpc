@@ -88,26 +88,24 @@ To install, you will need a platform with the capnproto package available (e.g. 
 
     opam install capnp-rpc-unix
     
-(note: if you are using opam < 2.1, direct install is not possible, so do the following):
+(note: if you are using opam &lt; 2.1, direct install is not possible, so do the following):
 
     opam depext -i capnp-rpc-unix
 
 ## Structure of the library
 
+**Note:** This README documents the newer (unreleased) API. For the 1.x API, see an older version of the README. The main change is that `Capnp_rpc_lwt` is now just `Capnp_rpc`.
+
 The code is split into several packages:
 
-- `capnp-rpc` contains the logic of the [Cap'n Proto RPC Protocol][], but does not depend on any particular serialisation.
-  The tests in the `test` directory test the logic using a simple representation where messages are OCaml data-structures
-  (defined in `capnp-rpc/message_types.ml`).
-
-- `capnp-rpc-lwt` instantiates the `capnp-rpc` functor using the Cap'n Proto serialisation for messages and Lwt for concurrency.
+- `capnp-rpc` defines the main API, using the Cap'n Proto serialisation for messages and Lwt for concurrency.
 
 - `capnp-rpc-net` adds networking support, including TLS.
 
 - `capnp-rpc-unix` adds helper functions for parsing command-line arguments and setting up connections over Unix sockets.
   The tests in `test-lwt` test this by sending Cap'n Proto messages over a Unix-domain socket.
 
-**Libraries** that consume or provide Cap'n Proto services should normally depend only on `capnp-rpc-lwt`,
+**Libraries** that consume or provide Cap'n Proto services should normally depend only on `capnp-rpc`,
 since they shouldn't care whether the services they use are local or accessed over some kind of network.
 
 **Applications** will normally want to use `capnp-rpc-net` and, in most cases, `capnp-rpc-unix`.
@@ -172,10 +170,10 @@ For the server, you should inherit from the generated `Api.Service.Echo.service`
 
 <!-- $MDX include,file=examples/v1/echo.ml,part=server -->
 ```ocaml
-module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
+module Api = Echo_api.MakeRPC(Capnp_rpc)
 
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 let local =
   let module Echo = Api.Service.Echo in
@@ -261,7 +259,7 @@ Here's a suitable `dune` file to compile the schema file and then the generated 
 ```
 (executable
  (name main)
- (libraries lwt.unix capnp-rpc-lwt logs.fmt)
+ (libraries lwt.unix capnp-rpc logs.fmt)
  (flags (:standard -w -53-55)))
 
 (rule
@@ -281,9 +279,9 @@ The service is now usable:
 
 <!-- $MDX skip -->
 ```bash
-$ opam install capnp-rpc-lwt
+$ opam install capnp-rpc
 ```
-(note: or `$ opam depext -i capnp-rpc-lwt` for opam < 2.1)
+(note: or `$ opam depext -i capnp-rpc` for opam < 2.1)
 
 <!-- $MDX dir=examples/v1 -->
 ```bash
@@ -379,7 +377,7 @@ In `main.ml`, we can now wrap a regular OCaml function as the callback:
 
 <!-- $MDX include,file=examples/v2/main.ml -->
 ```ocaml
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 let () =
   Logs.set_level (Some Logs.Warning);
@@ -447,7 +445,7 @@ Here's the new `main.ml` (the top half is the same as before):
 <!-- $MDX include,file=examples/v3/main.ml -->
 ```ocaml
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 let () =
   Logs.set_level (Some Logs.Warning);
@@ -575,7 +573,7 @@ Edit the `dune` file to build a client and server:
 ```
 (executables
  (names client server)
- (libraries lwt.unix capnp-rpc-lwt logs.fmt capnp-rpc-unix)
+ (libraries lwt.unix capnp-rpc logs.fmt capnp-rpc-unix)
  (flags (:standard -w -53-55)))
 
 (rule
@@ -627,7 +625,7 @@ And here's the corresponding `client.ml`:
 
 <!-- $MDX include,file=examples/v4/client.ml -->
 ```ocaml
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 let () =
   Logs.set_level (Some Logs.Warning);
@@ -940,7 +938,7 @@ the admin can request the sturdy ref like this:
 ```ocaml
     (* The admin creates a logger for Alice and saves it: *)
     Capability.with_ref (Logger.sub root "alice") (fun for_alice ->
-        Persistence.save_exn for_alice >|= fun uri ->
+        Capnp_rpc.Persistence.save_exn for_alice >|= fun uri ->
         Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail
       ) >>= fun () ->
     (* Alice uses it: *)
@@ -965,7 +963,7 @@ The simplest way to do this is to wrap the `Callback.local` call with `Persisten
 ```ocaml
 let rec local ~services sr label =
   let module Logger = Api.Service.Logger in
-  Persistence.with_sturdy_ref sr Logger.local @@ object
+  Capnp_rpc.Persistence.with_sturdy_ref sr Logger.local @@ object
 ```
 
 Then pass the `services` and `sr` arguments when creating the logger:
@@ -1002,7 +1000,7 @@ Here's the interface for a `Db` module that loads and saves loggers:
 
 <!-- $MDX include,file=examples/sturdy-refs-4/db.mli -->
 ```ocaml
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 include Restorer.LOADER
@@ -1044,7 +1042,7 @@ We can use this with `File_store` to implement `Db`:
 <!-- $MDX include,file=examples/sturdy-refs-4/db.ml -->
 ```ocaml
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 module File_store = Capnp_rpc_unix.File_store
@@ -1081,7 +1079,7 @@ let load t sr digest =
   | Some saved_service ->
     let logger = Store.Reader.SavedService.logger_get saved_service in
     let label = Store.Reader.SavedLogger.label_get logger in
-    let sr = Capnp_rpc_lwt.Sturdy_ref.cast sr in
+    let sr = Capnp_rpc.Sturdy_ref.cast sr in
     t.loader >|= fun loader ->
     loader sr ~label
 
@@ -1175,7 +1173,7 @@ You should find that the loggers now persist even if the service is restarted.
 
 ## Further reading
 
-* [`capnp_rpc_lwt.mli`](capnp-rpc-lwt/capnp_rpc_lwt.mli) and [`s.ml`](capnp-rpc-lwt/s.ml) describe the OCaml API.
+* [`capnp_rpc.mli`](capnp-rpc/capnp_rpc.mli) and [`s.ml`](capnp-rpc/s.ml) describe the OCaml API.
 * [Cap'n Proto schema file format][schema] shows how to build more complex structures, and the "Evolving Your Protocol" section explains how to change the schema without breaking backwards compatibility.
 * <https://discuss.ocaml.org/> is a good place to ask questions (tag them as "capnp").
 * [The capnp-ocaml site][capnp-ocaml] explains how to read and build more complex types using the OCaml interface.

@@ -1,7 +1,7 @@
 open Astring
 open Testlib
 open Lwt.Infix
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 open Capnp_rpc_net
 
 module Test_utils = Testbed.Test_utils
@@ -632,7 +632,7 @@ let test_store switch =
   (* Try creating a file *)
   let file = Store.create_file store in
   Store.File.set file "Hello" >>= fun () ->
-  Persistence.save_exn file >>= fun file_sr ->
+  Capnp_rpc.Persistence.save_exn file >>= fun file_sr ->
   let file_sr = Vat.import_exn client file_sr in (* todo: get rid of this step *)
   (* Shut down server *)
   Lwt.async (fun () -> Lwt_switch.turn_off server_switch);
