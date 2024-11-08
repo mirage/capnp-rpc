@@ -21,7 +21,7 @@ depends: [
   "logs"
   "asetmap"
   "uri" {>= "1.6.0"}
-  "dune" {>= "3.0"}
+  "dune" {>= "3.16"}
   "alcotest" {>= "1.6.0" & with-test}
   "afl-persistent" {with-test}
 ]

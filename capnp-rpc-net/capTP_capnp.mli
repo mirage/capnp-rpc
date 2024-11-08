@@ -1,6 +1,6 @@
 (** Provides the RPC layer on top of some network. *)
 
-module Make (N : S.NETWORK) : sig
+module Make : S.NETWORK -> sig
   type t
   (** A Cap'n Proto RPC protocol handler. *)
 

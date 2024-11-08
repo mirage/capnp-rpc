@@ -51,7 +51,7 @@ module type ENDPOINT = sig
   val disconnect : t -> Capnp_rpc_proto.Exception.t -> unit
 end
 
-module Endpoint (EP : Capnp_direct.ENDPOINT) : ENDPOINT
+module Endpoint : Capnp_direct.ENDPOINT -> ENDPOINT
 
 module Pair ( ) : sig
   module C : ENDPOINT

@@ -1,4 +1,4 @@
-(lang dune 3.0)
+(lang dune 3.16)
 
 (name capnp-rpc)
 
