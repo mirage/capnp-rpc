@@ -1,4 +1,26 @@
-open Lwt.Infix
+open Eio.Std
+
+module Metrics = struct
+  open Prometheus
+
+  let namespace = "capnp"
+
+  let subsystem = "net"
+
+  let connections =
+    let help = "Number of live capnp-rpc connections" in
+    Gauge.v ~help ~namespace ~subsystem "connections"
+
+  let messages_inbound_received_total =
+    let help = "Total number of messages received" in
+    Counter.v ~help ~namespace ~subsystem "messages_inbound_received_total"
+
+  let messages_outbound_enqueued_total =
+    let help = "Total number of messages enqueued to be transmitted" in
+    Counter.v ~help ~namespace ~subsystem "messages_outbound_enqueued_total"
+end
+
+module Write = Eio.Buf_write
 
 let src = Logs.Src.create "endpoint" ~doc:"Send and receive Cap'n'Proto messages"
 module Log = (val Logs.src_log src: Logs.LOG)
@@ -7,21 +29,16 @@ let compression = `None
 
 let record_sent_messages = false
 
-type flow = Flow : (module Mirage_flow.S with type flow = 'a) * 'a -> flow
+type flow = Eio.Flow.two_way_ty r
 
 type t = {
   flow : flow;
+  writer : Write.t;
   decoder : Capnp.Codecs.FramedStream.t;
-  switch : Lwt_switch.t;
   peer_id : Auth.Digest.t;
 }
 
 let peer_id t = t.peer_id
-
-let of_flow (type flow) ~switch ~peer_id (module F : Mirage_flow.S with type flow = flow) (flow:flow) =
-  let generic_flow = Flow ((module F), flow) in
-  let decoder = Capnp.Codecs.FramedStream.empty compression in
-  { flow = generic_flow; decoder; switch; peer_id }
 
 let dump_msg =
   let next = ref 0 in
@@ -33,38 +50,70 @@ let dump_msg =
     output_string ch data;
     close_out ch
 
+let disconnect t =
+  try
+    Eio.Flow.shutdown t.flow `All
+  with Eio.Io (Eio.Net.E Connection_reset _, _) ->
+    (* TCP connection already shut down, so TLS shutdown failed. Ignore. *)
+    ()
+
 let send t msg =
-  let (Flow ((module F), flow)) = t.flow in
-  let data = Capnp.Codecs.serialize ~compression msg in
-  if record_sent_messages then dump_msg data;
-  F.write flow (Cstruct.of_string data) >|= function
-  | Ok ()
-  | Error `Closed as e -> e
-  | Error e -> Error (`Msg (Fmt.to_to_string F.pp_write_error e))
+  Log.debug (fun f ->
+      let module M = Capnp_rpc.Private.Schema.MessageWrapper.Message in
+      f "queue_send: %d/%d allocated bytes in %d segs"
+        (M.total_size msg)
+        (M.total_alloc_size msg)
+        (M.num_segments msg));
+  Capnp.Codecs.serialize_iter_copyless ~compression msg ~f:(fun x len -> Write.string t.writer x ~len);
+  Prometheus.Counter.inc_one Metrics.messages_outbound_enqueued_total;
+  if record_sent_messages then dump_msg (Capnp.Codecs.serialize ~compression msg)
+
+let rec run_writer t =
+  let bufs = Write.await_batch t.writer in
+  match Eio.Flow.single_write t.flow bufs with
+  | n -> Write.shift t.writer n; run_writer t
+  | exception (Eio.Io (Eio.Net.E Connection_reset _, _) as ex) ->
+    Log.info (fun f -> f "%a" Eio.Exn.pp ex);
+    disconnect t            (* We'll read a close soon *)
+  | exception ex ->
+    Eio.Fiber.check ();
+    Log.warn (fun f -> f "Error sending messages: %a (will shutdown connection)" Fmt.exn ex);
+    disconnect t
+
+let of_flow ~sw ~peer_id flow =
+  let decoder = Capnp.Codecs.FramedStream.empty compression in
+  let flow = (flow :> flow) in
+  let writer = Write.create 4096 in
+  let t = { flow; writer; decoder; peer_id } in
+  Prometheus.Gauge.inc_one Metrics.connections;
+  Switch.on_release sw (fun () -> Prometheus.Gauge.dec_one Metrics.connections);
+  Fiber.fork_daemon ~sw (fun () -> run_writer t; `Stop_daemon);
+  t
 
 let rec recv t =
-  let (Flow ((module F), flow)) = t.flow in
   match Capnp.Codecs.FramedStream.get_next_frame t.decoder with
-  | _ when not (Lwt_switch.is_on t.switch) -> Lwt.return @@ Error `Closed
-  | Ok msg -> Lwt.return (Ok (Capnp.BytesMessage.Message.readonly msg))
+  | Ok msg ->
+    Prometheus.Counter.inc_one Metrics.messages_inbound_received_total;
+    (* We often want to send multiple response messages while processing a batch of requests,
+       so pause the writer to collect them. We'll unpause on the next read. *)
+    Write.pause t.writer;
+    Ok (Capnp.BytesMessage.Message.readonly msg)
   | Error Capnp.Codecs.FramingError.Unsupported -> failwith "Unsupported Cap'n'Proto frame received"
   | Error Capnp.Codecs.FramingError.Incomplete ->
     Log.debug (fun f -> f "Incomplete; waiting for more data...");
-    F.read flow >>= function
-    | Ok (`Data data) ->
-      Log.debug (fun f -> f "Read %d bytes" (Cstruct.length data));
-      Capnp.Codecs.FramedStream.add_fragment t.decoder (Cstruct.to_string data);
+    (* We probably scheduled one or more application fibers to run while handling the last
+       batch of messages. Given them a chance to run now while the writer is paused, because
+       they might want to send more messages immediately. *)
+    Fiber.yield ();
+    Write.unpause t.writer;
+    let buf = Cstruct.create 4096 in    (* TODO: make this efficient *)
+    match Eio.Flow.single_read t.flow buf with
+    | got ->
+      Log.debug (fun f -> f "Read %d bytes" got);
+      Capnp.Codecs.FramedStream.add_fragment t.decoder (Cstruct.to_string buf ~len:got);
       recv t
-    | Ok `Eof ->
-      Log.info (fun f -> f "Connection closed");
-      Lwt_switch.turn_off t.switch >|= fun () ->
+    | exception End_of_file ->
       Error `Closed
-    | Error ex when Lwt_switch.is_on t.switch -> Capnp_rpc.Debug.failf "recv: %a" F.pp_error ex
-    | Error _ -> Lwt.return (Error `Closed)
-
-let disconnect t =
-  Lwt_switch.turn_off t.switch
-
-let pp_error f = function
-  | `Closed -> Fmt.string f "Connection closed"
-  | `Msg m -> Fmt.string f m
+    | exception (Eio.Io (Eio.Net.E Connection_reset _, _) as ex) ->
+      Log.info (fun f -> f "%a" Eio.Exn.pp ex);
+      Error `Closed

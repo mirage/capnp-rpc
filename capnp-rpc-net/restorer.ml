@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc
 
 module Core_types = Private.Capnp_core.Core_types
@@ -33,10 +33,10 @@ module type LOADER = sig
   type t
   val hash : t -> Auth.hash
   val make_sturdy : t -> Id.t -> Uri.t
-  val load : t -> 'a Sturdy_ref.t -> string -> resolution Lwt.t
+  val load : t -> 'a Sturdy_ref.t -> string -> resolution
 end
 
-type t = Id.t -> resolution Lwt.t
+type t = Id.t -> resolution
 
 let grant x : resolution = Ok (Cast.cap_to_raw x)
 let reject ex = Error ex
@@ -45,21 +45,19 @@ let unknown_service_id = reject (Capnp_rpc.Exception.v "Unknown persistent servi
 
 let fn (r:t) =
   fun k object_id ->
-    Lwt.async (fun () ->
-        Lwt.try_bind
-          (fun () -> r object_id)
-          (fun r -> k r; Lwt.return_unit)
-          (fun ex ->
-             Log.err (fun f -> f "Uncaught exception restoring object: %a" Fmt.exn ex);
-             k (reject (Capnp_rpc.Exception.v "Internal error restoring object"));
-             Lwt.return_unit
-          )
-      )
+  match r object_id with
+  | r -> k r
+  | exception (Eio.Cancel.Cancelled _ as ex) ->
+    k (reject Capnp_rpc.Exception.cancelled);
+    raise ex
+  | exception ex ->
+    Log.err (fun f -> f "Uncaught exception restoring object: %a" Fmt.exn ex);
+    k (reject (Capnp_rpc.Exception.v "Internal error restoring object"))
 
-let restore (f:t) x = f x |> Lwt_result.map Cast.cap_of_raw
+let restore (f:t) x = f x |> Result.map Cast.cap_of_raw
 
 let none : t = fun _ ->
-  Lwt.return @@ Error (Capnp_rpc.Exception.v "This vat has no restorer")
+  Error (Capnp_rpc.Exception.v "This vat has no restorer")
 
 let single id cap =
   let cap = Cast.cap_to_raw cap in
@@ -69,20 +67,20 @@ let single id cap =
     let requested_id = Digestif.SHA256.digest_string requested_id |> Digestif.SHA256.to_raw_string in
     if String.equal id requested_id then (
       Core_types.inc_ref cap;
-      Lwt.return (Ok cap)
-    ) else Lwt.return unknown_service_id
+      Ok cap
+    ) else unknown_service_id
 
 module Table = struct
   type digest = string
 
   type entry =
-    | Cached of resolution Lwt.t
+    | Cached of resolution Promise.or_exn
     | Manual of Core_types.cap          (* We hold a ref on the cap *)
 
   type t = {
     hash : Digestif.hash';
     cache : (digest, entry) Hashtbl.t;
-    load : Id.t -> digest -> resolution Lwt.t;
+    load : Id.t -> digest -> resolution Promise.or_exn;
     make_sturdy : Id.t -> Uri.t;
   }
 
@@ -91,7 +89,7 @@ module Table = struct
   let create make_sturdy =
     let hash = `SHA256 in
     let cache = Hashtbl.create 53 in
-    let load _ _ = Lwt.return unknown_service_id in
+    let load _ _ = Promise.create_resolved (Ok unknown_service_id) in
     { hash; cache; load; make_sturdy }
 
   let hash t id =
@@ -102,43 +100,44 @@ module Table = struct
     match Hashtbl.find t.cache digest with
     | Manual cap ->
       Core_types.inc_ref cap;
-      Lwt.return @@ Ok cap
+      Ok cap
     | Cached res ->
-      begin res >>= function
-        | Error _ as e -> Lwt.return e
+      begin match Promise.await_exn res with
+        | Error _ as e -> e
         | Ok cap ->
           Core_types.inc_ref cap;
-          Lwt.pause () >|= fun () ->
+          Fiber.yield ();
           Ok cap
       end
     | exception Not_found ->
       let cap = t.load id digest in
       Hashtbl.add t.cache digest (Cached cap);
-      Lwt.try_bind
-        (fun () -> cap)
-        (fun result ->
-           begin match result with
-             | Error _ -> Hashtbl.remove t.cache digest
-             | Ok cap -> cap#when_released (fun () -> Hashtbl.remove t.cache digest)
-           end;
-           (* Ensure all [inc_ref]s are done before handing over to the user. *)
-           Lwt.pause () >|= fun () ->
-           result
-        )
-        (fun ex ->
-           Hashtbl.remove t.cache digest;
-           Lwt.fail ex
-        )
+      match Promise.await_exn cap with
+      | exception ex ->
+        Hashtbl.remove t.cache digest;
+        raise ex
+      | result ->
+        begin match result with
+          | Error _ -> Hashtbl.remove t.cache digest
+          | Ok cap ->
+            cap#when_released (fun () -> Hashtbl.remove t.cache digest);
+            (* Ensure all [inc_ref]s are done before handing over to the user. *)
+            try Fiber.yield ()
+            with ex -> Core_types.dec_ref cap; raise ex
+        end;
+        result
 
-  let of_loader (type l) (module L : LOADER with type t = l) loader =
+  let of_loader (type l) ~sw (module L : LOADER with type t = l) loader =
     let hash = (L.hash loader :> Digestif.hash') in
     let cache = Hashtbl.create 53 in
     let rec load id digest =
-      let sr : Private.Capnp_core.sturdy_ref = object
-        method connect = resolve t id
-        method to_uri_with_secrets = L.make_sturdy loader id
-      end in
-      L.load loader (Cast.sturdy_of_raw sr) digest
+      Fiber.fork_promise ~sw (fun () ->
+          let sr : Private.Capnp_core.sturdy_ref = object
+            method connect = resolve t id
+            method to_uri_with_secrets = L.make_sturdy loader id
+          end in
+          L.load loader (Cast.sturdy_of_raw sr) digest
+        )
     and t = { hash; cache; load; make_sturdy = L.make_sturdy loader } in
     t
 
