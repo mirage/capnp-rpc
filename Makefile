@@ -2,11 +2,6 @@
 
 default: test build-fuzz
 
-all:
-	dune build @install test/test.exe test-lwt/test_lwt.exe test-bin/calc.exe
-	rm -rf _build/_tests
-	dune runtest --no-buffer -j 1
-
 build-fuzz:
 	dune build fuzz/fuzz.exe
 
@@ -20,6 +15,4 @@ clean:
 test:
 	rm -rf _build/_tests
 	dune build test test-bin @install
-	#./_build/default/test/test.bc test core -ev 36
-	#./_build/default/test-lwt/test.bc test lwt -ev 3
 	dune build @runtest --no-buffer -j 1
