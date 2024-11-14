@@ -13,7 +13,7 @@ doc: "https://mirage.github.io/capnp-rpc/"
 depends: [
   "ocaml" {>= "4.08.0"}
   "conf-capnproto" {build}
-  "capnp" {>= "3.4.0"}
+  "capnp" {>= "3.6.0"}
   "stdint" {>= "0.6.0"}
   "lwt" {>= "5.6.1"}
   "astring"

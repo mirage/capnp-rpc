@@ -1,7 +1,6 @@
 (library
  (name testlib)
- (libraries astring capnp-rpc capnp-rpc-net)
- (flags :standard -w -53-55))
+ (libraries astring capnp-rpc capnp-rpc-net))
 
 (rule
  (targets test_api.ml test_api.mli)

@@ -259,8 +259,7 @@ Here's a suitable `dune` file to compile the schema file and then the generated 
 ```
 (executable
  (name main)
- (libraries lwt.unix capnp-rpc logs.fmt)
- (flags (:standard -w -53-55)))
+ (libraries lwt.unix capnp-rpc logs.fmt))
 
 (rule
  (targets echo_api.ml echo_api.mli)
@@ -573,8 +572,7 @@ Edit the `dune` file to build a client and server:
 ```
 (executables
  (names client server)
- (libraries lwt.unix capnp-rpc logs.fmt capnp-rpc-unix)
- (flags (:standard -w -53-55)))
+ (libraries lwt.unix capnp-rpc logs.fmt capnp-rpc-unix))
 
 (rule
  (targets echo_api.ml echo_api.mli)
