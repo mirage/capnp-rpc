@@ -20,8 +20,7 @@ depends: [
   "logs"
   "asetmap"
   "cstruct" {>= "6.0.0"}
-  "mirage-flow" {>= "4.0.2"}
-  "tls" {>= "1.0.2"}
+  "tls-eio" {>= "1.0.2"}
   "base64" {>= "3.0.0"}
   "uri" {>= "1.6.0"}
   "ptime"

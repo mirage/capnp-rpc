@@ -1,13 +1,7 @@
-open Lwt.Infix
-
 module Capnp_content = struct
   include Msg
 
-  let ref_leak_detected fn =
-    Lwt.async (fun () ->
-        Lwt.pause () >|= fun () ->
-        fn ()
-      )
+  let ref_leak_detected = Leak_handler.ref_leak_detected
 end
 
 module Core_types = Capnp_rpc_proto.Core_types(Capnp_content)
@@ -19,6 +13,6 @@ module type ENDPOINT = Capnp_rpc_proto.Message_types.ENDPOINT with
   module Core_types = Core_types
 
 class type sturdy_ref = object
-  method connect : (Core_types.cap, Capnp_rpc_proto.Exception.t) result Lwt.t
+  method connect : (Core_types.cap, Capnp_rpc_proto.Exception.t) result
   method to_uri_with_secrets : Uri.t
 end

@@ -13,7 +13,7 @@ depends: [
   "ocaml" {>= "4.08.0"}
   "capnp-rpc-net" {= version}
   "cmdliner" {>= "1.1.0"}
-  "cstruct-lwt"
+  "cstruct" {>= "6.2.0"}
   "astring"
   "fmt" {>= "0.8.7"}
   "logs"
@@ -21,11 +21,11 @@ depends: [
   "base64" {>= "3.0.0"}
   "dune" {>= "3.16"}
   "alcotest" {>= "1.6.0" & with-test}
-  "alcotest-lwt" { >= "1.6.0" & with-test}
-  "mirage-crypto-rng-lwt" {>= "0.11.0"}
-  "mdx" {>= "2.2.1" & with-test}
-  "lwt" {>= "5.6.1"}
+  "mirage-crypto-rng-eio" {>= "1.1.0" & with-test}
+  "mdx" {>= "2.4.1" & with-test}
   "asetmap" {with-test}
+  "eio_main" {with-test}
+  "eio" {>= "1.1"}
 ]
 conflicts: [
   "jbuilder"

@@ -1,7 +1,9 @@
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc.Std
 
 module Restorer = Capnp_rpc_net.Restorer
+
+let ( / ) = Eio.Path.( / )
 
 let () =
   Logs.set_level (Some Logs.Warning);
@@ -13,56 +15,58 @@ let or_fail = function
 
 (* $MDX part-begin=server *)
 let serve config =
-  Lwt_main.run begin
-    (* Create the on-disk store *)
-    let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
-    let db, set_loader = Db.create ~make_sturdy "./store" in
-    (* Create the restorer *)
-    let services = Restorer.Table.of_loader (module Db) db in
-    let restore = Restorer.of_table services in
-    (* Add the root service *)
-    let persist_new ~label =
-      let id = Db.save_new db ~label in
-      Capnp_rpc_net.Restorer.restore restore id
-    in
-    let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
-    let root =
-      let sr = Capnp_rpc_net.Restorer.Table.sturdy_ref services root_id in
-      Logger.local ~persist_new sr "root"
-    in
-    Restorer.Table.add services root_id root;
-    (* Tell the database how to restore saved loggers *)
-    Lwt.wakeup set_loader (fun sr ~label -> Restorer.grant @@ Logger.local ~persist_new sr label);
-    (* Run the server *)
-    Capnp_rpc_unix.serve config ~restore >>= fun _vat ->
-    let uri = Capnp_rpc_unix.Vat_config.sturdy_uri config root_id in
-    Capnp_rpc_unix.Cap_file.save_uri uri "admin.cap" |> or_fail;
-    print_endline "Wrote admin.cap";
-    fst @@ Lwt.wait () (* Wait forever *)
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  (* Create the on-disk store *)
+  let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+  let db, set_loader = Db.create ~make_sturdy (env#cwd / "store") in
+  (* Create the restorer *)
+  let services = Restorer.Table.of_loader ~sw (module Db) db in
+  Switch.on_release sw (fun () -> Restorer.Table.clear services);
+  let restore = Restorer.of_table services in
+  (* Add the root service *)
+  let persist_new ~label =
+    let id = Db.save_new db ~label in
+    Capnp_rpc_net.Restorer.restore restore id
+  in
+  let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
+  let root =
+    let sr = Capnp_rpc_net.Restorer.Table.sturdy_ref services root_id in
+    Logger.local ~persist_new sr "root"
+  in
+  Restorer.Table.add services root_id root;
+  (* Tell the database how to restore saved loggers *)
+  Promise.resolve set_loader (fun sr ~label -> Restorer.grant @@ Logger.local ~persist_new sr label);
+  (* Run the server *)
+  let _vat = Capnp_rpc_unix.serve ~sw ~net:env#net ~restore config in
+  let uri = Capnp_rpc_unix.Vat_config.sturdy_uri config root_id in
+  Capnp_rpc_unix.Cap_file.save_uri uri "admin.cap" |> or_fail;
+  print_endline "Wrote admin.cap";
+  Fiber.await_cancel ()
 (* $MDX part-end *)
 
 let log cap_file msg =
-  Lwt_main.run begin
-    let vat = Capnp_rpc_unix.client_only_vat () in
-    let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
-    Sturdy_ref.with_cap_exn sr @@ fun logger ->
-    Logger.log logger msg
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
+  Sturdy_ref.with_cap_exn sr @@ fun logger ->
+  Logger.log logger msg
 
 let sub cap_file label =
-  Lwt_main.run begin
-    let sub_file = label ^ ".cap" in
-    if Sys.file_exists sub_file then Fmt.failwith "%S already exists!" sub_file;
-    let vat = Capnp_rpc_unix.client_only_vat () in
-    let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
-    Sturdy_ref.with_cap_exn sr @@ fun logger ->
-    Capability.with_ref (Logger.sub logger label) @@ fun sub ->
-    Capnp_rpc.Persistence.save_exn sub >>= fun uri ->
-    Capnp_rpc_unix.Cap_file.save_uri uri sub_file |> or_fail;
-    Printf.printf "Wrote %S\n%!" sub_file;
-    Lwt.return_unit
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let sub_file = label ^ ".cap" in
+  if Sys.file_exists sub_file then Fmt.failwith "%S already exists!" sub_file;
+  let vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
+  Sturdy_ref.with_cap_exn sr @@ fun logger ->
+  let uri = Capability.with_ref (Logger.sub root "alice") Capnp_rpc.Persistence.save_exn in
+  Capnp_rpc_unix.Cap_file.save_uri uri sub_file |> or_fail;
+  Printf.printf "Wrote %S\n%!" sub_file;
 
 open Cmdliner
 

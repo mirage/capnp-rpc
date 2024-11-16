@@ -1,7 +1,7 @@
 # OCaml Cap'n Proto RPC library
 
 Copyright 2017 Docker, Inc.
-Copyright 2019 Thomas Leonard.
+Copyright 2024 Thomas Leonard.
 See [LICENSE.md](LICENSE.md) for details.
 
 [API documentation][api]
@@ -71,10 +71,10 @@ This library should be used with the [capnp-ocaml][] schema compiler, which gene
 RPC Level 2 is complete, with encryption and authentication using TLS and support for persistence.
 
 The library has unit tests and AFL fuzz tests that cover most of the core logic.
-It is used as the RPC system in [ocaml-ci][].
+It is used as the RPC system in [ocaml-ci][] and [ocluster][].
 
 The default network provided supports TCP and Unix-domain sockets, both with or without TLS.
-For two-party networking, you can provide any bi-directional byte stream (satisfying the Mirage flow signature)
+For two-party networking, you can provide any bi-directional byte stream (satisfying the `Eio.Flow.two_way` signature)
 to the library to create a connection.
 You can also define your own network types.
 
@@ -84,26 +84,21 @@ Until that is implemented, Carol can ask Bob for a persistent reference (sturdy 
 
 ## Installing
 
-To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then:
+To install, you will need a platform with the capnproto package available (e.g. Debian >= 9). Then (using opam 2.1 or later):
 
     opam install capnp-rpc-unix
     
-(note: if you are using opam &lt; 2.1, direct install is not possible, so do the following):
-
-    opam depext -i capnp-rpc-unix
-
 ## Structure of the library
 
-**Note:** This README documents the newer (unreleased) API. For the 1.x API, see an older version of the README. The main change is that `Capnp_rpc_lwt` is now just `Capnp_rpc`.
+**Note:** This README documents the newer (unreleased) Eio API. For the 1.x Lwt API, see an older version of the README. The main change is that `Capnp_rpc_lwt` is now just `Capnp_rpc`. See the [CHANGES.md](./CHANGES.md) file for help migrating to 2.0.
 
 The code is split into several packages:
 
-- `capnp-rpc` defines the main API, using the Cap'n Proto serialisation for messages and Lwt for concurrency.
+- `capnp-rpc` allows you to define and use services.
 
 - `capnp-rpc-net` adds networking support, including TLS.
 
 - `capnp-rpc-unix` adds helper functions for parsing command-line arguments and setting up connections over Unix sockets.
-  The tests in `test-lwt` test this by sending Cap'n Proto messages over a Unix-domain socket.
 
 **Libraries** that consume or provide Cap'n Proto services should normally depend only on `capnp-rpc`,
 since they shouldn't care whether the services they use are local or accessed over some kind of network.
@@ -172,7 +167,6 @@ For the server, you should inherit from the generated `Api.Service.Echo.service`
 ```ocaml
 module Api = Echo_api.MakeRPC(Capnp_rpc)
 
-open Lwt.Infix
 open Capnp_rpc.Std
 
 let local =
@@ -206,7 +200,7 @@ There's a bit of ugly boilerplate here, but it's quite simple:
   should always free them anyway.
 - `Service.Response.create Results.init_pointer` creates a new response message, using `Ping.Results.init_pointer` to initialise the payload contents.
 - `response` is the complete message to be sent back, and `results` is the data part of it.
-- `Service.return` returns the results immediately (like `Lwt.return`).
+- `Service.return` returns the results immediately (rather than returning a promise).
 
 The client implementation is similar, but uses `Api.Client` instead of `Api.Service`.
 Here, we have a *builder* for the parameters and a *reader* for the results.
@@ -220,7 +214,7 @@ let ping t msg =
   let open Echo.Ping in
   let request, params = Capability.Request.create Params.init_pointer in
   Params.msg_set params msg;
-  Capability.call_for_value_exn t method_id request >|= Results.reply_get
+  Capability.call_for_value_exn t method_id request |> Results.reply_get
 ```
 
 `Capability.call_for_value_exn` sends the request message to the service and waits for the response to arrive.
@@ -234,19 +228,17 @@ With the boilerplate out of the way, we can now write a `main.ml` to test it:
 
 <!-- $MDX include,file=examples/v1/main.ml -->
 ```ocaml
-open Lwt.Infix
+open Eio.Std
 
 let () =
   Logs.set_level (Some Logs.Warning);
   Logs.set_reporter (Logs_fmt.reporter ())
 
 let () =
-  Lwt_main.run begin
-    let service = Echo.local in
-    Echo.ping service "foo" >>= fun reply ->
-    Fmt.pr "Got reply %S@." reply;
-    Lwt.return_unit
-  end
+  Eio_main.run @@ fun _ ->
+  let service = Echo.local in
+  let reply = Echo.ping service "foo" in
+  traceln "Got reply %S" reply
 ```
 
 <p align='center'>
@@ -259,7 +251,7 @@ Here's a suitable `dune` file to compile the schema file and then the generated 
 ```
 (executable
  (name main)
- (libraries lwt.unix capnp-rpc logs.fmt))
+ (libraries eio_main capnp-rpc logs.fmt))
 
 (rule
  (targets echo_api.ml echo_api.mli)
@@ -280,12 +272,10 @@ The service is now usable:
 ```bash
 $ opam install capnp-rpc
 ```
-(note: or `$ opam depext -i capnp-rpc` for opam < 2.1)
-
 <!-- $MDX dir=examples/v1 -->
 ```bash
 $ dune exec ./main.exe
-Got reply "echo:foo"
++Got reply "echo:foo"
 ```
 
 This isn't very exciting, so let's add some capabilities to the protocol...
@@ -323,33 +313,31 @@ The new `heartbeat_impl` method looks like this:
       match callback with
       | None -> Service.fail "No callback parameter!"
       | Some callback ->
-        Service.return_lwt @@ fun () ->
-        Capability.with_ref callback (notify ~msg)
+        Capability.with_ref callback (notify ~delay msg)
 ```
 
 Note that all parameters in Cap'n Proto are optional, so we have to check for `callback` not being set
 (data parameters such as `msg` get a default value from the schema, which is
 `""` for strings if not set explicitly).
 
-`Service.return_lwt fn` runs `fn ()` and replies to the `heartbeat` call when it finishes.
-Here, the whole of the rest of the method is the argument to `return_lwt`, which is a common pattern.
+You'll need to add a `~delay` argument to `local` too, to configure the time between messages.
 
 `Capability.with_ref x f` calls `f x` and then releases `x` (capabilities are ref-counted).
 
-`notify callback msg` just sends a few messages to `callback` in a loop:
+`notify ~delay msg callback` just sends a few messages to `callback` in a loop:
 
 <!-- $MDX include,file=examples/v2/echo.ml,part=notify -->
 ```ocaml
-let (>>!=) = Lwt_result.bind		(* Return errors *)
-
-let notify callback ~msg =
+let notify ~delay msg callback =
   let rec loop = function
     | 0 ->
-      Lwt.return @@ Ok (Service.Response.create_empty ())
+      Service.return_empty ()
     | i ->
-      Callback.log callback msg >>!= fun () ->
-      Lwt_unix.sleep 1.0 >>= fun () ->
-      loop (i - 1)
+      match Callback.log callback msg with
+      | Error (`Capnp e) -> Service.error e
+      | Ok () ->
+        Eio.Time.Timeout.sleep delay;
+        loop (i - 1)
   in
   loop 3
 ```
@@ -376,24 +364,27 @@ In `main.ml`, we can now wrap a regular OCaml function as the callback:
 
 <!-- $MDX include,file=examples/v2/main.ml -->
 ```ocaml
+open Eio.Std
 open Capnp_rpc.Std
+
+let delay = if Sys.getenv_opt "CI" = None then 1.0 else 0.0
 
 let () =
   Logs.set_level (Some Logs.Warning);
   Logs.set_reporter (Logs_fmt.reporter ())
 
 let callback_fn msg =
-  Fmt.pr "Callback got %S@." msg
+  traceln "Callback got %S" msg
 
 let run_client service =
   Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
   Echo.heartbeat service "foo" callback
 
 let () =
-  Lwt_main.run begin
-    let service = Echo.local in
-    run_client service
-  end
+  Eio_main.run @@ fun env ->
+  let delay = Eio.Time.Timeout.seconds env#mono_clock delay in
+  let service = Echo.local ~delay in
+  run_client service
 ```
 
 Step 1: The client creates the callback:
@@ -419,12 +410,12 @@ Exercise: implement `Callback.local fn` (hint: it's similar to the original `pin
 
 And testing it should give (three times, at one second intervals):
 
-<!-- $MDX dir=examples/v2 -->
+<!-- $MDX dir=examples/v2,set-CI=true -->
 ```sh
 $ dune exec -- ./main.exe
-Callback got "foo"
-Callback got "foo"
-Callback got "foo"
++Callback got "foo"
++Callback got "foo"
++Callback got "foo"
 ```
 
 Note that the client gives the echo service permission to call its callback service by sending a message containing the callback to the service.
@@ -443,15 +434,17 @@ Here's the new `main.ml` (the top half is the same as before):
 
 <!-- $MDX include,file=examples/v3/main.ml -->
 ```ocaml
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc.Std
+
+let delay = if Sys.getenv_opt "CI" = None then 1.0 else 0.0
 
 let () =
   Logs.set_level (Some Logs.Warning);
   Logs.set_reporter (Logs_fmt.reporter ())
 
 let callback_fn msg =
-  Fmt.pr "Callback got %S@." msg
+  traceln "Callback got %S" msg
 
 let run_client service =
   Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
@@ -460,37 +453,40 @@ let run_client service =
 let secret_key = `Ephemeral
 let listen_address = `TCP ("127.0.0.1", 7000)
 
-let start_server () =
+let start_server ~sw ~delay net =
   let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
   let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-  let restore = Capnp_rpc_net.Restorer.single service_id Echo.local in
-  Capnp_rpc_unix.serve config ~restore >|= fun vat ->
+  let restore = Capnp_rpc_net.Restorer.single service_id (Echo.local ~delay) in
+  let vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
   Capnp_rpc_unix.Vat.sturdy_uri vat service_id
 
 let () =
-  Lwt_main.run begin
-    start_server () >>= fun uri ->
-    Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;
-    let client_vat = Capnp_rpc_unix.client_only_vat () in
-    let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    Sturdy_ref.with_cap_exn sr run_client
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let delay = Eio.Time.Timeout.seconds env#mono_clock delay in
+  let uri = start_server ~sw ~delay env#net in
+  traceln "Connecting to echo service at: %a" Uri.pp_hum uri;
+  let client_vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
+  Sturdy_ref.with_cap_exn sr run_client
 ```
 
 <p align='center'>
   <img src="./diagrams/vats.svg"/>
 </p>
 
-You'll need to edit your `dune` file to add a dependency on `capnp-rpc-unix` in the `(libraries ...` line and also:
+You'll need to edit your `dune` file to add a dependencies
+on `capnp-rpc-unix` and `mirage-crypto-rng-eio` in the `(libraries ...` line and also:
 
 <!-- $MDX skip -->
 ```sh
-$ opam depext -i capnp-rpc-unix
+$ opam install capnp-rpc-unix mirage-crypto-rng-eio
 ```
 
 Running this will give something like:
 
-<!-- $MDX dir=examples/v3,non-deterministic -->
+<!-- $MDX dir=examples/v3,non-deterministic,set-CI=true -->
 ```sh
 $ dune exec ./main.exe
 Connecting to echo service at: capnp://sha-256:3Tj5y5Q2qpqN3Sbh0GRPxgORZw98_NtrU2nLI0-Tn6g@127.0.0.1:7000/eBIndzZyoVDxaJdZ8uh_xBx5V1lfXWTJCDX-qEkgNZ4
@@ -545,10 +541,11 @@ In `start_server`:
   and the name. This means that the ID will be stable as long as the server's key doesn't change.
   The name used ("main" here) isn't important - it just needs to be unique.
 
-- `let restore = Restorer.single service_id Echo.local` configures a simple "restorer" that
-  answers requests for `service_id` with our `Echo.local` service.
+- `let restore = Capnp_rpc_net.Restorer.single service_id (Echo.local ~delay)`
+  configures a simple "restorer" that answers requests for `service_id` with
+  our `Echo.local` service.
 
-- `Capnp_rpc_unix.serve config ~restore` creates the service vat using the
+- `Capnp_rpc_unix.serve ~sw ~net ~restore config` creates the service vat using the
   previous configuration items and starts it listening for incoming connections.
 
 - `Capnp_rpc_unix.Vat.sturdy_uri vat service_id` returns a "capnp://" URI for
@@ -572,7 +569,7 @@ Edit the `dune` file to build a client and server:
 ```
 (executables
  (names client server)
- (libraries lwt.unix capnp-rpc logs.fmt capnp-rpc-unix))
+ (libraries eio_main capnp-rpc logs.fmt capnp-rpc-unix mirage-crypto-rng-eio))
 
 (rule
  (targets echo_api.ml echo_api.mli)
@@ -584,8 +581,10 @@ Here's a suitable `server.ml`:
 
 <!-- $MDX include,file=examples/v4/server.ml -->
 ```ocaml
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc_net
+
+let delay = if Sys.getenv_opt "CI" = None then 1.0 else 0.0
 
 let () =
   Logs.set_level (Some Logs.Warning);
@@ -594,16 +593,18 @@ let () =
 let cap_file = "echo.cap"
 
 let serve config =
-  Lwt_main.run begin
-    let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-    let restore = Restorer.single service_id Echo.local in
-    Capnp_rpc_unix.serve config ~restore >>= fun vat ->
-    match Capnp_rpc_unix.Cap_file.save_service vat service_id cap_file with
-    | Error `Msg m -> failwith m
-    | Ok () ->
-      Fmt.pr "Server running. Connect using %S.@." cap_file;
-      fst @@ Lwt.wait ()  (* Wait forever *)
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  let delay = Eio.Time.Timeout.seconds env#mono_clock delay in
+  Switch.run @@ fun sw ->
+  let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
+  let restore = Restorer.single service_id (Echo.local ~delay) in
+  let vat = Capnp_rpc_unix.serve ~sw ~net:env#net ~restore config in
+  match Capnp_rpc_unix.Cap_file.save_service vat service_id cap_file with
+  | Error `Msg m -> failwith m
+  | Ok () ->
+    traceln "Server running. Connect using %S." cap_file;
+    Fiber.await_cancel ()
 
 open Cmdliner
 
@@ -623,6 +624,7 @@ And here's the corresponding `client.ml`:
 
 <!-- $MDX include,file=examples/v4/client.ml -->
 ```ocaml
+open Eio.Std
 open Capnp_rpc.Std
 
 let () =
@@ -630,18 +632,19 @@ let () =
   Logs.set_reporter (Logs_fmt.reporter ())
 
 let callback_fn msg =
-  Fmt.pr "Callback got %S@." msg
+  traceln "Callback got %S" msg
 
 let run_client service =
   Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
   Echo.heartbeat service "foo" callback
 
 let connect uri =
-  Lwt_main.run begin
-    let client_vat = Capnp_rpc_unix.client_only_vat () in
-    let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    Capnp_rpc_unix.with_cap_exn sr run_client
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let client_vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
+  Capnp_rpc_unix.with_cap_exn sr run_client
 
 open Cmdliner
 
@@ -752,7 +755,7 @@ We can test it as follows:
 ```ocaml
 let run_client service =
   let logger = Echo.get_logger service in
-  Echo.Callback.log logger "Message from client" >|= function
+  match Echo.Callback.log logger "Message from client" with
   | Ok () -> ()
   | Error (`Capnp err) ->
     Fmt.epr "Server's logger failed: %a" Capnp_rpc.Error.pp err
@@ -767,8 +770,8 @@ This should print (in the server's output) something like:
 <!-- $MDX dir=examples/pipelining -->
 ```sh
 $ dune exec ./main.exe
-[client] Connecting to echo service...
-[server] Received "Message from client"
++[client] Connecting to echo service...
++[server] Received "Message from client"
 ```
 
 In this case, we didn't wait for the `getLogger` call to return before using the logger.
@@ -836,32 +839,35 @@ let make_service ~config ~services name =
   Restorer.Table.add services id service;
   name, id
 
-let start_server () =
+let start_server ~sw net =
   let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
   let restore = Restorer.of_table services in
   let services = List.map (make_service ~config ~services) ["alice"; "bob"] in
-  Capnp_rpc_unix.serve config ~restore >|= fun vat ->
+  let vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
   services |> List.iter (fun (name, id) ->
       let cap_file = name ^ ".cap" in
       Capnp_rpc_unix.Cap_file.save_service vat id cap_file |> or_fail;
       Printf.printf "[server] saved %S\n%!" cap_file
     )
 
-let run_client cap_file msg =
-  let vat = Capnp_rpc_unix.client_only_vat () in
+let run_client ~net cap_file msg =
+  Switch.run @@ fun sw ->
+  let vat = Capnp_rpc_unix.client_only_vat ~sw net in
   let sr = Capnp_rpc_unix.Cap_file.load vat cap_file |> or_fail in
   Printf.printf "[client] loaded %S\n%!" cap_file;
   Sturdy_ref.with_cap_exn sr @@ fun cap ->
   Logger.log cap msg
 
 let () =
-  Lwt_main.run begin
-    start_server () >>= fun () ->
-    run_client "./alice.cap" "Message from Alice" >>= fun () ->
-    run_client "./bob.cap" "Message from Bob"
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let net = env#net in
+  start_server ~sw net;
+  run_client ~net "./alice.cap" "Message from Alice";
+  run_client ~net "./bob.cap" "Message from Bob"
 ```
 
 <!-- $MDX dir=examples/sturdy-refs -->
@@ -899,17 +905,19 @@ We can use the new API like this:
 <!-- $MDX include,file=examples/sturdy-refs-2/main.ml,part=main -->
 ```ocaml
 let () =
-  Lwt_main.run begin
-    start_server () >>= fun root_uri ->
-    let vat = Capnp_rpc_unix.client_only_vat () in
-    let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
-    Sturdy_ref.with_cap_exn root_sr @@ fun root ->
-    Logger.log root "Message from Admin" >>= fun () ->
-    Capability.with_ref (Logger.sub root "alice") @@ fun for_alice ->
-    Capability.with_ref (Logger.sub root "bob") @@ fun for_bob ->
-    Logger.log for_alice "Message from Alice" >>= fun () ->
-    Logger.log for_bob "Message from Bob"
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let net = env#net in
+  let root_uri = start_server ~sw net in
+  let vat = Capnp_rpc_unix.client_only_vat ~sw net in
+  let root_sr = Capnp_rpc_unix.Vat.import vat root_uri |> or_fail in
+  Sturdy_ref.with_cap_exn root_sr @@ fun root ->
+  Logger.log root "Message from Admin";
+  Capability.with_ref (Logger.sub root "alice") @@ fun for_alice ->
+  Capability.with_ref (Logger.sub root "bob") @@ fun for_bob ->
+  Logger.log for_alice "Message from Alice";
+  Logger.log for_bob "Message from Bob"
 ```
 
 <!-- $MDX dir=examples/sturdy-refs-2 -->
@@ -934,13 +942,11 @@ the admin can request the sturdy ref like this:
 
 <!-- $MDX include,file=examples/sturdy-refs-3/main.ml,part=save -->
 ```ocaml
-    (* The admin creates a logger for Alice and saves it: *)
-    Capability.with_ref (Logger.sub root "alice") (fun for_alice ->
-        Capnp_rpc.Persistence.save_exn for_alice >|= fun uri ->
-        Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail
-      ) >>= fun () ->
-    (* Alice uses it: *)
-    run_client "alice.cap"
+  (* The admin creates a logger for Alice and saves it: *)
+  let uri = Capability.with_ref (Logger.sub root "alice") Capnp_rpc.Persistence.save_exn in
+  Capnp_rpc_unix.Cap_file.save_uri uri "alice.cap" |> or_fail;
+  (* Alice uses it: *)
+  run_client ~net "alice.cap"
 ```
 
 If successful, the client can use this sturdy ref to connect directly to the logger in future:
@@ -1006,7 +1012,7 @@ include Restorer.LOADER
 type loader = [`Logger_beacebd78653e9af] Sturdy_ref.t -> label:string -> Restorer.resolution
 (** A function to create a new in-memory logger with the given label and sturdy-ref. *)
 
-val create : make_sturdy:(Restorer.Id.t -> Uri.t) -> string -> t * loader Lwt.u
+val create : make_sturdy:(Restorer.Id.t -> Uri.t) -> _ Eio.Path.t -> t * loader Eio.Promise.u
 (** [create ~make_sturdy dir] is a database that persists services in [dir] and
     a resolver to let you set the loader (we're not ready to set the loader
     when we create the database). *)
@@ -1039,7 +1045,7 @@ We can use this with `File_store` to implement `Db`:
 
 <!-- $MDX include,file=examples/sturdy-refs-4/db.ml -->
 ```ocaml
-open Lwt.Infix
+open Eio.Std
 open Capnp_rpc.Std
 open Capnp_rpc_net
 
@@ -1050,7 +1056,7 @@ type loader = [`Logger_beacebd78653e9af] Sturdy_ref.t -> label:string -> Restore
 
 type t = {
   store : Store.Reader.SavedService.struct_t File_store.t;
-  loader : loader Lwt.t;
+  loader : loader Promise.t;
   make_sturdy : Restorer.Id.t -> Uri.t;
 }
 
@@ -1073,17 +1079,18 @@ let save_new t ~label =
 
 let load t sr digest =
   match File_store.load t.store ~digest with
-  | None -> Lwt.return Restorer.unknown_service_id
+  | None -> Restorer.unknown_service_id
   | Some saved_service ->
     let logger = Store.Reader.SavedService.logger_get saved_service in
     let label = Store.Reader.SavedLogger.label_get logger in
     let sr = Capnp_rpc.Sturdy_ref.cast sr in
-    t.loader >|= fun loader ->
+    let loader = Promise.await t.loader in
     loader sr ~label
 
 let create ~make_sturdy dir =
-  let loader, set_loader = Lwt.wait () in
-  if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+  let loader, set_loader = Promise.create () in
+  if not (Eio.Path.is_directory dir) then
+    Eio.Path.mkdir dir ~perm:0o755;
   let store = File_store.create dir in
   {store; loader; make_sturdy}, set_loader
 ```
@@ -1096,33 +1103,35 @@ The main `start_server` function then uses `Db` to create the table:
 <!-- $MDX include,file=examples/sturdy-refs-4/main.ml,part=server -->
 ```ocaml
 let serve config =
-  Lwt_main.run begin
-    (* Create the on-disk store *)
-    let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
-    let db, set_loader = Db.create ~make_sturdy "./store" in
-    (* Create the restorer *)
-    let services = Restorer.Table.of_loader (module Db) db in
-    let restore = Restorer.of_table services in
-    (* Add the root service *)
-    let persist_new ~label =
-      let id = Db.save_new db ~label in
-      Capnp_rpc_net.Restorer.restore restore id
-    in
-    let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
-    let root =
-      let sr = Capnp_rpc_net.Restorer.Table.sturdy_ref services root_id in
-      Logger.local ~persist_new sr "root"
-    in
-    Restorer.Table.add services root_id root;
-    (* Tell the database how to restore saved loggers *)
-    Lwt.wakeup set_loader (fun sr ~label -> Restorer.grant @@ Logger.local ~persist_new sr label);
-    (* Run the server *)
-    Capnp_rpc_unix.serve config ~restore >>= fun _vat ->
-    let uri = Capnp_rpc_unix.Vat_config.sturdy_uri config root_id in
-    Capnp_rpc_unix.Cap_file.save_uri uri "admin.cap" |> or_fail;
-    print_endline "Wrote admin.cap";
-    fst @@ Lwt.wait () (* Wait forever *)
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  (* Create the on-disk store *)
+  let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+  let db, set_loader = Db.create ~make_sturdy (env#cwd / "store") in
+  (* Create the restorer *)
+  let services = Restorer.Table.of_loader ~sw (module Db) db in
+  Switch.on_release sw (fun () -> Restorer.Table.clear services);
+  let restore = Restorer.of_table services in
+  (* Add the root service *)
+  let persist_new ~label =
+    let id = Db.save_new db ~label in
+    Capnp_rpc_net.Restorer.restore restore id
+  in
+  let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
+  let root =
+    let sr = Capnp_rpc_net.Restorer.Table.sturdy_ref services root_id in
+    Logger.local ~persist_new sr "root"
+  in
+  Restorer.Table.add services root_id root;
+  (* Tell the database how to restore saved loggers *)
+  Promise.resolve set_loader (fun sr ~label -> Restorer.grant @@ Logger.local ~persist_new sr label);
+  (* Run the server *)
+  let _vat = Capnp_rpc_unix.serve ~sw ~net:env#net ~restore config in
+  let uri = Capnp_rpc_unix.Vat_config.sturdy_uri config root_id in
+  Capnp_rpc_unix.Cap_file.save_uri uri "admin.cap" |> or_fail;
+  print_endline "Wrote admin.cap";
+  Fiber.await_cancel ()
 ```
 
 The server implementation of the `sub` method gets the label from the parameters
@@ -1135,14 +1144,13 @@ and uses `persist_new` to save the new logger to the database:
       let sub_label = Params.label_get params in
       release_param_caps ();
       let label = Printf.sprintf "%s/%s" label sub_label in
-      Service.return_lwt @@ fun () ->
-      persist_new ~label >|= function
-      | Error e -> Error (`Capnp (`Exception e))
+      match persist_new ~label with
+      | Error e -> Service.error (`Exception e)
       | Ok logger ->
         let response, results = Service.Response.create Results.init_pointer in
         Results.logger_set results (Some logger);
         Capability.dec_ref logger;
-        Ok response
+        Service.return response
 ```
 
 <!-- $MDX dir=examples/sturdy-refs-4,non-deterministic -->
@@ -1256,12 +1264,12 @@ The solution here is to construct `Frontend` with a *promise* for the sturdy ref
 
 <!-- $MDX skip -->
 ```ocaml
-let run_frontend backend_uri =
-  let backend_promise, resolver = Lwt.wait () in
+let run_frontend ~sw ~net backend_uri =
+  let backend_promise, resolver = Promise.create () in
   let frontend = Frontend.make backend_promise in
   let restore = Restorer.single id frontend in
-  Capnp_rpc_unix.serve config ~restore >|= fun vat ->
-  Lwt.wakeup resolver (Capnp_rpc_unix.Vat.import_exn vat backend_uri)
+  let vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
+  Promise.resolve resolver (Capnp_rpc_unix.Vat.import_exn vat backend_uri)
 ```
 
 ### How can I release other resources when my service is released?
@@ -1392,7 +1400,7 @@ like regular OCaml method calls, but also over the network to remote objects.
 The network is made up of communicating "vats" of objects.
 You can think of a Unix process as a single vat.
 The vats are peers - there is no difference between a "client" and a "server" at the protocol level.
-However, some vats may not be listening for incoming network connections, and you might like to think of such vats  as clients.
+However, some vats may not be listening for incoming network connections, and you might like to think of such vats as clients.
 
 When a connection is established between two vats, each can choose to ask the other for access to some service.
 Services are usually identified by a long random secret (a "Swiss number") so that only authorised clients can get access to them.
@@ -1417,7 +1425,6 @@ To build:
     git clone https://github.com/mirage/capnp-rpc.git
     cd capnp-rpc
     opam pin add -ny .
-    opam depext -t capnp-rpc-unix capnp-rpc-mirage
     opam install --deps-only -t .
     make test
 
@@ -1425,7 +1432,7 @@ If you have trouble building, you can use the Dockerfile shown in the CI logs (c
 
 ### Testing
 
-Running `make test` will run through the tests in `test-lwt/test.ml`, which run some in-process examples.
+Running `make test` will run through the tests in the `test` directory, which run some in-process examples.
 
 The calculator example can also be run across two Unix processes.
 
@@ -1453,7 +1460,8 @@ In that case, the client URL would be `capnp://insecure@/tmp/calc.socket`.
 
 ### Fuzzing
 
-Running `make fuzz` will run the AFL fuzz tester. You will need to use a version of the OCaml compiler with AFL support (e.g. `opam sw 4.04.0+afl`).
+Running `make fuzz` will run the AFL fuzz tester. You will need to use a version of the OCaml compiler with AFL support
+(e.g. `opam switch create 5.2-afl ocaml-variants.5.2.0+options ocaml-option-afl`).
 
 The fuzzing code is in the `fuzz` directory.
 The tests set up some vats in a single process and then have them perform operations based on input from the fuzzer.
@@ -1486,6 +1494,7 @@ We should also test with some malicious vats (that don't follow the protocol cor
 [pycapnp]: http://jparyani.github.io/pycapnp/
 [Persistence API]: https://github.com/capnproto/capnproto/blob/master/c%2B%2B/src/capnp/persistent.capnp
 [ocaml-ci]: https://github.com/ocurrent/ocaml-ci
+[ocluster]: https://github.com/ocurrent/ocluster
 [api]: https://mirage.github.io/capnp-rpc/
 [NETWORK]: https://mirage.github.io/capnp-rpc/capnp-rpc-net/Capnp_rpc_net/S/module-type-NETWORK/index.html
 [calc_direct.ml]: ./test-bin/calc_direct.ml

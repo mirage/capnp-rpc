@@ -7,6 +7,7 @@ module Error = Capnp_rpc_proto.Error
 module Log = Capnp_rpc_proto.Debug.Log
 module RO_array = Capnp_rpc_proto.RO_array
 module Debug = Capnp_rpc_proto.Debug
+module Leak_handler = Leak_handler
 
 module Capability = Capability
 

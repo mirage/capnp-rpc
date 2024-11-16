@@ -1,7 +1,7 @@
 (library
  (name capnp_rpc)
  (public_name capnp-rpc)
- (libraries astring capnp capnp-rpc.proto fmt logs lwt uri))
+ (libraries astring capnp capnp-rpc.proto fmt logs eio uri))
 
 (rule
  (targets rpc_schema.ml rpc_schema.mli)

@@ -7,10 +7,10 @@ type t = [`Calculator_97983392df35cc36] Capability.t
 module rec Value : sig
   type t = [`Value_c3e69d34d3ee48d2] Capability.t
 
-  val read : t -> float Lwt.t
+  val read : t -> float
   (** [read t] reads the value of the remote value object. *)
 
-  val final_read : t -> float Lwt.t
+  val final_read : t -> float
   (** [final_read t] reads the value and dec_ref's [t]. *)
 
   val local : float -> t
@@ -20,7 +20,7 @@ end
 and Fn : sig
   type t = [`Function_ede83a3d96840394] Capability.t
 
-  val call : t -> float list -> float Lwt.t
+  val call : t -> float list -> float
   (** [call fn args] does [fn args]. *)
 
   val local : int -> Expr.t -> Fn.t
@@ -58,5 +58,6 @@ val evaluate : t -> Expr.t -> Value.t
 val getOperator : t -> [`Add | `Subtract | `Multiply | `Divide] -> Fn.t
 (** [getOperator t op] is a remote operator function provided by [t]. *)
 
-val local : t
-(** A capability to a local calculator service *)
+val local : sw:Eio.Switch.t -> t
+(** A capability to a local calculator service.
+    It may immediately return a promise of a result, while continuing the calculation in [sw]. *)
