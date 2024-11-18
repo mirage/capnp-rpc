@@ -1,5 +1,4 @@
 open Eio.Std
-open Astring
 
 module Log = Capnp_rpc.Debug.Log
 
@@ -61,7 +60,7 @@ end
 
 let sturdy_uri =
   let of_string s =
-    if String.is_prefix s ~affix:"capnp://" then parse_uri s
+    if String.starts_with s ~prefix:"capnp://" then parse_uri s
     else if Sys.file_exists s then Cap_file.load_uri s
     else error "Expected a URI starting with \"capnp://\" \
                 or the path to a file containing such a URI, but got %S." s
