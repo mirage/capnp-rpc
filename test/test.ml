@@ -1,5 +1,4 @@
 open Eio.Std
-open Astring
 open Testlib
 open Capnp_rpc.Std
 open Capnp_rpc_net
@@ -147,7 +146,7 @@ let test_bad_crypto ~net =
   | Ok _ -> Alcotest.fail "Wrong TLS key should have been rejected"
   | Error e ->
     let msg = Fmt.to_to_string Capnp_rpc.Exception.pp e in
-    assert (String.is_prefix ~affix:"Failed: TLS connection failed: TLS failure: authentication failure" msg);
+    assert (String.starts_with ~prefix:"Failed: TLS connection failed: TLS failure: authentication failure" msg);
     Logs.info (fun f -> f "Wait for server to log warning...");
     while Logs.warn_count () = old_warnings do
       Fiber.yield ()

@@ -1,5 +1,3 @@
-open Astring
-
 module Core_types = Testbed.Capnp_direct.Core_types
 module Request = Testbed.Capnp_direct.String_content.Request
 module Response = Testbed.Capnp_direct.String_content.Response
@@ -954,12 +952,12 @@ let test_shorten_field () =
 let ensure_is_cycle_error (x:#Core_types.struct_ref) : unit =
   match x#response with
   | Some (Error (`Exception ex))
-    when (String.is_prefix ~affix:"Attempt to create a cycle detected:" ex.Exception.reason) -> ()
+    when (String.starts_with ~prefix:"Attempt to create a cycle detected:" ex.Exception.reason) -> ()
   | _ -> Alcotest.fail (Fmt.str "Not a cycle error: %t" x#pp)
 
 let ensure_is_cycle_error_cap cap =
   match cap#problem with
-  | Some ex when (String.is_prefix ~affix:"<cycle: " ex.Exception.reason) -> ()
+  | Some ex when (String.starts_with ~prefix:"<cycle: " ex.Exception.reason) -> ()
   | _ -> Alcotest.fail (Fmt.str "Not a cycle error: %t" cap#pp)
 
 let test_cycle () =

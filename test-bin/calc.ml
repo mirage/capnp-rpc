@@ -81,7 +81,7 @@ let () =
   Logs.set_reporter reporter;
   Logs.set_level ~all:true (Some Logs.Info);
   Logs.Src.list () |> List.iter (fun src ->
-      if Astring.String.is_prefix ~affix:"capnp" (Logs.Src.name src) then
+      if String.starts_with ~prefix:"capnp" (Logs.Src.name src) then
         Logs.Src.set_level src (Some Logs.Debug);
     );
   let doc = "a calculator example" in
