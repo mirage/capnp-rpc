@@ -1,5 +1,3 @@
-open Asetmap
-
 module Log = Debug.Log
 module IntMap = Map.Make(struct type t = int let compare (a:int) b = compare a b end)
 
@@ -1504,7 +1502,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let caps_used = Question.paths_used question |> caps_used ~msg in
       let import_with_embargoes cap_index d =
         let embargo_path =
-          match IntMap.find cap_index caps_used with
+          match IntMap.find_opt cap_index caps_used with
           | None -> None
           | Some path -> Some (Question.message_target question path)
         in
@@ -1581,7 +1579,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                       let embargoes_needed = caps_used ~msg paths_used in
                       let maybe_embargo cap_index cap =
                         inc_ref cap;
-                        match IntMap.find cap_index embargoes_needed with
+                        match IntMap.find_opt cap_index embargoes_needed with
                         | None -> cap
                         | Some path ->
                           let old_path = Question.message_target question path in

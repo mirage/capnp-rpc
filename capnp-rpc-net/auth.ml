@@ -1,5 +1,3 @@
-open Asetmap
-
 module Log = Capnp_rpc.Debug.Log
 
 let default_rsa_key_bits = 2048

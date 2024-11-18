@@ -1,5 +1,3 @@
-open Asetmap
-
 (** Vat-level authentication and encryption.
 
     Unless your network provides a secure mechanism for establishing connections
