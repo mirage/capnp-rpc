@@ -1,5 +1,3 @@
-open Asetmap
-
 module Log = Debug.Log
 
 module Make (C : S.CORE_TYPES) = struct
@@ -72,8 +70,6 @@ module Make (C : S.CORE_TYPES) = struct
     | Unresolved of 'a unresolved
     | Forwarding of struct_ref
     | Finished
-
-  let pp_fields = Field_map.dump (fun f (k, v) -> Fmt.pf f "%a:%a" Wire.Path.pp k RC.pp v.ref_count)
 
   let pp_opt_blocked_on f = function
     | None -> ()
@@ -239,7 +235,7 @@ module Make (C : S.CORE_TYPES) = struct
       dispatch state
         ~unresolved:(fun u ->
             let field =
-              match Field_map.find path u.fields with
+              match Field_map.find_opt path u.fields with
               | Some f -> f
               | None ->
                 let cap = field path (self :> struct_ref_internal) in
@@ -393,7 +389,7 @@ module Make (C : S.CORE_TYPES) = struct
         ~unresolved:(fun u ->
             (* When we resolve, we'll be holding references to all the caps in the resolution, so
                so they must still be alive by the time we pass on any extra inc or dec refs. *)
-            let f = Field_map.get path u.fields in
+            let f = Field_map.find path u.fields in
             assert (f.ref_count > RC.one);   (* rc can't be one because that's our reference *)
             let pp = self#field_pp path in
             f.ref_count <- RC.sum f.ref_count d ~pp
@@ -406,7 +402,7 @@ module Make (C : S.CORE_TYPES) = struct
     method field_dec_ref path =
       dispatch state
         ~unresolved:(fun u ->
-            let f = Field_map.get path u.fields in
+            let f = Field_map.find path u.fields in
             assert (f.ref_count > RC.one);   (* rc can't be one because that's our reference *)
             let pp = self#field_pp path in
             f.ref_count <- RC.pred f.ref_count ~pp
@@ -424,7 +420,7 @@ module Make (C : S.CORE_TYPES) = struct
     method field_check_invariants i =
       dispatch state
         ~unresolved:(fun u ->
-            let f = Field_map.get i u.fields in
+            let f = Field_map.find i u.fields in
             assert (f.ref_count > RC.one);
             self#check_invariants
           )
@@ -435,7 +431,7 @@ module Make (C : S.CORE_TYPES) = struct
       | Finished -> Fmt.pf f "Promise is finished, but field %a isn't!" Wire.Path.pp path
       | Forwarding _ -> Fmt.pf f "Promise is resolved, but field %a isn't!" Wire.Path.pp path
       | Unresolved u ->
-        let field = Field_map.get path u.fields in
+        let field = Field_map.find path u.fields in
         match RC.to_int field.ref_count with
         | None ->
           Fmt.pf f "(rc=LEAKED) -> #%a -> %t" Wire.Path.pp path self#pp

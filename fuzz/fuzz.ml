@@ -1,4 +1,3 @@
-open Asetmap
 module RO_array = Capnp_rpc_proto.RO_array
 module Test_utils = Testbed.Test_utils
 module OID = Capnp_rpc_proto.Debug.OID

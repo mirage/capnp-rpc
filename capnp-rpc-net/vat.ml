@@ -58,7 +58,7 @@ module Make (Network : S.NETWORK) = struct
     run_connection_generic t endpoint
       ~add:(fun conn -> t.connections <- ID_map.add peer_id conn t.connections; r conn)
       ~remove:(fun conn ->
-          match ID_map.find peer_id t.connections with
+          match ID_map.find_opt peer_id t.connections with
           | Some x when x == conn -> t.connections <- ID_map.remove peer_id t.connections
           | Some _        (* Already replaced by a new one? *)
           | None -> ()
@@ -72,7 +72,7 @@ module Make (Network : S.NETWORK) = struct
       run_connection_generic t endpoint
         ~add:(fun conn -> t.anon_connections <- conn :: t.anon_connections; r conn)
         ~remove:(fun conn -> t.anon_connections <- List.filter ((!=) conn) t.anon_connections)
-    ) else match ID_map.find peer_id t.connections with
+    ) else match ID_map.find_opt peer_id t.connections with
       | None -> run_connection_tls t endpoint r
       | Some existing ->
         Log.info (fun f -> f ~tags:t.tags "Trying to add a connection, but we already have one for this vat");
@@ -163,7 +163,7 @@ module Make (Network : S.NETWORK) = struct
     let my_id = Auth.Secret_key.digest ~hash (Lazy.force t.secret_key) in
     if Auth.Digest.equal remote_id my_id then
       Restorer.restore t.restore service
-    else match ID_map.find remote_id t.connections with
+    else match ID_map.find_opt remote_id t.connections with
       | Some conn when CapTP.disconnecting conn ->
         Eio.Condition.await_no_mutex t.connection_removed;
         connect t (addr, service)
@@ -171,7 +171,7 @@ module Make (Network : S.NETWORK) = struct
         (* Already connected; use that. *)
         Ok (CapTP.bootstrap conn service)
       | None ->
-        match ID_map.find remote_id t.connecting with
+        match ID_map.find_opt remote_id t.connecting with
         | None -> initiate_connection t addr service
         | Some conn ->
           (* We're already trying to establish a connection, wait for that. *)
@@ -218,10 +218,13 @@ module Make (Network : S.NETWORK) = struct
       Auth.Digest.pp id
       CapTP.dump conn
 
+  let dump_id_map pp f m =
+    Fmt.pf f "{@[<v0>%a@]}" (Fmt.seq pp) (ID_map.to_seq m)
+
   let dump f t =
     Fmt.pf f "@[<v2>%a@,Connecting: %a@,Connected: %a@,Anonymous: %a@]"
       pp_vat_id t.address
-      (ID_map.dump dump_connecting) t.connecting
-      (ID_map.dump dump_id_conn) t.connections
+      (dump_id_map dump_connecting) t.connecting
+      (dump_id_map dump_id_conn) t.connections
       (Fmt.Dump.list CapTP.dump) t.anon_connections
 end
