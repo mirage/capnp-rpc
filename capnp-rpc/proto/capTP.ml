@@ -152,7 +152,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let mark_resolved t ~get_import result =
       if t.resolution <> `Unresolved then
-        Debug.failf "Got Resolve for already-resolved import %a" pp t
+        Fmt.failwith "Got Resolve for already-resolved import %a" pp t
       else match result with
         | Error _ -> t.resolution <- `Error
         | Ok desc ->
@@ -545,7 +545,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* We're sending a return message. *)
     let return_resolved t ~exports_for_release ~resolve_targets =
       match t.state with
-      | `Finished -> Debug.failf "Can't return finished answer %a!" pp t
+      | `Finished -> Fmt.failwith "Can't return finished answer %a!" pp t
       | `Active x ->
         assert (x.resolution = `Unresolved);
         t.state <- `Active {x with resolution = `Resolved (resolve_targets, exports_for_release)}
@@ -553,7 +553,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* We're sending a TakeFromOtherQuestion return message. *)
     let return_take_from_question t question =
       match t.state with
-      | `Finished -> Debug.failf "Can't return finished answer %a!" pp t
+      | `Finished -> Fmt.failwith "Can't return finished answer %a!" pp t
       | `Active x ->
         assert (x.resolution = `Unresolved);
         Question.inc_ref question;
@@ -562,7 +562,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* Remove from Answers table after calling this. *)
     let finish t ~release_result_caps =
       match t.state with
-      | `Finished -> Debug.failf "Can't finish already-finished answer %a" pp t
+      | `Finished -> Fmt.failwith "Can't finish already-finished answer %a" pp t
       | `Active {answer; resolution} ->
         t.state <- `Finished;
         dec_ref answer;
@@ -594,14 +594,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
        [None] if we didn't return yet. *)
     let resolve_target t path =
       match t.state with
-      | `Finished -> Debug.failf "Answer %a is finished!" pp t
+      | `Finished -> Fmt.failwith "Answer %a is finished!" pp t
       | `Active {answer; resolution} ->
         match resolution with
         | `Unresolved -> None
         | `Forwarded q -> Some (Ok (`QuestionCap (q, path)))
         | `Resolved (resolve_targets, _) ->
           match answer#response with
-          | None -> Debug.failf "Answer %a is resolved, but no response recorded!" pp t
+          | None -> Fmt.failwith "Answer %a is resolved, but no response recorded!" pp t
           | Some (Error _) as e -> e
           | Some (Ok msg) ->
             match Core_types.Wire.Response.cap_index msg path with
@@ -612,7 +612,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let disembargo_target t path =
       match resolve_target t path with
-      | None -> Debug.failf "Got disembargo request for unresolved answer %a!" pp t
+      | None -> Fmt.failwith "Got disembargo request for unresolved answer %a!" pp t
       | Some (Error _) -> failwith "Got disembargo for an exception!"
       | Some (Ok target) -> target
 
@@ -629,7 +629,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let init t answer =
       match t.state with
       | `Finished -> t.state <- `Active { answer; resolution = `Unresolved }
-      | `Active _ -> Debug.failf "Answer %a already initialised!" pp t
+      | `Active _ -> Fmt.failwith "Answer %a already initialised!" pp t
   end
 
   module Export = struct
@@ -770,7 +770,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let check_connected t =
     match t.disconnected with
     | None -> ()
-    | Some ex -> Debug.failf "CapTP connection is disconnected (%a)" Exception.pp ex
+    | Some ex -> Fmt.failwith "CapTP connection is disconnected (%a)" Exception.pp ex
 
   module Send : sig
     (** Converts struct pointers into integer table indexes, ready for sending.
@@ -1157,7 +1157,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
         method resolve cap =
           match state with
-          | Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
+          | Set _ -> Fmt.failwith "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
           | Unset {handler = _; rc; on_set; on_release} ->
             let pp f = self#pp f in
             RC.check ~pp rc;
@@ -1522,7 +1522,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `AcceptFromThirdParty -> failwith "todo: AcceptFromThirdParty"
       | `TakeFromOtherQuestion aid ->
         match Answer.answer_struct (Answers.find_exn t.answers aid) with
-        | `Finished -> Debug.failf "Can't take from answer %a - it's already finished!" AnswerId.pp aid
+        | `Finished -> Fmt.failwith "Can't take from answer %a - it's already finished!" AnswerId.pp aid
         | `Promise other ->
           match question.remote_promise with
           | `Released -> `TakeFromCancelledQuestion
@@ -1608,8 +1608,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let send_disembargo t embargo_id target =
       let desc =
         match target with
-        | `None -> Debug.failf "Protocol error: disembargo request for None cap"
-        | `Local -> Debug.failf "Protocol error: disembargo request for local target"
+        | `None -> Fmt.failwith "Protocol error: disembargo request for None cap"
+        | `Local -> Fmt.failwith "Protocol error: disembargo request for local target"
         | `QuestionCap (question, path) -> Question.message_target question path
         | `Import import -> Import.message_target import
       in

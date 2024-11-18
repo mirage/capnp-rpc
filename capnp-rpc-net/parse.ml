@@ -103,7 +103,7 @@ module Make_basic
       | Caller -> `Caller
       | Yourself -> `Yourself
       | ThirdParty _ -> failwith "TODO: parse_call: ThirdParty"
-      | Undefined x -> Capnp_rpc.Debug.failf "Unknown SendResultsTo type %d" x
+      | Undefined x -> Fmt.failwith "Unknown SendResultsTo type %d" x
     in
     `Call (aid, target, msg, descs, results_to)
 
@@ -122,7 +122,7 @@ module Make_basic
     | Disembargo.Context.ReceiverLoopback embargo_id -> `Disembargo_reply (target, EmbargoId.of_uint32 embargo_id)
     | Disembargo.Context.Accept
     | Disembargo.Context.Provide _ -> failwith "TODO: handle_disembargo: 3rd-party"
-    | Disembargo.Context.Undefined x -> Capnp_rpc.Debug.failf "Unknown Disembargo type %d" x
+    | Disembargo.Context.Undefined x -> Fmt.failwith "Unknown Disembargo type %d" x
 
   let parse_resolve x =
     let open Reader in
@@ -130,7 +130,7 @@ module Make_basic
       match Resolve.get x with
       | Resolve.Cap d -> Ok (parse_desc d)
       | Resolve.Exception e -> Error (parse_exn e)
-      | Resolve.Undefined x -> Capnp_rpc.Debug.failf "Resolved to Undefined(%d)!" x
+      | Resolve.Undefined x -> Fmt.failwith "Resolved to Undefined(%d)!" x
     in
     let import_id = Resolve.promise_id_get x |> ImportId.of_uint32 in
     `Resolve (import_id, new_target)

@@ -41,7 +41,7 @@ let manual () = object (self)
 
   method pop_n msg =
     match Queue.pop queue with
-    | exception Queue.Empty -> Capnp_rpc_proto.Debug.failf "Empty queue (expecting %S)" msg
+    | exception Queue.Empty -> Fmt.failwith "Empty queue (expecting %S)" msg
     | actual, answer ->
       Alcotest.(check string) ("Expecting " ^ msg) msg actual.Msg.data;
       let args = Request_payload.snapshot_caps actual in
