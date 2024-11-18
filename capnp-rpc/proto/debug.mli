@@ -15,6 +15,7 @@ val pp_exn : exn Fmt.t
 (** [pp_exn] is like [Fmt.exn], but pretty-prints [Invariant_broken]. *)
 
 val failf : ('a, Format.formatter, unit, 'b) format4 -> 'a
+[@@deprecated "Use Fmt.failwith instead"]
 (** [failf msg] raises [Failure msg]. *)
 
 val invariant_broken : (Format.formatter -> unit) -> 'a

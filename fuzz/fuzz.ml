@@ -8,7 +8,7 @@ let running_under_afl =
   | [] -> assert false
   | [_] -> false
   | [_; "--fuzz"] -> true
-  | prog :: _ -> Capnp_rpc_proto.Debug.failf "Usage: %s < input-data" prog
+  | prog :: _ -> Fmt.failwith "Usage: %s < input-data" prog
 
 let test_script_path = "test_script.ml"
 

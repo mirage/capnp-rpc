@@ -162,7 +162,7 @@ let create_server ?tags ?restore ~sw ~net config =
     | `Unix _ as addr -> Eio.Net.listen ~sw ~backlog ~reuse_addr:true net addr
     | `TCP (host, port) ->
       match Eio.Net.getaddrinfo_stream net host ~service:(string_of_int port) with
-      | [] -> Capnp_rpc.Debug.failf "No addresses found for host name %S" host
+      | [] -> Fmt.failwith "No addresses found for host name %S" host
       | addr :: _ ->
         let socket = Eio.Net.listen ~sw ~backlog ~reuse_addr:true net addr in
         let unix_socket = Eio_unix.Resource.fd_opt socket |> Option.get in

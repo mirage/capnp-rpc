@@ -424,7 +424,7 @@ module Make (C : S.CORE_TYPES) = struct
             assert (f.ref_count > RC.one);
             self#check_invariants
           )
-        ~forwarding:(fun _ -> Debug.failf "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
+        ~forwarding:(fun _ -> Fmt.failwith "Promise is resolved, but field %a isn't!" Wire.Path.pp i)
 
     method field_pp path f =
       match state with

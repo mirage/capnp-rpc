@@ -64,7 +64,7 @@ let connect net ~sw ~secret_key (addr, auth) =
     | `Unix _ as x -> x
     | `TCP (host, port) ->
       match Eio.Net.getaddrinfo_stream net host ~service:(string_of_int port) with
-      | [] -> Capnp_rpc.Debug.failf "No addresses found for host name %S" host
+      | [] -> Fmt.failwith "No addresses found for host name %S" host
       | addr :: _ -> addr
   in
   Log.info (fun f -> f "Connecting to %a..." Eio.Net.Sockaddr.pp eio_addr);
