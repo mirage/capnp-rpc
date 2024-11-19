@@ -71,8 +71,7 @@ module Make (Network : S.NETWORK) = struct
         listen t
 
   let send_abort t ex =
-    Endpoint.send t.endpoint (Serialise.message (`Abort ex));
-    Endpoint.flush t.endpoint   (* We're probably about to disconnect *)
+    Endpoint.send t.endpoint (Serialise.message (`Abort ex))
 
   let disconnect t ex =
     if not t.disconnecting then (
@@ -112,6 +111,13 @@ module Make (Network : S.NETWORK) = struct
         disconnect t (Capnp_rpc.Exception.v ~ty:`Disconnected "Connection closed")
       );
     Fiber.check ()
+
+  let run t =
+    (* When [run_writer] finishes it shuts down the socket, causing [listen] to read end-of-stream.
+       When [listen] finishes, calling [shutdown_send] causes [run_writer] to return. *)
+    Fiber.both
+      (fun () -> Endpoint.run_writer ~tags:(tags t) t.endpoint)
+      (fun () -> listen t; Endpoint.shutdown_send t.endpoint)
 
   let dump f t = Conn.dump f t.conn
 end

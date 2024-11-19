@@ -68,11 +68,11 @@ module type VAT_NETWORK = sig
         receives messages using [endpoint].
         [restore] is used to respond to "Bootstrap" messages.
         If the connection fails then [endpoint] will be disconnected.
-        You must call {!listen} to run the loop handling messages.
+        You must call {!run} to run the loop handling messages.
         @param sw Used to run methods and to run the transmit thread. *)
 
-    val listen : t -> unit
-    (** [listen t] reads and handles incoming messages until the connection is finished. *)
+    val run : t -> unit
+    (** [run t] reads and handles incoming messages until the connection is finished. *)
 
     val bootstrap : t -> service_id -> 'a capability
     (** [bootstrap t object_id] is the peer's bootstrap object [object_id], if any.

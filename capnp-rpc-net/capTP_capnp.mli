@@ -12,8 +12,8 @@ module Make : S.NETWORK -> sig
       You must call {!listen} to run the loop handling messages.
       @param sw Used to run methods and to run the transmit thread. *)
 
-  val listen : t -> unit
-  (** [listen t] reads and handles incoming messages until the connection is finished. *)
+  val run : t -> unit
+  (** [run t] reads and handles incoming messages until the connection is finished. *)
 
   val bootstrap : t -> string -> 'a Capnp_rpc.Capability.t
   (** [bootstrap t object_id] is the peer's bootstrap object [object_id], if any.

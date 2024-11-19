@@ -43,11 +43,7 @@ module Make (Network : S.NETWORK) = struct
   let run_connection_generic t ~add ~remove endpoint =
     let conn = CapTP.connect ~sw:t.sw ~tags:t.tags ~restore:t.restore endpoint in
     add conn;
-    Fun.protect (fun () ->
-        Fiber.both
-          (fun () -> Endpoint.run_writer ~tags:t.tags endpoint)
-          (fun () -> CapTP.listen conn)
-      )
+    Fun.protect (fun () -> CapTP.run conn)
       ~finally:(fun () ->
           remove conn;
           Eio.Condition.broadcast t.connection_removed

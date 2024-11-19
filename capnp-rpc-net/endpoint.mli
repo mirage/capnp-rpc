@@ -24,9 +24,9 @@ val peer_id : t -> Auth.Digest.t
 (** [peer_id t] is the fingerprint of the peer's public key,
     or [Auth.Digest.insecure] if TLS isn't being used. *)
                      
-val flush : t -> unit
-(** [flush t] is useful to try to send any buffered data before disconnecting.
-    Otherwise, the final abort message is likely to get lost. *)
+val shutdown_send : t -> unit
+(** [shutdown_send t] closes the writer, causing [run_writer] to return once
+    all buffered data has been written. *)
 
 val disconnect : t -> unit
 (** [disconnect t] shuts down the underlying flow. *)
