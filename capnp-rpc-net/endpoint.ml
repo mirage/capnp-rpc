@@ -104,13 +104,9 @@ let disconnect t =
     (* TCP connection already shut down, so TLS shutdown failed. Ignore. *)
     ()
 
-let flush t =
+let shutdown_send t =
   Write.unpause t.writer;
-  (* Give the writer a chance to send the last of the data.
-     We could use [Write.flush] to be sure the data got sent, but this code is
-     only used to send aborts, which isn't very important and it's probably
-     better to drop the buffered messages if one yield isn't enough. *)
-  Fiber.yield ()
+  Write.close t.writer
 
 let rec run_writer ~tags t =
   let bufs = Write.await_batch t.writer in

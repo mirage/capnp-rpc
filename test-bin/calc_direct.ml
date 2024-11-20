@@ -29,14 +29,12 @@ module Logging = struct
     Logs.set_reporter (reporter id)
 end
 
-let run_connection conn endpoint =
-  Fiber.all [
+let run_connection conn =
+  Fiber.both
     (* Normally the vat runs a leak handler to free resources that get GC'd
        with a non-zero reference count. We're not using a vat, so run it ourselves. *)
-    Capnp_rpc.Leak_handler.run;
-    (fun () -> Capnp_rpc_unix.CapTP.listen conn);
-    (fun () -> Capnp_rpc_net.Endpoint.run_writer ~tags:Logs.Tag.empty endpoint);
-  ]
+    Capnp_rpc.Leak_handler.run
+    (fun () -> Capnp_rpc_unix.CapTP.run conn)
 
 module Parent = struct
   let run socket =
@@ -46,7 +44,7 @@ module Parent = struct
     let p = Capnp_rpc_net.Endpoint.of_flow socket ~peer_id:Capnp_rpc_net.Auth.Digest.insecure in
     Logs.info (fun f -> f "Connecting to child process...");
     let conn = Capnp_rpc_unix.CapTP.connect ~sw ~restore:Capnp_rpc_net.Restorer.none p in
-    Fiber.fork_daemon ~sw (fun () -> run_connection conn p; `Stop_daemon);
+    Fiber.fork_daemon ~sw (fun () -> run_connection conn; `Stop_daemon);
     (* Get the child's service object: *)
     let calc = Capnp_rpc_unix.CapTP.bootstrap conn service_name in
     (* Use the service: *)
@@ -69,7 +67,7 @@ module Child = struct
     let endpoint = Capnp_rpc_net.Endpoint.of_flow socket ~peer_id:Capnp_rpc_net.Auth.Digest.insecure in
     let conn = Capnp_rpc_unix.CapTP.connect ~sw ~restore endpoint in
     Logs.info (fun f -> f "Serving requests...");
-    run_connection conn endpoint
+    run_connection conn
 end
 
 let () =

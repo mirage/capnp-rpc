@@ -596,7 +596,7 @@ let test_crossed_calls ~net =
   Capability.dec_ref to_server
 
 (* Run test_crossed_calls several times to try to trigger the various behaviours. *)
-let test_crossed_calls ~net =
+let test_crossed_calls ~net () =
   for _ = 1 to 10 do
     test_crossed_calls ~net
   done
@@ -744,7 +744,7 @@ let rpc_tests ~net ~dir =
     run     "Broken ref 4"        test_broken4;
     run_eio "Parallel connect"    test_parallel_connect;
     run_eio "Parallel fails"      test_parallel_fails;
-    run_eio "Crossed calls"       test_crossed_calls;
+    run     "Crossed calls"       (test_crossed_calls ~net);   (* Aborted connections can log warnings *)
     run_eio "Store"               test_store;
     run_eio "File store"          (test_file_store ~dir);
     run_eio "Await settled"       test_await_settled;
