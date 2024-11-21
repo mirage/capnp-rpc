@@ -598,13 +598,15 @@ let test_crossed_calls ~net =
   let c_got, s_got =
     match c_got, s_got with
     | Ok x, Ok y -> (x, y)
-    | Ok x, Error _ ->
+    | Ok x, Error (`Capnp e) ->
       (* Server got an error. Try client again. *)
+      Logs.info (fun f -> f ~tags:Test_utils.server_tags "%a" Capnp_rpc.Error.pp e);
       let to_client = Sturdy_ref.connect_exn sr_to_client in
       Capability.with_ref to_client @@ fun to_client ->
       Echo.ping to_client "ping" |> fun s_got -> (x, s_got)
-    | Error _, Ok y ->
+    | Error (`Capnp e), Ok y ->
       (* Client got an error. Try server again. *)
+      Logs.info (fun f -> f ~tags:Test_utils.client_tags "%a" Capnp_rpc.Error.pp e);
       let to_server = Sturdy_ref.connect_exn sr_to_server in
       Capability.with_ref to_server @@ fun to_server ->
       Echo.ping to_server "ping" |> fun c_got -> (c_got, y)

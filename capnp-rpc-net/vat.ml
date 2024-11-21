@@ -119,7 +119,7 @@ module Make (Network : S.NETWORK) = struct
         let my_id = Auth.Secret_key.digest ~hash (Lazy.force t.secret_key) in
         let keep_new = (my_id > peer_id) = (mode = `Connect) in
         if keep_new then (
-          let reason = Capnp_rpc.Exception.v "Closing duplicate connection" in
+          let reason = Capnp_rpc.Exception.v "Invalidated by newer connection" in
           CapTP.disconnect existing reason;
           run_connection_tls t endpoint r
         ) else (
