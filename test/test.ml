@@ -271,6 +271,29 @@ let test_calculator2 ~net =
   Capability.dec_ref remote_mul;
   Capability.dec_ref c
 
+(* Like [Calc.getOperator t `Multiply], but using [Capability.call] to check that works. *)
+let get_mul_direct t =
+  let module Api = Calculator.MakeRPC(Capnp_rpc) in
+  let open Api.Client.Calculator.GetOperator in
+  let req, p = Capability.Request.create ~message_size:200 Params.init_pointer in
+  Params.op_set p Api.Builder.Calculator.Operator.Multiply;
+  let q = Capability.call t method_id req in
+  let mul = Results.func_get_pipelined q in
+  Capnp_rpc.StructRef.dec_ref q;
+  mul
+
+let test_calculator3 ~net =
+  Switch.run @@ fun sw ->
+  let service = Calc.local ~sw in
+  with_vats ~net ~service @@ fun cs ->
+  let c = get_bootstrap cs in
+  let remote_mul = get_mul_direct c in
+  let expr = Calc.Expr.(Call (remote_mul, [Float 4.; Float 6.])) in
+  let result = Calc.evaluate c expr |> Calc.Value.final_read in
+  Alcotest.check float "Result" 24.0 result;
+  Capability.dec_ref remote_mul;
+  Capability.dec_ref c
+
 let test_indexing ~net =
   Switch.run @@ fun sw ->
   let registry_impl = Registry.local ~sw () in
@@ -731,6 +754,7 @@ let rpc_tests ~net ~dir =
     run_eio "Registry"            test_registry;
     run_eio "Calculator"          test_calculator;
     run_eio "Calculator 2"        test_calculator2;
+    run_eio "Calculator 3"        test_calculator3;
     run_eio "Cancel"              test_cancel;
     run_eio "Indexing"            test_indexing;
     run     "Options"             test_options;
