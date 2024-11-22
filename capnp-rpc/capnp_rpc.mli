@@ -94,7 +94,7 @@ module Capability : sig
         when you send a message, but you might need it if you decide to abort. *)
   end
 
-  val call : 't t -> ('t, 'a, 'b) Capnp.RPC.MethodID.t -> 'a Request.t -> 'b StructRef.t
+  val call : 't t -> ('t, 'a, 'b StructStorage.reader_t) Capnp.RPC.MethodID.t -> 'a Request.t -> 'b StructRef.t
   (** [call target m req] invokes [target#m req] and returns a promise for the result.
       Messages may be sent to the capabilities that will be in the result
       before the result arrives - they will be pipelined to the service
