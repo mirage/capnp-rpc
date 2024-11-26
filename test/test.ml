@@ -741,6 +741,22 @@ let test_late_bootstrap ~net =
      so we wait too, to ensure it's done. *)
   Fiber.yield ()
 
+let test_listen_address () =
+  let location = Alcotest.of_pp Capnp_rpc_unix.Network.Location.pp in
+  let result = Alcotest.result location Alcotest.string in
+  let test expected s =
+    let x = Capnp_rpc_unix.Network.Location.of_string s |> Result.map_error (fun (`Msg m) -> m) in
+    Alcotest.check result s expected x
+  in
+  test (Ok (`TCP ("127.0.0.1", 7000))) "tcp:127.0.0.1:7000";
+  test (Ok (`TCP ("::1", 7000))) "tcp:[::1]:7000";
+  test (Ok (`TCP ("example.org", 7000))) "tcp:example.org:7000";
+  test (Ok (`Unix "/run/socket")) "unix:/run/socket";
+  test (Error {|Missing port in IPv6 address "[::1]"|}) "tcp:[::1]";
+  test (Error {|Invalid port ":1:7000" in listen address "::1:7000"|}) "tcp:::1:7000";
+  test (Error {|Missing :PORT in listen address "127.0.0.1"|}) "tcp:127.0.0.1";
+  test (Error {|Only tcp:HOST:PORT and unix:PATH addresses are currently supported|}) "http://localhost"
+
 let run name fn = Alcotest.test_case name `Quick fn
 
 let rpc_tests ~net ~dir =
@@ -775,6 +791,7 @@ let rpc_tests ~net ~dir =
     run_eio "File store"          (test_file_store ~dir);
     run_eio "Await settled"       test_await_settled;
     run_eio "Late bootstrap"      test_late_bootstrap;
+    run     "Listen address"      test_listen_address;
   ]
 
 let () =
