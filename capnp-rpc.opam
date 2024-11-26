@@ -15,7 +15,7 @@ depends: [
   "conf-capnproto" {build}
   "capnp" {>= "3.6.0"}
   "stdint" {>= "0.6.0"}
-  "eio" {>= "1.1"}
+  "eio" {>= "1.2"}
   "astring"
   "fmt" {>= "0.8.7"}
   "logs"

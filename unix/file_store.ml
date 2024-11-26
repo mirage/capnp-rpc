@@ -2,6 +2,8 @@ open Capnp_rpc
 
 module ReaderOps = Capnp.Runtime.ReaderInc.Make(Capnp_rpc)
 
+let on_windows = Sys.os_type = "Win32"
+
 let ( / ) = Eio.Path.( / )
 
 type 'a t = {
@@ -19,7 +21,7 @@ let segments_of_reader = function
 
 let save t ~digest data =
   let leaf = leaf_of_digest digest in
-  let tmp_leaf = leaf ^ ".new" in
+  let tmp_leaf = if on_windows then leaf else leaf ^ ".new" in
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (t.dir / tmp_leaf) (fun flow ->
     let segments = segments_of_reader data in
     segments |> List.iter (fun {Message.segment; bytes_consumed} ->
@@ -27,7 +29,8 @@ let save t ~digest data =
         Eio.Flow.write flow [buf]
       );
     );
-  Eio.Path.rename (t.dir / tmp_leaf) (t.dir / leaf)
+  if not on_windows then
+    Eio.Path.rename (t.dir / tmp_leaf) (t.dir / leaf)
 
 let remove t ~digest =
   Eio.Path.unlink (t.dir / leaf_of_digest digest)
