@@ -109,14 +109,16 @@ let shutdown_send t =
   Write.close t.writer
 
 let rec run_writer ~tags t =
-  let bufs = Write.await_batch t.writer in
-  match Eio.Flow.single_write t.flow bufs with
-  | n -> Write.shift t.writer n; run_writer ~tags t
-  | exception (Eio.Io (Eio.Net.E Connection_reset _, _) as ex) ->
-    Log.info (fun f -> f ~tags "Send failed: %a" Eio.Exn.pp ex)
-  | exception ex ->
-    Eio.Fiber.check ();
-    Log.warn (fun f -> f ~tags "Error sending messages: %a (will shutdown connection)" Fmt.exn ex)
+  match Write.await_batch t.writer with
+  | exception End_of_file -> ()         (* Due to [shutdown_send] closing it. *)
+  | bufs ->
+    match Eio.Flow.single_write t.flow bufs with
+    | n -> Write.shift t.writer n; run_writer ~tags t
+    | exception (Eio.Io (Eio.Net.E Connection_reset _, _) as ex) ->
+      Log.info (fun f -> f ~tags "Send failed: %a" Eio.Exn.pp ex)
+    | exception ex ->
+      Eio.Fiber.check ();
+      Log.warn (fun f -> f ~tags "Error sending messages: %a (will shutdown connection)" Fmt.exn ex)
 
 let run_writer ~tags t =
   let cleanup () =

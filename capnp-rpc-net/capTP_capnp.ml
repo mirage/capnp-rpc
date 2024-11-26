@@ -77,7 +77,6 @@ module Make (Network : S.NETWORK) = struct
     if not t.disconnecting then (
       t.disconnecting <- true;
       send_abort t ex;
-      Endpoint.disconnect t.endpoint;
       Conn.disconnect t.conn ex
     )
 

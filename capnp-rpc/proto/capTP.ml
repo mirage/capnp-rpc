@@ -874,7 +874,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
         else `SenderPromise id
 
     let bootstrap t remote_promise =
-      check_connected t;
       Questions.alloc t.questions (Question.v ~params_for_release:[] ~remote_promise)
 
     (* This is for level 0 implementations, which don't understand about releasing caps. *)
@@ -1086,15 +1085,18 @@ module Make (EP : Message_types.ENDPOINT) = struct
     t.queue_send (`Disembargo_request request)
 
   let bootstrap t object_id =
-    let result = make_remote_promise t in
-    let question = Send.bootstrap t (result :> Core_types.struct_resolver) in
-    result#set_question question;
-    let qid = Question.id question in
-    Log.debug (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
-    t.queue_send (`Bootstrap (qid, object_id));
-    let service = result#cap Wire.Path.root in
-    dec_ref result;
-    service
+    match t.disconnected with
+    | Some ex -> Core_types.broken_cap ex
+    | None ->
+      let result = make_remote_promise t in
+      let question = Send.bootstrap t (result :> Core_types.struct_resolver) in
+      result#set_question question;
+      let qid = Question.id question in
+      Log.debug (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
+      t.queue_send (`Bootstrap (qid, object_id));
+      let service = result#cap Wire.Path.root in
+      dec_ref result;
+      service
 
   module Switchable = struct
     class type handler = object
