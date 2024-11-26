@@ -4,8 +4,6 @@ module Log = Capnp_rpc.Debug.Log
 module Tls_wrapper = Capnp_rpc_net.Tls_wrapper
 
 module Location = struct
-  open Astring
-
   include Capnp_rpc_net.Capnp_address.Location
 
   let abs_path p =
@@ -21,16 +19,25 @@ module Location = struct
   let tcp ~host ~port = `TCP (host, port)
 
   let parse_tcp s =
-    match String.cut ~sep:":" s with
-    | None -> Error (`Msg "Missing :PORT in listen address")
-    | Some (host, port) ->
-      match String.to_int port with
-      | None -> Error (`Msg "PORT must be an integer")
-      | Some port ->
+    if String.starts_with ~prefix:"[" s then (
+      match Ipaddr.with_port_of_string ~default:(-1) s with
+      | Ok (_, -1) -> Fmt.error_msg "Missing port in IPv6 address %S" s
+      | Ok (host, port) ->
+        let host = Ipaddr.to_string host in
         Ok (tcp ~host ~port)
+      | Error (`Msg m) -> Fmt.error_msg "Invalid IPv6 address %S: %s" s m
+    ) else (
+      match Astring.String.cut ~sep:":" s with
+      | None -> Fmt.error_msg "Missing :PORT in listen address %S" s
+      | Some (host, port) ->
+        match int_of_string_opt port with
+        | None -> Fmt.error_msg "Invalid port %S in listen address %S" port s
+        | Some port ->
+          Ok (tcp ~host ~port)
+    )
 
   let of_string s =
-    match String.cut ~sep:":" s with
+    match Astring.String.cut ~sep:":" s with
     | Some ("unix", path) -> Ok (unix path)
     | Some ("tcp", tcp) -> parse_tcp tcp
     | None -> Error (`Msg "Missing ':'")
