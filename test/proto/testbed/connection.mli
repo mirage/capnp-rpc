@@ -14,7 +14,7 @@ val summary_of_msg :
        _ *
        [< `AcceptFromThirdParty
        | `Cancelled
-       | `Exception of Capnp_rpc.Exception.t
+       | `Exception of Capnp_rpc_proto.Exception.t
        | `Results of Response.t * _
        | `ResultsSentElsewhere
        | `TakeFromOtherQuestion of _] *
@@ -42,16 +42,16 @@ module type ENDPOINT = sig
 
   val bootstrap : t -> cap
 
-  val stats : t -> Capnp_rpc.Stats.t
+  val stats : t -> Capnp_rpc_proto.Stats.t
 
   val check_invariants : t -> unit
 
   val check_finished : t -> name:string -> unit
 
-  val disconnect : t -> Capnp_rpc.Exception.t -> unit
+  val disconnect : t -> Capnp_rpc_proto.Exception.t -> unit
 end
 
-module Endpoint (EP : Capnp_direct.ENDPOINT) : ENDPOINT
+module Endpoint : Capnp_direct.ENDPOINT -> ENDPOINT
 
 module Pair ( ) : sig
   module C : ENDPOINT

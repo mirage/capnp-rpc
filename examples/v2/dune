@@ -1,7 +1,6 @@
 (executable
  (name main)
- (libraries lwt.unix capnp-rpc-lwt logs.fmt)
- (flags (:standard -w -53-55)))
+ (libraries eio_main capnp-rpc logs.fmt))
 
 (rule
  (targets echo_api.ml echo_api.mli)

@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Eio.Std
 
 module Vat = Capnp_rpc_unix.Vat
 module Calc = Testlib.Calc
@@ -30,29 +30,31 @@ let reporter =
 (* Run as server *)
 
 let serve vat_config =
-  Lwt_main.run begin
-    let service_id = Capnp_rpc_net.Restorer.Id.public "" in
-    let restore = Capnp_rpc_net.Restorer.single service_id Calc.local in
-    Capnp_rpc_unix.serve vat_config ~restore >>= fun vat ->
-    let sr = Vat.sturdy_uri vat service_id in
-    Fmt.pr "Waiting for incoming connections at:@.%a@." Uri.pp_hum sr;
-    fst @@ Lwt.wait ()
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let service_id = Capnp_rpc_net.Restorer.Id.public "" in
+  let service = Calc.local ~sw in
+  let restore = Capnp_rpc_net.Restorer.single service_id service in
+  let vat = Capnp_rpc_unix.serve ~sw ~net:env#net ~restore vat_config in
+  let sr = Vat.sturdy_uri vat service_id in
+  traceln "Waiting for incoming connections at:@.%a" Uri.pp_hum sr;
+  Fiber.await_cancel ()
 
 (* Run as client *)
 
 let connect addr =
-  Lwt_main.run begin
-    let vat = Capnp_rpc_unix.client_only_vat () in
-    let sr = Vat.import_exn vat addr in
-    Capnp_rpc_unix.with_cap_exn sr @@ fun calc ->
-    Logs.info (fun f -> f "Evaluating expression...");
-    let remote_add = Calc.getOperator calc `Add in
-    let result = Calc.evaluate calc Calc.Expr.(Call (remote_add, [Float 40.0; Float 2.0])) in
-    Calc.Value.read result >>= fun v ->
-    Fmt.pr "Result: %f@." v;
-    Lwt.return_unit
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let sr = Vat.import_exn vat addr in
+  Capnp_rpc_unix.with_cap_exn sr @@ fun calc ->
+  Logs.info (fun f -> f "Evaluating expression...");
+  let remote_add = Calc.getOperator calc `Add in
+  let result = Calc.evaluate calc Calc.Expr.(Call (remote_add, [Float 40.0; Float 2.0])) in
+  let v = Calc.Value.read result in
+  traceln "Result: %f" v
 
 (* Command-line parsing *)
 
@@ -79,7 +81,7 @@ let () =
   Logs.set_reporter reporter;
   Logs.set_level ~all:true (Some Logs.Info);
   Logs.Src.list () |> List.iter (fun src ->
-      if Astring.String.is_prefix ~affix:"capnp" (Logs.Src.name src) then
+      if String.starts_with ~prefix:"capnp" (Logs.Src.name src) then
         Logs.Src.set_level src (Some Logs.Debug);
     );
   let doc = "a calculator example" in

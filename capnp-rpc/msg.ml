@@ -1,10 +1,10 @@
-module Log = Capnp_rpc.Debug.Log
+module Log = Capnp_rpc_proto.Debug.Log
 module B = Schema.Builder
 module R = Schema.Reader
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 module StructStorage = Capnp.Message.BytesMessage.StructStorage
 
-type Capnp.MessageSig.attachments += RPC_attachments of Capnp_rpc.S.attachments
+type Capnp.MessageSig.attachments += RPC_attachments of Capnp_rpc_proto.S.attachments
 
 module Path = struct
   type t = Xform.t list
@@ -30,11 +30,11 @@ let with_attachments a t =
 
 let unwrap_attachments = function
   | RPC_attachments x -> x
-  | Capnp.MessageSig.No_attachments -> Capnp_rpc.S.No_attachments
+  | Capnp.MessageSig.No_attachments -> Capnp_rpc_proto.S.No_attachments
   | _ -> failwith "Unknown attachment type!"
 
 let attachments = function
-  | Readonly None -> Capnp_rpc.S.No_attachments
+  | Readonly None -> Capnp_rpc_proto.S.No_attachments
   | Readonly (Some ss) -> unwrap_attachments @@ StructStorage.get_attachments ss
   | Builder ss -> unwrap_attachments @@ StructStorage.get_attachments ss
 

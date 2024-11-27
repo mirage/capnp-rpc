@@ -1,16 +1,4 @@
 (library
  (name capnp_rpc_lwt)
  (public_name capnp-rpc-lwt)
- (ocamlc_flags :standard -w -55-53)
- (ocamlopt_flags :standard -w -55-53)
- (libraries astring capnp capnp-rpc fmt logs lwt uri))
-
-(rule
- (targets rpc_schema.ml rpc_schema.mli)
- (deps rpc_schema.capnp)
- (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
-
-(rule
- (targets persistent.ml persistent.mli)
- (deps persistent.capnp)
- (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
+ (libraries capnp-rpc lwt_eio))

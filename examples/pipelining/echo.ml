@@ -1,7 +1,7 @@
-module Api = Echo_api.MakeRPC(Capnp_rpc_lwt)
+module Api = Echo_api.MakeRPC(Capnp_rpc)
 
-open Lwt.Infix
-open Capnp_rpc_lwt
+open Eio.Std
+open Capnp_rpc.Std
 
 module Callback = struct
   let local fn =
@@ -26,23 +26,23 @@ module Callback = struct
     Capability.call_for_unit t method_id request
 end
 
-let (>>!=) = Lwt_result.bind		(* Return errors *)
-
-let notify callback ~msg =
+let notify ~delay msg callback =
   let rec loop = function
     | 0 ->
-      Lwt.return @@ Ok (Service.Response.create_empty ())
+      Service.return_empty ()
     | i ->
-      Callback.log callback msg >>!= fun () ->
-      Lwt_unix.sleep 1.0 >>= fun () ->
-      loop (i - 1)
+      match Callback.log callback msg with
+      | Error (`Capnp e) -> Service.error e
+      | Ok () ->
+        Eio.Time.Timeout.sleep delay;
+        loop (i - 1)
   in
   loop 3
 
 let service_logger =
-  Callback.local (Printf.printf "[server] Received %S\n%!")
+  Callback.local (traceln "[server] Received %S")
 
-let local =
+let local ~delay =
   let module Echo = Api.Service.Echo in
   Echo.local @@ object
     inherit Echo.service
@@ -63,8 +63,7 @@ let local =
       match callback with
       | None -> Service.fail "No callback parameter!"
       | Some callback ->
-        Service.return_lwt @@ fun () ->
-        Capability.with_ref callback (notify ~msg)
+        Capability.with_ref callback (notify ~delay msg)
 
     (* $MDX part-begin=server-get-logger *)
     method get_logger_impl _ release_params =
@@ -82,7 +81,7 @@ let ping t msg =
   let open Echo.Ping in
   let request, params = Capability.Request.create Params.init_pointer in
   Params.msg_set params msg;
-  Capability.call_for_value_exn t method_id request >|= Results.reply_get
+  Capability.call_for_value_exn t method_id request |> Results.reply_get
 
 let heartbeat t msg callback =
   let open Echo.Heartbeat in

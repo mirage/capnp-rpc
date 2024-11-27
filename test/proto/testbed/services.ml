@@ -2,14 +2,14 @@ open Capnp_direct.Core_types
 
 module Msg = Capnp_direct.String_content
 
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 
 class virtual test_service = object
   inherit service as super
 
   val mutable released = false
   val virtual name : string
-  val id = Capnp_rpc.Debug.OID.next ()
+  val id = Capnp_rpc_proto.Debug.OID.next ()
 
   method released = released
   method! release = assert (not released); released <- true;
@@ -17,7 +17,7 @@ class virtual test_service = object
   method! pp f =
     Fmt.pf f "%s(%a, %t)"
       name
-      Capnp_rpc.Debug.OID.pp id
+      Capnp_rpc_proto.Debug.OID.pp id
       super#pp_refcount
 end
 
@@ -41,7 +41,7 @@ let manual () = object (self)
 
   method pop_n msg =
     match Queue.pop queue with
-    | exception Queue.Empty -> Capnp_rpc.Debug.failf "Empty queue (expecting %S)" msg
+    | exception Queue.Empty -> Fmt.failwith "Empty queue (expecting %S)" msg
     | actual, answer ->
       Alcotest.(check string) ("Expecting " ^ msg) msg actual.Msg.data;
       let args = Request_payload.snapshot_caps actual in

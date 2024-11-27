@@ -1,5 +1,3 @@
-open Asetmap
-
 module Log = Debug.Log
 module IntMap = Map.Make(struct type t = int let compare (a:int) b = compare a b end)
 
@@ -92,7 +90,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       mutable ref_count : RC.t; (* The switchable holds one until resolved, plus each [resolve_target] adds one. *)
       mutable count : int;     (* Number of times remote sent us this. *)
       mutable used : bool;     (* We have sent a message to this target (embargo needed on resolve). *)
-      mutable settled : bool;  (* This was a SenderHosted - it can't resolve except to an exception. *)
+      settled : bool;          (* This was a SenderHosted - it can't resolve except to an exception. *)
       mutable resolution : disembargo_info;
       proxy : Cap_proxy.resolver_cap Weak_ptr.t; (* Our switchable ([Weak_ptr.t] is mutable). *)
       strong_proxy : < > option ref;    (* Keeps the switchable alive if there are callbacks registered. *)
@@ -154,7 +152,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let mark_resolved t ~get_import result =
       if t.resolution <> `Unresolved then
-        Debug.failf "Got Resolve for already-resolved import %a" pp t
+        Fmt.failwith "Got Resolve for already-resolved import %a" pp t
       else match result with
         | Error _ -> t.resolution <- `Error
         | Ok desc ->
@@ -547,7 +545,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* We're sending a return message. *)
     let return_resolved t ~exports_for_release ~resolve_targets =
       match t.state with
-      | `Finished -> Debug.failf "Can't return finished answer %a!" pp t
+      | `Finished -> Fmt.failwith "Can't return finished answer %a!" pp t
       | `Active x ->
         assert (x.resolution = `Unresolved);
         t.state <- `Active {x with resolution = `Resolved (resolve_targets, exports_for_release)}
@@ -555,7 +553,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* We're sending a TakeFromOtherQuestion return message. *)
     let return_take_from_question t question =
       match t.state with
-      | `Finished -> Debug.failf "Can't return finished answer %a!" pp t
+      | `Finished -> Fmt.failwith "Can't return finished answer %a!" pp t
       | `Active x ->
         assert (x.resolution = `Unresolved);
         Question.inc_ref question;
@@ -564,7 +562,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     (* Remove from Answers table after calling this. *)
     let finish t ~release_result_caps =
       match t.state with
-      | `Finished -> Debug.failf "Can't finish already-finished answer %a" pp t
+      | `Finished -> Fmt.failwith "Can't finish already-finished answer %a" pp t
       | `Active {answer; resolution} ->
         t.state <- `Finished;
         dec_ref answer;
@@ -596,14 +594,14 @@ module Make (EP : Message_types.ENDPOINT) = struct
        [None] if we didn't return yet. *)
     let resolve_target t path =
       match t.state with
-      | `Finished -> Debug.failf "Answer %a is finished!" pp t
+      | `Finished -> Fmt.failwith "Answer %a is finished!" pp t
       | `Active {answer; resolution} ->
         match resolution with
         | `Unresolved -> None
         | `Forwarded q -> Some (Ok (`QuestionCap (q, path)))
         | `Resolved (resolve_targets, _) ->
           match answer#response with
-          | None -> Debug.failf "Answer %a is resolved, but no response recorded!" pp t
+          | None -> Fmt.failwith "Answer %a is resolved, but no response recorded!" pp t
           | Some (Error _) as e -> e
           | Some (Ok msg) ->
             match Core_types.Wire.Response.cap_index msg path with
@@ -614,7 +612,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     let disembargo_target t path =
       match resolve_target t path with
-      | None -> Debug.failf "Got disembargo request for unresolved answer %a!" pp t
+      | None -> Fmt.failwith "Got disembargo request for unresolved answer %a!" pp t
       | Some (Error _) -> failwith "Got disembargo for an exception!"
       | Some (Ok target) -> target
 
@@ -631,7 +629,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let init t answer =
       match t.state with
       | `Finished -> t.state <- `Active { answer; resolution = `Unresolved }
-      | `Active _ -> Debug.failf "Answer %a already initialised!" pp t
+      | `Active _ -> Fmt.failwith "Answer %a already initialised!" pp t
   end
 
   module Export = struct
@@ -705,6 +703,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     tags : Logs.Tag.set;
     embargoes : (EmbargoId.t * Cap_proxy.resolver_cap) Embargoes.t;
     restore : restorer;
+    fork : (unit -> unit) -> unit;
 
     questions : Question.t Questions.t;
     answers : Answer.t Answers.t;
@@ -740,11 +739,12 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let default_restore k _object_id =
     k @@ Error (Exception.v "This vat has no restorer")
 
-  let create ?(restore=default_restore) ~tags ~queue_send =
+  let create ?(restore=default_restore) ~tags ~fork ~queue_send =
     {
       queue_send = (queue_send :> EP.Out.t -> unit);
       tags;
       restore = restore;
+      fork;
       questions = Questions.make ();
       answers = Answers.make ();
       imports = Imports.make ();
@@ -770,7 +770,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
   let check_connected t =
     match t.disconnected with
     | None -> ()
-    | Some ex -> Debug.failf "CapTP connection is disconnected (%a)" Exception.pp ex
+    | Some ex -> Fmt.failwith "CapTP connection is disconnected (%a)" Exception.pp ex
 
   module Send : sig
     (** Converts struct pointers into integer table indexes, ready for sending.
@@ -874,7 +874,6 @@ module Make (EP : Message_types.ENDPOINT) = struct
         else `SenderPromise id
 
     let bootstrap t remote_promise =
-      check_connected t;
       Questions.alloc t.questions (Question.v ~params_for_release:[] ~remote_promise)
 
     (* This is for level 0 implementations, which don't understand about releasing caps. *)
@@ -1086,15 +1085,18 @@ module Make (EP : Message_types.ENDPOINT) = struct
     t.queue_send (`Disembargo_request request)
 
   let bootstrap t object_id =
-    let result = make_remote_promise t in
-    let question = Send.bootstrap t (result :> Core_types.struct_resolver) in
-    result#set_question question;
-    let qid = Question.id question in
-    Log.debug (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
-    t.queue_send (`Bootstrap (qid, object_id));
-    let service = result#cap Wire.Path.root in
-    dec_ref result;
-    service
+    match t.disconnected with
+    | Some ex -> Core_types.broken_cap ex
+    | None ->
+      let result = make_remote_promise t in
+      let question = Send.bootstrap t (result :> Core_types.struct_resolver) in
+      result#set_question question;
+      let qid = Question.id question in
+      Log.debug (fun f -> f ~tags:(with_qid qid t) "Sending: bootstrap");
+      t.queue_send (`Bootstrap (qid, object_id));
+      let service = result#cap Wire.Path.root in
+      dec_ref result;
+      service
 
   module Switchable = struct
     class type handler = object
@@ -1132,6 +1134,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let make ~(release:unit Lazy.t) ~settled ~strong_proxy init =
       object (self : #Core_types.cap)
         val id = Debug.OID.next ()
+        val thread_id = Thread.(id (self ()))
 
         val mutable state =
           Unset { rc = RC.one; handler = init; on_set = Queue.create (); on_release = Queue.create () }
@@ -1156,7 +1159,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
         method resolve cap =
           match state with
-          | Set _ -> Debug.failf "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
+          | Set _ -> Fmt.failwith "Can't resolve already-set switchable %t to %t!" self#pp cap#pp
           | Unset {handler = _; rc; on_set; on_release} ->
             let pp f = self#pp f in
             RC.check ~pp rc;
@@ -1215,7 +1218,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
           | Gc ->
             begin match state with
               | Unset x ->
-                Core_types.Wire.ref_leak_detected (fun () ->
+                Core_types.Wire.ref_leak_detected thread_id (fun () ->
                     if RC.is_zero x.rc then (
                       Log.warn (fun f -> f "@[<v2>Reference GC'd with non-zero ref-count!@,%t@,\
                                             But, ref-count is now zero, so a previous GC leak must have fixed it.@]"
@@ -1465,8 +1468,10 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `Local target ->
         Log.debug (fun f -> f ~tags:t.tags "Handling call: (%t).call %a"
                       target#pp Core_types.Request_payload.pp msg);
-        target#call answer_resolver msg;  (* Takes ownership of [caps]. *)
-        dec_ref target
+        t.fork (fun () ->
+            target#call answer_resolver msg;  (* Takes ownership of [caps]. *)
+            dec_ref target
+          )
       | #message_target_cap as target ->
         Log.debug (fun f -> f ~tags:t.tags "Forwarding call: (%a).call %a"
                       pp_message_target_cap target Core_types.Request_payload.pp msg);
@@ -1476,6 +1481,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let promise, answer_resolver = Local_struct_promise.make () in
       let answer = Answer.create id ~answer:promise in
       Answers.set t.answers id answer;
+      t.fork @@ fun () ->
       object_id |> t.restore @@ fun service ->
       if Answer.needs_return answer && t.disconnected = None then (
         let results =
@@ -1498,7 +1504,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       let caps_used = Question.paths_used question |> caps_used ~msg in
       let import_with_embargoes cap_index d =
         let embargo_path =
-          match IntMap.find cap_index caps_used with
+          match IntMap.find_opt cap_index caps_used with
           | None -> None
           | Some path -> Some (Question.message_target question path)
         in
@@ -1518,7 +1524,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
       | `AcceptFromThirdParty -> failwith "todo: AcceptFromThirdParty"
       | `TakeFromOtherQuestion aid ->
         match Answer.answer_struct (Answers.find_exn t.answers aid) with
-        | `Finished -> Debug.failf "Can't take from answer %a - it's already finished!" AnswerId.pp aid
+        | `Finished -> Fmt.failwith "Can't take from answer %a - it's already finished!" AnswerId.pp aid
         | `Promise other ->
           match question.remote_promise with
           | `Released -> `TakeFromCancelledQuestion
@@ -1575,7 +1581,7 @@ module Make (EP : Message_types.ENDPOINT) = struct
                       let embargoes_needed = caps_used ~msg paths_used in
                       let maybe_embargo cap_index cap =
                         inc_ref cap;
-                        match IntMap.find cap_index embargoes_needed with
+                        match IntMap.find_opt cap_index embargoes_needed with
                         | None -> cap
                         | Some path ->
                           let old_path = Question.message_target question path in
@@ -1604,8 +1610,8 @@ module Make (EP : Message_types.ENDPOINT) = struct
     let send_disembargo t embargo_id target =
       let desc =
         match target with
-        | `None -> Debug.failf "Protocol error: disembargo request for None cap"
-        | `Local -> Debug.failf "Protocol error: disembargo request for local target"
+        | `None -> Fmt.failwith "Protocol error: disembargo request for None cap"
+        | `Local -> Fmt.failwith "Protocol error: disembargo request for local target"
         | `QuestionCap (question, path) -> Question.message_target question path
         | `Import import -> Import.message_target import
       in

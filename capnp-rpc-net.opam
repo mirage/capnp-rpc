@@ -13,24 +13,20 @@ doc: "https://mirage.github.io/capnp-rpc/"
 depends: [
   "ocaml" {>= "4.08.0"}
   "conf-capnproto" {build}
-  "capnp" {>= "3.4.0"}
+  "capnp" {>= "3.6.0"}
   "capnp-rpc" {= version}
-  "capnp-rpc-lwt" {= version}
   "astring"
   "fmt" {>= "0.8.7"}
   "logs"
-  "asetmap"
   "cstruct" {>= "6.0.0"}
-  "mirage-flow" {>= "4.0.2"}
-  "tls" {>= "1.0.2"}
+  "tls-eio" {>= "1.0.2"}
   "base64" {>= "3.0.0"}
   "uri" {>= "1.6.0"}
   "ptime"
   "prometheus" {>= "0.5"}
   "asn1-combinators" {>= "0.2.0"}
   "x509" {>= "1.0.3"}
-  "tls-mirage"
-  "dune" {>= "3.0"}
+  "dune" {>= "3.16"}
   "mirage-crypto" {>= "1.1.0"}
   "mirage-crypto-rng" {>= "1.1.0"}
 ]

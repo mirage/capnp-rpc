@@ -1,4 +1,14 @@
 (library
  (name capnp_rpc)
  (public_name capnp-rpc)
- (libraries astring fmt logs stdint asetmap))
+ (libraries astring capnp capnp-rpc.proto fmt logs eio uri))
+
+(rule
+ (targets rpc_schema.ml rpc_schema.mli)
+ (deps rpc_schema.capnp)
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))
+
+(rule
+ (targets persistent.ml persistent.mli)
+ (deps persistent.capnp)
+ (action (run capnp compile -o %{bin:capnpc-ocaml} %{deps})))

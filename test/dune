@@ -1,4 +1,5 @@
 (test
+ (package capnp-rpc-unix)
  (name test)
- (package capnp-rpc)
- (libraries capnp-rpc alcotest logs.fmt testbed))
+ (libraries capnp-rpc capnp-rpc-unix testlib logs.fmt
+   mirage-crypto-rng-eio testbed eio_main))

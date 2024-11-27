@@ -1,23 +1,21 @@
-open Capnp_rpc_lwt
-
-module EmbargoId = Capnp_rpc.Message_types.EmbargoId
-module RO_array = Capnp_rpc.RO_array
-module Reader = Private.Schema.Reader
+module EmbargoId = Capnp_rpc_proto.Message_types.EmbargoId
+module RO_array = Capnp_rpc_proto.RO_array
+module Reader = Capnp_rpc.Private.Schema.Reader
 module Log = Capnp_rpc.Debug.Log
 
 (* A parser for the basic messages (excluding Unimplemented, which has a more complicated type). *)
 module Make_basic
-    (Core_types : Capnp_rpc.S.CORE_TYPES)
+    (Core_types : Capnp_rpc_proto.S.CORE_TYPES)
     (Network : S.NETWORK)
-    (T : Capnp_rpc.Message_types.TABLE_TYPES) = struct
-  module Message_types = Capnp_rpc.Message_types.Make(Core_types)(Network.Types)(T)
+    (T : Capnp_rpc_proto.Message_types.TABLE_TYPES) = struct
+  module Message_types = Capnp_rpc_proto.Message_types.Make(Core_types)(Network.Types)(T)
   open Message_types
 
   let parse_xform x =
     let open Reader.PromisedAnswer.Op in
     match get x with
     | Noop -> []
-    | GetPointerField y -> [Private.Xform.Field y]
+    | GetPointerField y -> [Capnp_rpc.Private.Xform.Field y]
     | Undefined _ -> failwith "Unknown transform type"
 
   let parse_promised_answer pa =
@@ -65,7 +63,7 @@ module Make_basic
       match Return.get return with
       | Return.Results results ->
         let descs = parse_descs (Payload.cap_table_get_list results |> RO_array.of_list) in
-        `Results (Private.Msg.Response.of_reader return, descs)
+        `Results (Capnp_rpc.Private.Msg.Response.of_reader return, descs)
       | Return.Exception ex -> `Exception (parse_exn ex)
       | Return.Canceled -> `Cancelled
       | Return.ResultsSentElsewhere -> `ResultsSentElsewhere
@@ -97,7 +95,7 @@ module Make_basic
     let descs = parse_descs (Payload.cap_table_get_list p |> RO_array.of_list) in
     (* Get target *)
     let target = parse_target (Call.target_get call) in
-    let msg = Private.Msg.Request.of_reader call in
+    let msg = Capnp_rpc.Private.Msg.Request.of_reader call in
     let results_to =
       let r = Call.send_results_to_get call in
       let open Call.SendResultsTo in
@@ -105,14 +103,14 @@ module Make_basic
       | Caller -> `Caller
       | Yourself -> `Yourself
       | ThirdParty _ -> failwith "TODO: parse_call: ThirdParty"
-      | Undefined x -> Capnp_rpc.Debug.failf "Unknown SendResultsTo type %d" x
+      | Undefined x -> Fmt.failwith "Unknown SendResultsTo type %d" x
     in
     `Call (aid, target, msg, descs, results_to)
 
   let parse_bootstrap boot =
     let open Reader in
     let qid = Bootstrap.question_id_get boot |> AnswerId.of_uint32 in
-    let object_id = Bootstrap.deprecated_object_id_get boot |> Private.Schema.ReaderOps.string_of_pointer in
+    let object_id = Bootstrap.deprecated_object_id_get boot |> Capnp_rpc.Private.Schema.ReaderOps.string_of_pointer in
     `Bootstrap (qid, object_id)
 
   let parse_disembargo x =
@@ -124,7 +122,7 @@ module Make_basic
     | Disembargo.Context.ReceiverLoopback embargo_id -> `Disembargo_reply (target, EmbargoId.of_uint32 embargo_id)
     | Disembargo.Context.Accept
     | Disembargo.Context.Provide _ -> failwith "TODO: handle_disembargo: 3rd-party"
-    | Disembargo.Context.Undefined x -> Capnp_rpc.Debug.failf "Unknown Disembargo type %d" x
+    | Disembargo.Context.Undefined x -> Fmt.failwith "Unknown Disembargo type %d" x
 
   let parse_resolve x =
     let open Reader in
@@ -132,7 +130,7 @@ module Make_basic
       match Resolve.get x with
       | Resolve.Cap d -> Ok (parse_desc d)
       | Resolve.Exception e -> Error (parse_exn e)
-      | Resolve.Undefined x -> Capnp_rpc.Debug.failf "Resolved to Undefined(%d)!" x
+      | Resolve.Undefined x -> Fmt.failwith "Resolved to Undefined(%d)!" x
     in
     let import_id = Resolve.promise_id_get x |> ImportId.of_uint32 in
     `Resolve (import_id, new_target)
@@ -167,11 +165,11 @@ module Make_basic
 end
 
 module Make
-    (EP : Private.Capnp_core.ENDPOINT)
+    (EP : Capnp_rpc.Private.Capnp_core.ENDPOINT)
     (Network : S.NETWORK with module Types = EP.Network_types)
 = struct
   module Parse_in = Make_basic(EP.Core_types)(Network)(EP.Table)
-  module Parse_out = Make_basic(EP.Core_types)(Network)(Capnp_rpc.Message_types.Flip(EP.Table))
+  module Parse_out = Make_basic(EP.Core_types)(Network)(Capnp_rpc_proto.Message_types.Flip(EP.Table))
 
   let message msg =
     match Parse_in.parse_msg msg with

@@ -1,22 +1,24 @@
-open Capnp_rpc_lwt
+open Eio.Std
+open Capnp_rpc.Std
 
 let () =
   Logs.set_level (Some Logs.Warning);
   Logs.set_reporter (Logs_fmt.reporter ())
 
 let callback_fn msg =
-  Fmt.pr "Callback got %S@." msg
+  traceln "Callback got %S" msg
 
 let run_client service =
   Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
   Echo.heartbeat service "foo" callback
 
 let connect uri =
-  Lwt_main.run begin
-    let client_vat = Capnp_rpc_unix.client_only_vat () in
-    let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    Capnp_rpc_unix.with_cap_exn sr run_client
-  end
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Switch.run @@ fun sw ->
+  let client_vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
+  Capnp_rpc_unix.with_cap_exn sr run_client
 
 open Cmdliner
 

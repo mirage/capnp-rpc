@@ -1,4 +1,4 @@
-open Capnp_rpc_lwt
+open Capnp_rpc.Std
 
 module S = S
 
@@ -11,16 +11,13 @@ module type VAT_NETWORK = S.VAT_NETWORK with
   type service_id := Restorer.Id.t and
   type 'a sturdy_ref := 'a Sturdy_ref.t
 
-module Networking (N : S.NETWORK) (F : Mirage_flow.S) = struct
-  type flow = F.flow
-
+module Networking (N : S.NETWORK) = struct
   module Network = N
-  module Vat = Vat.Make (N) (F)
+  module Vat = Vat.Make (N)
   module CapTP = Vat.CapTP
 end
 
 module Capnp_address = Capnp_address
-module Persistence = Persistence
 module Two_party_network = Two_party_network
 module Auth = Auth
 module Tls_wrapper = Tls_wrapper

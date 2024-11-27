@@ -1,7 +1,7 @@
 (* Run the calc service as a child process, connecting directly over a socketpair.
    Unlike a normal connection, there is no encryption or use of sturdy refs here. *)
 
-open Lwt.Infix
+open Eio.Std
 
 module Calc = Testlib.Calc
 
@@ -29,78 +29,63 @@ module Logging = struct
     Logs.set_reporter (reporter id)
 end
 
+let run_connection conn =
+  Fiber.both
+    (* Normally the vat runs a leak handler to free resources that get GC'd
+       with a non-zero reference count. We're not using a vat, so run it ourselves. *)
+    Capnp_rpc.Leak_handler.run
+    (fun () -> Capnp_rpc_unix.CapTP.run conn)
+
 module Parent = struct
   let run socket =
     Logging.init "parent";
+    Switch.run @@ fun sw -> 
     (* Run Cap'n Proto RPC protocol on [socket]: *)
-    Lwt_switch.with_switch @@ fun switch ->
-    let p = Lwt_unix.of_unix_file_descr socket
-            |> Capnp_rpc_unix.Unix_flow.connect ~switch
-            |> Capnp_rpc_net.Endpoint.of_flow (module Capnp_rpc_unix.Unix_flow)
-              ~peer_id:Capnp_rpc_net.Auth.Digest.insecure
-              ~switch in
+    let p = Capnp_rpc_net.Endpoint.of_flow socket ~peer_id:Capnp_rpc_net.Auth.Digest.insecure in
     Logs.info (fun f -> f "Connecting to child process...");
-    let conn = Capnp_rpc_unix.CapTP.connect ~restore:Capnp_rpc_net.Restorer.none p in
+    let conn = Capnp_rpc_unix.CapTP.connect ~sw ~restore:Capnp_rpc_net.Restorer.none p in
+    Fiber.fork_daemon ~sw (fun () -> run_connection conn; `Stop_daemon);
     (* Get the child's service object: *)
     let calc = Capnp_rpc_unix.CapTP.bootstrap conn service_name in
     (* Use the service: *)
     Logs.app (fun f -> f "Sending request...");
     let remote_mul = Calc.getOperator calc `Multiply in
     let result = Calc.evaluate calc Calc.Expr.(Call (remote_mul, [Float 21.0; Float 2.0])) in
-    Calc.Value.read result >>= fun v ->
+    let v = Calc.Value.read result in
     Logs.app (fun f -> f "Result: %f" v);
-    Logs.app (fun f -> f "Shutting down...");
-    Lwt.return_unit
+    Logs.app (fun f -> f "Shutting down...")
 end
 
 module Child = struct
-  let service = Calc.local
-
   let run socket =
     Logging.init "child";
-    Lwt_main.run begin
-      Lwt_switch.with_switch @@ fun switch ->
-      let restore = Capnp_rpc_net.Restorer.single service_name service in
-      (* Run Cap'n Proto RPC protocol on [socket]: *)
-      let endpoint = Capnp_rpc_unix.Unix_flow.connect (Lwt_unix.of_unix_file_descr socket)
-                     |> Capnp_rpc_net.Endpoint.of_flow (module Capnp_rpc_unix.Unix_flow)
-                       ~peer_id:Capnp_rpc_net.Auth.Digest.insecure
-                       ~switch
-      in
-      let _ : Capnp_rpc_unix.CapTP.t = Capnp_rpc_unix.CapTP.connect ~restore endpoint in
-      Logs.info (fun f -> f "Serving requests...");
-      fst (Lwt.wait ()) (* Wait forever *)
-    end
+    Switch.run @@ fun sw -> 
+    let socket = Eio_unix.Net.import_socket_stream ~sw ~close_unix:false socket in
+    let service = Calc.local ~sw in
+    let restore = Capnp_rpc_net.Restorer.single service_name service in
+    (* Run Cap'n Proto RPC protocol on [socket]: *)
+    let endpoint = Capnp_rpc_net.Endpoint.of_flow socket ~peer_id:Capnp_rpc_net.Auth.Digest.insecure in
+    let conn = Capnp_rpc_unix.CapTP.connect ~sw ~restore endpoint in
+    Logs.info (fun f -> f "Serving requests...");
+    run_connection conn
 end
 
-let find_our_path prog =
-  if Sys.file_exists prog then prog
-  else (
-    (* Hack for running under "dune exec" *)
-    let prog = "./_build/default/" ^ prog in
-    if Sys.file_exists prog then prog
-    else Fmt.failwith "Can't find path to own binary %S from %S" prog (Sys.getcwd ())
-  )
-
 let () =
-  Lwt_main.run begin
-    match Sys.argv with
-    | [| prog |] ->
-      (* We are the parent. *)
-      let prog = find_our_path prog in
-      let p, c = Unix.(socketpair PF_UNIX SOCK_STREAM 0 ~cloexec:true) in
-      Unix.clear_close_on_exec c;
-      (* Run the child, passing the socket as its stdin. *)
-      let child = Lwt_process.open_process_none ~stdin:(`FD_move c) ("", [| prog; "--child" |]) in
-      Parent.run p >>= fun () ->
-      Logs.info (fun f -> f "Waiting for child to exit...");
-      child#terminate;
-      child#status >>= fun _ ->
-      Logs.info (fun f -> f "Done");
-      Lwt.return_unit
-    | [| _prog; "--child" |] ->
-      (* We are the child. Our socket is on stdin. *)
-      Child.run Unix.stdin
-    | _ ->
-      failwith "Run this command without arguments."
-  end
+  Eio_main.run @@ fun env ->
+  let prog_mgr = env#process_mgr in
+  match Sys.argv with
+  | [| prog |] ->
+    (* We are the parent. *)
+    Switch.run @@ fun sw -> 
+    let prog = if Filename.is_implicit prog then "./" ^ prog else prog in
+    let p, c = Eio_unix.Net.socketpair_stream ~sw () in
+    (* Run the child, passing the socket as its stdin. *)
+    let _child = Eio.Process.spawn ~sw prog_mgr [prog; "--child"] ~stdin:c in
+    Eio.Net.close c;
+    Parent.run p;
+    Logs.info (fun f -> f "Done")
+  | [| _prog; "--child" |] ->
+    (* We are the child. Our socket is on stdin. *)
+    Child.run Unix.stdin
+  | _ ->
+    failwith "Run this command without arguments."

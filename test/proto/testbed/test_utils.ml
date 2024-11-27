@@ -27,7 +27,7 @@ let reporter =
       | None -> unknown
     in
     let peer = Logs.Tag.find peer_tag tags in
-    let qid = Logs.Tag.find Capnp_rpc.Debug.qid_tag tags in
+    let qid = Logs.Tag.find Capnp_rpc_proto.Debug.qid_tag tags in
     let print _ =
       Fmt.(pf stdout) "%a@." pp_qid qid;
       over ();

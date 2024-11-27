@@ -10,7 +10,7 @@ module Path : sig
 end
 
 module Request : sig
-  include Capnp_rpc.S.WIRE_PAYLOAD with type path := Path.t and type t = request msg
+  include Capnp_rpc_proto.S.WIRE_PAYLOAD with type path := Path.t and type t = request msg
 
   val writable : t -> Schema.Builder.Call.t
   (** We're about to transmit this message and we need to fill in the target and CapDescriptor table.
@@ -24,7 +24,7 @@ module Request : sig
 end
 
 module Response : sig
-  include Capnp_rpc.S.WIRE_PAYLOAD with type path := Path.t and type t = response msg
+  include Capnp_rpc_proto.S.WIRE_PAYLOAD with type path := Path.t and type t = response msg
 
   val writable : t -> Schema.Builder.Return.t
   (** We're about to transmit this message and we need to fill in the CapDescriptor table.
@@ -40,5 +40,5 @@ module Response : sig
   (** [bootstrap ()] is a fresh bootstrap response. *)
 end
 
-val wrap_attachments : Capnp_rpc.S.attachments -> Capnp.MessageSig.attachments
-val unwrap_attachments : Capnp.MessageSig.attachments -> Capnp_rpc.S.attachments
+val wrap_attachments : Capnp_rpc_proto.S.attachments -> Capnp.MessageSig.attachments
+val unwrap_attachments : Capnp.MessageSig.attachments -> Capnp_rpc_proto.S.attachments

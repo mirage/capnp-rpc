@@ -1,9 +1,9 @@
-open Capnp_rpc_lwt.Private
+open Capnp_rpc.Private
 
-module EmbargoId = Capnp_rpc.Message_types.EmbargoId
+module EmbargoId = Capnp_rpc_proto.Message_types.EmbargoId
 module Log = Capnp_rpc.Debug.Log
 module Builder = Schema.Builder
-module RO_array = Capnp_rpc.RO_array
+module RO_array = Capnp_rpc_proto.RO_array
 
 module Make (EP : Capnp_core.ENDPOINT) = struct
   open EP.Table

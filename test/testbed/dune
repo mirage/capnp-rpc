@@ -1,3 +1,0 @@
-(library
- (name testbed)
- (libraries astring fmt logs logs.fmt capnp-rpc alcotest asetmap))

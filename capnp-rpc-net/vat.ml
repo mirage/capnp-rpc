@@ -1,83 +1,75 @@
-open Lwt.Infix
-open Capnp_rpc_lwt
+open Eio.Std
+open Capnp_rpc.Std
 
 module Log = Capnp_rpc.Debug.Log
 
 module ID_map = Auth.Digest.Map
 
-module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
+module Make (Network : S.NETWORK) = struct
   module CapTP = CapTP_capnp.Make (Network)
 
   let hash = `SHA256 (* Only support a single hash for now *)
 
-  type connection_attempt = (CapTP.t, Capnp_rpc.Exception.t) result Lwt.t
+  type connection_attempt = (CapTP.t, Capnp_rpc.Exception.t) result Eio.Promise.t
 
   type t = {
+    sw : Eio.Switch.t;
     network : Network.t;
-    switch : Lwt_switch.t option;
     secret_key : Auth.Secret_key.t Lazy.t;
     address : Network.Address.t option;
     restore : Restorer.t;
     tags : Logs.Tag.set;
-    connection_removed : unit Lwt_condition.t;   (* Fires when a connection is removed *)
+    connection_removed : Eio.Condition.t;        (* Fires when a connection is removed *)
     mutable connecting : connection_attempt ID_map.t; (* Out-going connections being attempted. *)
     mutable connections : CapTP.t ID_map.t;      (* Accepted connections *)
     mutable anon_connections : CapTP.t list;     (* Connections not using TLS. *)
   }
 
-  let create ?switch ?(tags=Logs.Tag.empty) ?(restore=Restorer.none) ?address ~secret_key network =
-    let t = {
+  let create ?(tags=Logs.Tag.empty) ?(restore=Restorer.none) ?address ~sw ~secret_key network =
+    Fiber.fork_daemon ~sw Capnp_rpc.Leak_handler.run;
+    {
+      sw;
       network;
-      switch;
       secret_key;
       address;
       restore;
       tags;
-      connection_removed = Lwt_condition.create ();
+      connection_removed = Eio.Condition.create ();
       connecting = ID_map.empty;
       connections = ID_map.empty;
       anon_connections = [];
-    } in
-    Lwt_switch.add_hook switch (fun () ->
-        let ex = Capnp_rpc.Exception.v ~ty:`Disconnected "Vat shut down" in
-        ID_map.bindings t.connections |> Lwt_list.iter_p (fun (_, c) -> CapTP.disconnect c ex) >>= fun () ->
-        t.connections <- ID_map.empty;
-        Lwt_list.iter_p (fun c -> CapTP.disconnect c ex) t.anon_connections >|= fun () ->
-        t.anon_connections <- [];
-        ID_map.iter (fun _ th -> Lwt.cancel th) t.connecting;
-        t.connecting <- ID_map.empty;
-      );
-    t
+    }
 
-  let add_tls_connection t ~switch endpoint =
-    let conn = CapTP.connect ~tags:t.tags ~restore:t.restore endpoint in
+  let run_connection_generic t ~add ~remove endpoint =
+    let conn = CapTP.connect ~sw:t.sw ~tags:t.tags ~restore:t.restore endpoint in
+    add conn;
+    Fun.protect (fun () -> CapTP.run conn)
+      ~finally:(fun () ->
+          remove conn;
+          Eio.Condition.broadcast t.connection_removed
+        )
+
+  let run_connection_tls t endpoint r =
     let peer_id = Endpoint.peer_id endpoint in
-    t.connections <- ID_map.add peer_id conn t.connections;
-    Lwt_switch.add_hook (Some switch) (fun () ->
-        begin match ID_map.find peer_id t.connections with
-        | Some x when x == conn -> t.connections <- ID_map.remove peer_id t.connections
-        | Some _        (* Already replaced by a new one? *)
-        | None -> ()
-        end;
-        CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off") >|= fun () ->
-        Lwt_condition.broadcast t.connection_removed ()
-      );
-    conn
+    run_connection_generic t endpoint
+      ~add:(fun conn -> t.connections <- ID_map.add peer_id conn t.connections; r conn)
+      ~remove:(fun conn ->
+          match ID_map.find_opt peer_id t.connections with
+          | Some x when x == conn -> t.connections <- ID_map.remove peer_id t.connections
+          | Some _        (* Already replaced by a new one? *)
+          | None -> ()
+        )
 
-  let add_connection t ~switch ~(mode:[`Accept|`Connect]) endpoint =
-    let tags = t.tags in
+  (* Run CapTP on [endpoint], calling [r conn] with the connection (possibly reusing an existing one).
+     If a new connection is used, it is also stored in [t] while running. *)
+  let run_connection t ~(mode:[`Accept|`Connect]) endpoint r =
     let peer_id = Endpoint.peer_id endpoint in
     if peer_id = Auth.Digest.insecure then (
-      let conn = CapTP.connect ~tags ~restore:t.restore endpoint in
-      t.anon_connections <- conn :: t.anon_connections;
-      Lwt_switch.add_hook (Some switch) (fun () ->
-          t.anon_connections <- List.filter ((!=) conn) t.anon_connections;
-          CapTP.disconnect conn (Capnp_rpc.Exception.v ~ty:`Disconnected "Switch turned off") >|= fun () ->
-          Lwt_condition.broadcast t.connection_removed ()
-        );
-      Lwt.return conn
-    ) else match ID_map.find peer_id t.connections with
-      | None -> Lwt.return @@ add_tls_connection t ~switch endpoint
+      run_connection_generic t endpoint
+        ~add:(fun conn -> t.anon_connections <- conn :: t.anon_connections; r conn)
+        ~remove:(fun conn -> t.anon_connections <- List.filter ((!=) conn) t.anon_connections)
+    ) else match ID_map.find_opt peer_id t.connections with
+      | None -> run_connection_tls t endpoint r
       | Some existing ->
         Log.info (fun f -> f ~tags:t.tags "Trying to add a connection, but we already have one for this vat");
         (* This can happen if two vats call each other at exactly the same time.
@@ -127,70 +119,63 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
         let my_id = Auth.Secret_key.digest ~hash (Lazy.force t.secret_key) in
         let keep_new = (my_id > peer_id) = (mode = `Connect) in
         if keep_new then (
-          let conn = add_tls_connection t ~switch endpoint in
-          let reason = Capnp_rpc.Exception.v "Closing duplicate connection" in
-          CapTP.disconnect existing reason >|= fun () ->
-          conn
+          let reason = Capnp_rpc.Exception.v "Invalidated by newer connection" in
+          CapTP.disconnect existing reason;
+          run_connection_tls t endpoint r
         ) else (
-          Lwt_switch.turn_off switch >|= fun () ->
-          existing
+          Endpoint.disconnect endpoint;
+          r existing
         )
 
   let public_address t = t.address
 
-  let connect_anon t addr ~service =
-    let switch = Lwt_switch.create () in
-    Network.connect t.network ~switch ~secret_key:t.secret_key addr >>= function
-    | Error (`Msg m) -> Lwt.return @@ Error (Capnp_rpc.Exception.v m)
-    | Ok ep ->
-      add_connection t ~switch ep ~mode:`Connect >|= fun conn ->
-      Ok (CapTP.bootstrap conn service)
+  (* Make a new connection to remote service [addr] and request [service] from it. *)
+  let initiate_connection t addr service =
+    let remote_id = Network.Address.digest addr in
+    let p, r = Promise.create () in
+    let tracked = remote_id <> Auth.Digest.insecure in
+    if tracked then t.connecting <- ID_map.add remote_id p t.connecting;
+    Fun.protect
+      ~finally:(fun () ->
+          if tracked then t.connecting <- ID_map.remove remote_id t.connecting;
+          if not (Promise.is_resolved p) then Promise.resolve_error r Capnp_rpc.Exception.cancelled
+        )
+      (fun () ->
+         Fiber.fork_daemon ~sw:t.sw (fun () ->
+             Switch.run (fun sw ->
+                 match Network.connect ~sw t.network ~secret_key:t.secret_key addr with
+                 | Error (`Msg m) -> Promise.resolve_error r (Capnp_rpc.Exception.v m)
+                 | Ok ep -> run_connection t ep (Promise.resolve_ok r) ~mode:`Connect
+               );
+             `Stop_daemon
+           );
+         Promise.await p
+      )
+    |> Result.map (fun conn -> CapTP.bootstrap conn service)
 
-  let initiate_connection t remote_id addr service =
-    (* We need to start a new connection attempt. *)
-    let switch = Lwt_switch.create () in
-    let conn =
-      Network.connect t.network ~switch ~secret_key:t.secret_key addr >>= function
-      | Error (`Msg m) -> Lwt.return @@ Error (Capnp_rpc.Exception.v m)
-      | Ok ep -> add_connection t ~switch ep ~mode:`Connect >|= fun conn -> Ok conn
-    in
-    t.connecting <- ID_map.add remote_id conn t.connecting;
-    conn >|= fun conn ->
-    t.connecting <- ID_map.remove remote_id t.connecting;
-    match conn with
-    | Ok conn -> Ok (CapTP.bootstrap conn service)
-    | Error _  as e -> e
-
-  let rec connect_auth t remote_id addr ~service =
+  (* Get a connection to [addr] and request [service] from it. *)
+  let rec connect t (addr, service) =
+    let remote_id = Network.Address.digest addr in
     let my_id = Auth.Secret_key.digest ~hash (Lazy.force t.secret_key) in
     if Auth.Digest.equal remote_id my_id then
       Restorer.restore t.restore service
-    else match ID_map.find remote_id t.connections with
+    else match ID_map.find_opt remote_id t.connections with
       | Some conn when CapTP.disconnecting conn ->
-        Lwt_condition.wait t.connection_removed >>= fun () ->
-        connect_auth t remote_id addr ~service
+        Eio.Condition.await_no_mutex t.connection_removed;
+        connect t (addr, service)
       | Some conn ->
         (* Already connected; use that. *)
-        Lwt.return @@ Ok (CapTP.bootstrap conn service)
+        Ok (CapTP.bootstrap conn service)
       | None ->
-        match ID_map.find remote_id t.connecting with
-        | None -> initiate_connection t remote_id addr service
+        match ID_map.find_opt remote_id t.connecting with
+        | None -> initiate_connection t addr service
         | Some conn ->
           (* We're already trying to establish a connection, wait for that. *)
-          conn >|= function
-          | Ok conn -> Ok (CapTP.bootstrap conn service)
-          | Error _ as e -> e
+          Promise.await conn |> Result.map (fun conn -> CapTP.bootstrap conn service)
 
   let make_sturdy_ref t sr =
-    Cast.sturdy_of_raw @@ object (_ : Private.Capnp_core.sturdy_ref)
-      method connect =
-        let (addr, service) = sr in
-        let remote_id = Network.Address.digest addr in
-        Lwt_result.map Cast.cap_to_raw (
-          if remote_id = Auth.Digest.insecure then connect_anon t addr ~service
-          else connect_auth t remote_id addr ~service
-        )
-
+    Capnp_rpc.Cast.sturdy_of_raw @@ object (_ : Capnp_rpc.Private.Capnp_core.sturdy_ref)
+      method connect = Result.map Capnp_rpc.Cast.cap_to_raw (connect t sr)
       method to_uri_with_secrets = Network.Address.to_uri sr
     end
 
@@ -202,7 +187,7 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
   let export _t sr =
     (* [t] isn't used currently. However, requiring it does emphasise that importing/exporting
        is a somewhat privileged operation (as it reveals the secret tokens in the sturdy ref). *)
-    (Cast.sturdy_to_raw sr)#to_uri_with_secrets
+    (Capnp_rpc.Cast.sturdy_to_raw sr)#to_uri_with_secrets
 
   let sturdy_uri t id = sturdy_ref t id |> export t
 
@@ -229,10 +214,13 @@ module Make (Network : S.NETWORK) (Underlying : Mirage_flow.S) = struct
       Auth.Digest.pp id
       CapTP.dump conn
 
+  let dump_id_map pp f m =
+    Fmt.pf f "{@[<v0>%a@]}" (Fmt.seq pp) (ID_map.to_seq m)
+
   let dump f t =
     Fmt.pf f "@[<v2>%a@,Connecting: %a@,Connected: %a@,Anonymous: %a@]"
       pp_vat_id t.address
-      (ID_map.dump dump_connecting) t.connecting
-      (ID_map.dump dump_id_conn) t.connections
+      (dump_id_map dump_connecting) t.connecting
+      (dump_id_map dump_id_conn) t.connections
       (Fmt.Dump.list CapTP.dump) t.anon_connections
 end

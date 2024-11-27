@@ -1,5 +1,3 @@
-open Asetmap
-
 (** Vat-level authentication and encryption.
 
     Unless your network provides a secure mechanism for establishing connections
@@ -55,9 +53,8 @@ module Secret_key : sig
 
   val generate : unit -> t
   (** [generate ()] is a fresh secret key.
-      You must call the relevant entropy initialization function
-      (e.g. {!Mirage_crypto_rng_lwt.initialize}) before using this, or it
-      will raise an error if you forget. *)
+      You must use e.g. {!Mirage_crypto_rng_eio.run} to set a source of
+      randomness before using this (it will raise an error if you forget). *)
 
   val digest : ?hash:hash -> t -> Digest.t
   (** [digest ~hash t] is the digest of [t]'s public key, using [hash]. *)
