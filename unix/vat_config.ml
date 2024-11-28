@@ -44,27 +44,16 @@ let secret_key_file =
       ~doc:"File in which to store secret key (or \"\" for an ephemeral key)." in
   Arg.(required @@ opt (some string) None i)
 
-let read_whole_file path =
-  let ic = open_in_bin path in
-  Fun.protect ~finally:(fun () -> close_in ic) @@ fun () ->
-  let len = in_channel_length ic in
-  really_input_string ic len
-
-let write_whole_file path data =
-  let oc = open_out_gen [Open_wronly; Open_creat; Open_excl; Open_binary] 0o600 path in
-  Fun.protect ~finally:(fun () -> close_out oc) @@ fun () ->
-  output_string oc data
-
 let init_secret_key_file key_file =
-  if Sys.file_exists key_file then (
-    Log.info (fun f -> f "Restoring saved secret key from existing file %S" key_file);
-    let data = read_whole_file key_file in
+  if Eio.Path.is_file key_file then (
+    Log.info (fun f -> f "Restoring saved secret key from existing file %a" Eio.Path.pp key_file);
+    let data = Eio.Path.load key_file in
     (Auth.Secret_key.of_pem_data data, Secret_hash.of_pem_data data)
   ) else (
-    Log.info (fun f -> f "Generating new secret key to store in %S" key_file);
+    Log.info (fun f -> f "Generating new secret key to store in %a" Eio.Path.pp key_file);
     let secret_key = Auth.Secret_key.generate () in
     let data = Auth.Secret_key.to_pem_data secret_key in
-    write_whole_file key_file data;
+    Eio.Path.save ~create:(`Exclusive 0o600) key_file data;
     (secret_key, Secret_hash.of_pem_data data)
   )
 
@@ -87,10 +76,11 @@ let create ?(backlog=5) ?public_address ~secret_key ?(serve_tls=true) ~net liste
   let net = Network.v net in
   { net; backlog; secret_key; serve_tls; listen_address; public_address }
 
-let secret_key_term =
+let secret_key_term fs =
+  let ( / ) = Eio.Path.( / ) in
   let get = function
     | "" -> `Ephemeral
-    | path -> `File path
+    | path -> `File (fs / path)
   in
   Cmdliner.Term.(const get $ secret_key_file)
 
@@ -108,6 +98,7 @@ let sturdy_uri t service =
 
 type 'a env = 'a constraint 'a = <
     net : _ Eio.Net.t;
+    fs : _ Eio.Path.t;
     ..
   > as 'a
 
@@ -146,4 +137,4 @@ let cmd env =
     in
     create ~net:env#net ~secret_key ~serve_tls:(not disable_tls) ~public_address listen_address
   in
-  Term.(const make $ secret_key_term $ disable_tls $ Listen_address.cmd $ public_address)
+  Term.(const make $ secret_key_term env#fs $ disable_tls $ Listen_address.cmd $ public_address)

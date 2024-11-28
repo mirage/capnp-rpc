@@ -512,7 +512,7 @@ The URL contains several pieces of information:
 The ``let secret_key = `Ephemeral`` line causes a new server key to be generated each time the program runs,
 so if you run it again you'll see a different capnp URL.
 For a real system you'll want to save the key so that the server's identity doesn't change when it is restarted.
-You can use ``let secret_key = `File "secret-key.pem"`` for that.
+You can use ``let secret_key = `File (cwd / "secret-key.pem")`` for that.
 Then the file `secret-key.pem` will be created automatically the first time you start the service,
 and reused on future runs.
 
