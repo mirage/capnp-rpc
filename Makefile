@@ -14,5 +14,5 @@ clean:
 
 test:
 	rm -rf _build/_tests
-	dune build test test-bin @install
+	dune build test test-bin examples @install
 	dune build @runtest --no-buffer -j 1

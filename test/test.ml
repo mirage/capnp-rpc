@@ -90,10 +90,10 @@ let make_vats_full ?(serve_tls=false) ~sw ~net ~restore () =
   let server_cancel, server =
     let server_config =
       let addr = get_test_address "capnp-rpc-test-server" in
-      Capnp_rpc_unix.Vat_config.create ~secret_key:(Lazy.force server_pem) ~serve_tls addr
+      Capnp_rpc_unix.Vat_config.create ~secret_key:(Lazy.force server_pem) ~serve_tls ~net addr
     in
     let tags = Test_utils.server_tags in
-    fork_with_cancel ~sw ~tags (Capnp_rpc_unix.serve ~net ~tags ~restore server_config)
+    fork_with_cancel ~sw ~tags (Capnp_rpc_unix.serve ~tags ~restore server_config)
   in
   let client_cancel, client =
     let tags = Test_utils.client_tags in
@@ -326,17 +326,21 @@ let vat_config = Alcotest.testable Capnp_rpc_unix.Vat_config.pp Capnp_rpc_unix.V
 let config_result = cmd_result vat_config
 
 let test_options () =
-  let term = Cmdliner.Cmd.(v (info "main") Capnp_rpc_unix.Vat_config.cmd) in
+  let net = Eio_mock.Net.make "mock-net" in
+  let env = object method net = net end in
+  let term = Cmdliner.Cmd.(v (info "main") (Capnp_rpc_unix.Vat_config.cmd env)) in
   let config = Cmdliner.Cmd.eval_value
       ~argv:[| "main"; "--capnp-secret-key-file=key.pem"; "--capnp-listen-address"; "unix:/run/socket" |] term in
   let expected =
     Result.ok (`Ok (Capnp_rpc_unix.Vat_config.create
+                      ~net
                       ~secret_key:(`File "key.pem")
                       (`Unix "/run/socket")))
   in
   Alcotest.check config_result "Unix, same address" expected config;
   let expected =
     Result.ok (`Ok (Capnp_rpc_unix.Vat_config.create
+                      ~net
                       ~secret_key:(`File "key.pem")
                       ~public_address:(`TCP ("1.2.3.4", 7001))
                       (`TCP ("0.0.0.0", 7000))))
@@ -579,9 +583,9 @@ let test_crossed_calls ~net =
     let config =
       let secret_key = `PEM (Auth.Secret_key.to_pem_data secret_key) in
       let name = Fmt.str "capnp-rpc-test-%s" addr in
-      Capnp_rpc_unix.Vat_config.create ~secret_key (get_test_address name)
+      Capnp_rpc_unix.Vat_config.create ~secret_key ~net (get_test_address name)
     in
-    let vat = Capnp_rpc_unix.serve ~net ~sw ~tags ~restore config in
+    let vat = Capnp_rpc_unix.serve ~sw ~tags ~restore config in
     Switch.on_release sw (fun () -> Capability.dec_ref service);
     vat
   in
@@ -632,7 +636,7 @@ let test_store ~net =
   let db = Store.DB.create () in
   let config =
     let addr = get_test_address "capnp-rpc-test-server" in
-    Capnp_rpc_unix.Vat_config.create ~secret_key:(Lazy.force server_pem) addr
+    Capnp_rpc_unix.Vat_config.create ~secret_key:(Lazy.force server_pem) ~net addr
   in
   let main_id = Restorer.Id.generate () in
   let start_server ~sw () =
@@ -642,7 +646,7 @@ let test_store ~net =
     let restore = Restorer.of_table table in
     let service = Store.local ~restore db in
     Restorer.Table.add table main_id service;
-    Capnp_rpc_unix.serve ~sw ~net ~restore ~tags:Test_utils.server_tags config
+    Capnp_rpc_unix.serve ~sw ~restore ~tags:Test_utils.server_tags config
   in
   (* Start server *)
   let file, file_sr =

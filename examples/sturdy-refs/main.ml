@@ -22,12 +22,12 @@ let make_service ~config ~services name =
   name, id
 
 let start_server ~sw net =
-  let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~net listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
   let restore = Restorer.of_table services in
   let services = List.map (make_service ~config ~services) ["alice"; "bob"] in
-  let vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
+  let vat = Capnp_rpc_unix.serve ~sw ~restore config in
   services |> List.iter (fun (name, id) ->
       let cap_file = name ^ ".cap" in
       Capnp_rpc_unix.Cap_file.save_service vat id cap_file |> or_fail;

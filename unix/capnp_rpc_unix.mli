@@ -15,8 +15,9 @@ module Vat_config : sig
     ?public_address:Network.Location.t ->
     secret_key:[< `File of string | `PEM of string | `Ephemeral] ->
     ?serve_tls:bool ->
+    net:_ Eio.Net.t ->
     Network.Location.t -> t
-  (** [create ~secret_key listen_address] is the configuration for a server vat that
+  (** [create ~secret_key ~net listen_address] is the configuration for a server vat that
       listens on address [listen_address].
       [secret_key] may be one of:
       - [`File path]: a PEM-encoded RSA private key is read from [path]. If [path] doesn't yet
@@ -53,8 +54,13 @@ module Vat_config : sig
   val equal : t -> t -> bool
   (** This is probably only useful for the unit-tests. *)
 
-  val cmd : t Cmdliner.Term.t
-  (** [cmd] evalutes to a configuration populated from the command-line options. *)
+  type 'a env = 'a constraint 'a = <
+      net : _ Eio.Net.t;
+      ..
+    > as 'a
+
+  val cmd : _ env -> t Cmdliner.Term.t
+  (** [cmd env] evaluates to a configuration populated from the command-line options. *)
 end
 
 (** An on-disk store for saved services. *)
@@ -121,10 +127,9 @@ val serve :
   ?tags:Logs.Tag.set ->
   ?restore:Restorer.t ->
   sw:Eio.Switch.t ->
-  net:_ Eio.Net.t ->
   Vat_config.t ->
   Vat.t
-(** [serve ~restore ~sw ~net vat_config] is a new vat that is listening for new connections
+(** [serve ~restore ~sw vat_config] is a new vat that is listening for new connections
     as specified by [vat_config]. After connecting to it, clients can get access
     to services using [restore]. *)
 

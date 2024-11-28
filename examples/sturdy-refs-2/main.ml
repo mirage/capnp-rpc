@@ -15,14 +15,14 @@ let or_fail = function
   | Error (`Msg m) -> failwith m
 
 let start_server ~sw net =
-  let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~net listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
   let restore = Restorer.of_table services in
   let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in
   let root = Logger.local "root" in
   Restorer.Table.add services root_id root;
-  let _vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
+  let _vat = Capnp_rpc_unix.serve ~sw ~restore config in
   Capnp_rpc_unix.Vat_config.sturdy_uri config root_id
 
 (* $MDX part-begin=main *)

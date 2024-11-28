@@ -15,7 +15,7 @@ let or_fail = function
   | Error (`Msg m) -> failwith m
 
 let start_server ~sw net =
-  let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~net listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
   Switch.on_release sw (fun () -> Restorer.Table.clear services);
@@ -28,7 +28,7 @@ let start_server ~sw net =
   in
   (* $MDX part-end *)
   Restorer.Table.add services root_id root;
-  let _vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
+  let _vat = Capnp_rpc_unix.serve ~sw ~restore config in
   Capnp_rpc_unix.Vat_config.sturdy_uri config root_id
 
 let run_client ~net cap_file =

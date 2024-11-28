@@ -26,6 +26,7 @@ end = struct
 end
 
 type t = {
+  net : Network.t;
   backlog : int;
   secret_key : (Auth.Secret_key.t * Secret_hash.t) Lazy.t;
   serve_tls : bool;
@@ -67,7 +68,7 @@ let init_secret_key_file key_file =
     (secret_key, Secret_hash.of_pem_data data)
   )
 
-let create ?(backlog=5) ?public_address ~secret_key ?(serve_tls=true) listen_address =
+let create ?(backlog=5) ?public_address ~secret_key ?(serve_tls=true) ~net listen_address =
   let public_address =
     match public_address with
     | Some x -> x
@@ -83,7 +84,8 @@ let create ?(backlog=5) ?public_address ~secret_key ?(serve_tls=true) listen_add
       let data = Auth.Secret_key.to_pem_data key in
       (key, Secret_hash.of_pem_data data)
   ) in
-  { backlog; secret_key; serve_tls; listen_address; public_address }
+  let net = Network.v net in
+  { net; backlog; secret_key; serve_tls; listen_address; public_address }
 
 let secret_key_term =
   let get = function
@@ -104,9 +106,14 @@ let sturdy_uri t service =
   let address = (t.public_address, auth t) in
   Network.Address.to_uri (address, Capnp_rpc_net.Restorer.Id.to_string service)
 
+type 'a env = 'a constraint 'a = <
+    net : _ Eio.Net.t;
+    ..
+  > as 'a
+
 open Cmdliner
 
-let pp f {backlog; secret_key; serve_tls; listen_address; public_address} =
+let pp f {backlog; secret_key; serve_tls; listen_address; public_address; net = _} =
   Fmt.pf f "{backlog=%d; fingerprint=%a; serve_tls=%b; listen_address=%a; public_address=%a}"
     backlog
     (Auth.Secret_key.pp_fingerprint `SHA256) (fst @@ Lazy.force secret_key)
@@ -114,7 +121,8 @@ let pp f {backlog; secret_key; serve_tls; listen_address; public_address} =
     Listen_address.pp listen_address
     Network.Location.pp public_address
 
-let equal {backlog; secret_key; serve_tls; listen_address; public_address} b =
+let equal {backlog; secret_key; serve_tls; listen_address; public_address; net} b =
+  net == b.net &&
   backlog = b.backlog &&
   serve_tls = serve_tls &&
   Listen_address.equal listen_address b.listen_address &&
@@ -129,13 +137,13 @@ let disable_tls =
   let i = Arg.info ~docs ["capnp-disable-tls"] ~doc:"Do not use TLS for incoming connections." in
   Arg.(value @@ flag i)
 
-let cmd =
+let cmd env =
   let make secret_key disable_tls listen_address public_address =
     let public_address =
       match public_address with
       | None -> listen_address
       | Some x -> x
     in
-    create ~secret_key ~serve_tls:(not disable_tls) ~public_address listen_address
+    create ~net:env#net ~secret_key ~serve_tls:(not disable_tls) ~public_address listen_address
   in
   Term.(const make $ secret_key_term $ disable_tls $ Listen_address.cmd $ public_address)

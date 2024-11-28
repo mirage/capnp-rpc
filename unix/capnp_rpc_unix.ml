@@ -150,8 +150,8 @@ let handle_connection ?tags ~secret_key vat client =
     Log.warn (fun f -> f ?tags "Rejecting new connection: %s" msg)
   | Ok ep -> Vat.run_connection vat ~mode:`Accept ep ignore
 
-let create_server ?tags ?restore ~sw ~net config =
-  let {Vat_config.backlog; secret_key = _; serve_tls; listen_address; public_address} = config in
+let create_server ?tags ?restore ~sw config =
+  let {Vat_config.net; backlog; secret_key = _; serve_tls; listen_address; public_address} = config in
   let vat =
     let auth = Vat_config.auth config in
     let secret_key = lazy (fst (Lazy.force config.secret_key)) in
@@ -200,9 +200,8 @@ let listen ?tags ~sw (config, vat, socket) =
       )
   done
 
-let serve ?tags ?restore ~sw ~net config =
-  let net = (net :> [`Generic] Eio.Net.ty r) in
-  let (vat, socket) = create_server ?tags ?restore ~sw ~net config in
+let serve ?tags ?restore ~sw config =
+  let (vat, socket) = create_server ?tags ?restore ~sw config in
   Fiber.fork_daemon ~sw (fun () ->
       listen ?tags ~sw (config, vat, socket)
     );

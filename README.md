@@ -454,10 +454,10 @@ let secret_key = `Ephemeral
 let listen_address = `TCP ("127.0.0.1", 7000)
 
 let start_server ~sw ~delay net =
-  let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~net listen_address in
   let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
   let restore = Capnp_rpc_net.Restorer.single service_id (Echo.local ~delay) in
-  let vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
+  let vat = Capnp_rpc_unix.serve ~sw ~restore config in
   Capnp_rpc_unix.Vat.sturdy_uri vat service_id
 
 let () =
@@ -531,7 +531,7 @@ let listen_address = `TCP ("0.0.0.0", 7000)	(* Listen on all interfaces *)
 let public_address = `TCP ("192.168.1.3", 7000)	(* Tell clients to connect here *)
 
 let start_server () =
-  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~public_address listen_address in
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~net ~public_address listen_address in
 ```
 
 In `start_server`:
@@ -592,14 +592,11 @@ let () =
 
 let cap_file = "echo.cap"
 
-let serve config =
-  Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
-  let delay = Eio.Time.Timeout.seconds env#mono_clock delay in
+let serve ~delay config =
   Switch.run @@ fun sw ->
   let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
   let restore = Restorer.single service_id (Echo.local ~delay) in
-  let vat = Capnp_rpc_unix.serve ~sw ~net:env#net ~restore config in
+  let vat = Capnp_rpc_unix.serve ~sw ~restore config in
   match Capnp_rpc_unix.Cap_file.save_service vat service_id cap_file with
   | Error `Msg m -> failwith m
   | Ok () ->
@@ -608,13 +605,18 @@ let serve config =
 
 open Cmdliner
 
-let serve_cmd =
+let ( $$ ) f x = Term.(const f $ x)
+
+let serve_cmd env =
   let doc = "run the server" in
   let info = Cmd.info "serve" ~doc in
-  Cmd.v info Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd)
+  let delay = Eio.Time.Timeout.seconds env#mono_clock delay in
+  Cmd.v info (serve ~delay $$ Capnp_rpc_unix.Vat_config.cmd env)
 
 let () =
-  exit (Cmd.eval serve_cmd)
+  exit @@ Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Cmd.eval (serve_cmd env)
 ```
 
 The cmdliner term `Capnp_rpc_unix.Vat_config.cmd` provides an easy way to get a suitable `Vat_config`
@@ -638,27 +640,29 @@ let run_client service =
   Capability.with_ref (Echo.Callback.local callback_fn) @@ fun callback ->
   Echo.heartbeat service "foo" callback
 
-let connect uri =
-  Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+let connect net uri =
   Switch.run @@ fun sw ->
-  let client_vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let client_vat = Capnp_rpc_unix.client_only_vat ~sw net in
   let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
   Capnp_rpc_unix.with_cap_exn sr run_client
 
 open Cmdliner
 
+let ( $$ ) f x = Term.(const f $ x)
+
 let connect_addr =
   let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server (capnp://...)" in
   Arg.(required @@ pos 0 (some Capnp_rpc_unix.sturdy_uri) None i)
 
-let connect_cmd =
+let connect_cmd env =
   let doc = "run the client" in
   let info = Cmd.info "connect" ~doc in
-  Cmd.v info Term.(const connect $ connect_addr)
+  Cmd.v info (connect env#net $$ connect_addr)
 
 let () =
-  exit (Cmd.eval connect_cmd)
+  exit @@ Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+  Cmd.eval (connect_cmd env)
 ```
 
 To test, start the server running:
@@ -840,12 +844,12 @@ let make_service ~config ~services name =
   name, id
 
 let start_server ~sw net =
-  let config = Capnp_rpc_unix.Vat_config.create ~secret_key listen_address in
+  let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~net listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Restorer.Table.create make_sturdy in
   let restore = Restorer.of_table services in
   let services = List.map (make_service ~config ~services) ["alice"; "bob"] in
-  let vat = Capnp_rpc_unix.serve ~sw ~net ~restore config in
+  let vat = Capnp_rpc_unix.serve ~sw ~restore config in
   services |> List.iter (fun (name, id) ->
       let cap_file = name ^ ".cap" in
       Capnp_rpc_unix.Cap_file.save_service vat id cap_file |> or_fail;
@@ -1102,13 +1106,11 @@ The main `start_server` function then uses `Db` to create the table:
 
 <!-- $MDX include,file=examples/sturdy-refs-4/main.ml,part=server -->
 ```ocaml
-let serve config =
-  Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+let serve store_dir config =
   Switch.run @@ fun sw ->
   (* Create the on-disk store *)
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
-  let db, set_loader = Db.create ~make_sturdy (env#cwd / "store") in
+  let db, set_loader = Db.create ~make_sturdy store_dir in
   (* Create the restorer *)
   let services = Restorer.Table.of_loader ~sw (module Db) db in
   Switch.on_release sw (fun () -> Restorer.Table.clear services);
@@ -1127,7 +1129,7 @@ let serve config =
   (* Tell the database how to restore saved loggers *)
   Promise.resolve set_loader (fun sr ~label -> Restorer.grant @@ Logger.local ~persist_new sr label);
   (* Run the server *)
-  let _vat = Capnp_rpc_unix.serve ~sw ~net:env#net ~restore config in
+  let _vat = Capnp_rpc_unix.serve ~sw ~restore config in
   let uri = Capnp_rpc_unix.Vat_config.sturdy_uri config root_id in
   Capnp_rpc_unix.Cap_file.save_uri uri "admin.cap" |> or_fail;
   print_endline "Wrote admin.cap";
