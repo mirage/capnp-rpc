@@ -30,24 +30,20 @@ let reporter =
 (* Run as server *)
 
 let serve vat_config =
-  Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Switch.run @@ fun sw ->
   let service_id = Capnp_rpc_net.Restorer.Id.public "" in
   let service = Calc.local ~sw in
   let restore = Capnp_rpc_net.Restorer.single service_id service in
-  let vat = Capnp_rpc_unix.serve ~sw ~net:env#net ~restore vat_config in
+  let vat = Capnp_rpc_unix.serve ~sw ~restore vat_config in
   let sr = Vat.sturdy_uri vat service_id in
   traceln "Waiting for incoming connections at:@.%a" Uri.pp_hum sr;
   Fiber.await_cancel ()
 
 (* Run as client *)
 
-let connect addr =
-  Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
+let connect net addr =
   Switch.run @@ fun sw ->
-  let vat = Capnp_rpc_unix.client_only_vat ~sw env#net in
+  let vat = Capnp_rpc_unix.client_only_vat ~sw net in
   let sr = Vat.import_exn vat addr in
   Capnp_rpc_unix.with_cap_exn sr @@ fun calc ->
   Logs.info (fun f -> f "Evaluating expression...");
@@ -60,23 +56,27 @@ let connect addr =
 
 open Cmdliner
 
+let ( $$ ) f x = Term.(const f $ x)
+
 let connect_addr =
   let i = Arg.info [] ~docv:"ADDR" ~doc:"Address of server (capnp://...)" in
   Arg.(required @@ pos 0 (some Capnp_rpc_unix.sturdy_uri) None i)
 
-let serve_cmd =
+let serve_cmd env =
   let doc = "provide a Cap'n Proto calculator service" in
   let info = Cmd.info "serve" ~doc in
-  Cmd.v info Term.(const serve $ Capnp_rpc_unix.Vat_config.cmd)
+  Cmd.v info (serve $$ Capnp_rpc_unix.Vat_config.cmd env)
 
-let connect_cmd =
+let connect_cmd env =
   let doc = "connect to a Cap'n Proto calculator service" in
   let info = Cmd.info "connect" ~doc in
-  Cmd.v info Term.(const connect $ connect_addr)
+  Cmd.v info (connect env#net $$ connect_addr)
 
-let cmds = [serve_cmd; connect_cmd]
+let cmds env = [serve_cmd env; connect_cmd env]
 
 let () =
+  Eio_main.run @@ fun env ->
+  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Fmt_tty.setup_std_outputs ();
   Logs.set_reporter reporter;
   Logs.set_level ~all:true (Some Logs.Info);
@@ -86,6 +86,6 @@ let () =
     );
   let doc = "a calculator example" in
   let info = Cmd.info "calc" ~version:"v0.1" ~doc in
-  match Cmd.eval ~catch:false (Cmd.group info cmds) with
+  match Cmd.eval ~catch:false (Cmd.group info (cmds env)) with
   | exception Failure msg -> Fmt.epr "%s@." msg; exit 1
   | status -> exit status
