@@ -15,6 +15,8 @@ exception Simulated_failure
 let ( let/ ) x f = f (x ())
 let ( and/ ) x y () = Fiber.pair x y
 
+let ( / ) = Eio.Path.( / )
+
 let _debug () =
   Logs.Src.set_level Capnp_rpc.Debug.src (Some Logs.Debug)
 
@@ -326,22 +328,26 @@ let vat_config = Alcotest.testable Capnp_rpc_unix.Vat_config.pp Capnp_rpc_unix.V
 let config_result = cmd_result vat_config
 
 let test_options () =
+  Eio_main.run @@ fun env ->
   let net = Eio_mock.Net.make "mock-net" in
-  let env = object method net = net end in
+  let env = object
+    method net = net
+    method fs = env#cwd
+  end in
   let term = Cmdliner.Cmd.(v (info "main") (Capnp_rpc_unix.Vat_config.cmd env)) in
   let config = Cmdliner.Cmd.eval_value
       ~argv:[| "main"; "--capnp-secret-key-file=key.pem"; "--capnp-listen-address"; "unix:/run/socket" |] term in
   let expected =
     Result.ok (`Ok (Capnp_rpc_unix.Vat_config.create
-                      ~net
-                      ~secret_key:(`File "key.pem")
+                      ~net:env#net
+                      ~secret_key:(`File (env#fs / "key.pem"))
                       (`Unix "/run/socket")))
   in
   Alcotest.check config_result "Unix, same address" expected config;
   let expected =
     Result.ok (`Ok (Capnp_rpc_unix.Vat_config.create
-                      ~net
-                      ~secret_key:(`File "key.pem")
+                      ~net:env#net
+                      ~secret_key:(`File (env#fs / "key.pem"))
                       ~public_address:(`TCP ("1.2.3.4", 7001))
                       (`TCP ("0.0.0.0", 7000))))
   in
@@ -675,8 +681,6 @@ let test_store ~net =
   Sturdy_ref.with_cap_exn file_sr @@ fun file ->
   let data = Store.File.get file in
   Alcotest.(check string) "Read file" "Hello" data
-
-let ( / ) = Eio.Path.( / )
 
 let with_temp_dir path fn =
   Eio.Path.mkdir path ~perm:0o700;

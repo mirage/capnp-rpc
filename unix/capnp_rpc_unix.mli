@@ -13,7 +13,7 @@ module Vat_config : sig
   val create :
     ?backlog:int ->
     ?public_address:Network.Location.t ->
-    secret_key:[< `File of string | `PEM of string | `Ephemeral] ->
+    secret_key:[< `File of _ Eio.Path.t | `PEM of string | `Ephemeral] ->
     ?serve_tls:bool ->
     net:_ Eio.Net.t ->
     Network.Location.t -> t
@@ -55,7 +55,8 @@ module Vat_config : sig
   (** This is probably only useful for the unit-tests. *)
 
   type 'a env = 'a constraint 'a = <
-      net : _ Eio.Net.t;
+      net : _ Eio.Net.t;                (** For initiating and accepting network connections *)
+      fs : _ Eio.Path.t;                (** For loading and saving the secret key *)
       ..
     > as 'a
 
