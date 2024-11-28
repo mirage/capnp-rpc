@@ -1,0 +1,22 @@
+opam-version: "2.0"
+synopsis:
+  "Cap'n Proto is a capability-based RPC system with bindings for many languages"
+description: """
+This deprecated package provides Lwt shims around capnp-rpc, to ease the transition."""
+maintainer: "Thomas Leonard <talex5@gmail.com>"
+authors: "Thomas Leonard <talex5@gmail.com>"
+license: "Apache-2.0"
+homepage: "https://github.com/mirage/capnp-rpc"
+bug-reports: "https://github.com/mirage/capnp-rpc/issues"
+doc: "https://mirage.github.io/capnp-rpc/"
+depends: [
+  "ocaml" {>= "5.1"}
+  "capnp-rpc" {>= version}
+  "lwt_eio" {>= "0.5.1"}
+  "dune" {>= "3.16"}
+]
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
+]
+dev-repo: "git+https://github.com/mirage/capnp-rpc.git"
