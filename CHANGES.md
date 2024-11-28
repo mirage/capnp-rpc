@@ -1,3 +1,19 @@
+### v1.2.4
+
+- Update dependencies and remove capnp-rpc-mirage (@talex5 #276).
+  - Update for breaking changes in tls, mirage-crypto and mirage-flow.
+  - capnp-rpc-mirage isn't used much, and won't be needed after switching to Eio.
+
+- Update tests to Cap'n Proto 1.0.1 (@MisterDA #274).
+
+- Update links to ocaml-ci and capnp-ocaml (@tmcgilchrist #271).
+
+- Opam doesn't allow with-test in conflicts (@talex5 #269).
+
+- Disable opam tests on macos (@talex5 #268).
+
+- Update CI (@MisterDA #272, @talex5 #277).
+
 ### v1.2.3
 
 - Update to cmdliner 1.1.0 (@MisterDA #249).
