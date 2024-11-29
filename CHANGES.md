@@ -1,26 +1,92 @@
-### v2.x
+### v2.0
 
-- Rename `Capnp_rpc_lwt` to `Capnp_rpc` (which is now `Capnp_rpc_proto`).
-  The new `Capnp_rpc` now provides `Error`, `Exception` and `Debug` aliases
-  to the same modules in `Capnp_rpc_proto`, so that `Capnp_rpc_proto` doesn't
-  need to be used directly.
+capnp-rpc 2.0 switches from using Lwt to Eio.
+The `capnp-rpc-lwt` package is now just Lwt wrappers around the Eio functions in `capnp-rpc`.
+This allows libraries using the old Lwt API to be used with applications and libraries using the new Eio one,
+in the same binary.
+Because Lwt libraries (using `capnp-rpc-lwt`) can be used with Eio applications (using `capnp-rpc-unix`),
+you should first upgrade your application and then upgrade the libraries afterwards.
 
-- Add `Capnp_rpc.Std` with some common module aliases, to reduce the need
-  to `open Capnp_rpc` (which is rather large).
+It is recommended to upgrade in stages, checking your application still works after each step:
 
-- Convert API from Lwt to Eio.
+1. Upgrade to the latest Lwt version (`opam install capnp-rpc-unix.1.2.4`).
+   This uses the new version of mirage-crypto, tls, etc,
+   which may be incompatible with other libraries you are using.
+   Get that sorted out before switching to capnp-rpc 2.0.
 
-To update to the new API:
+2. Use [lwt_eio][] to allow using Eio and Lwt together in your application.
+   This means replacing your call to `Lwt_main.run` with code to run Eio and Lwt together,
+   as explained at the start of the `lwt_eio` README.
 
-1. Use [lwt_eio][] during the migration to allow using Eio and Lwt together in your application.
-2. Replace `open Capnp_rpc_lwt` with `open Capnp_rpc.Std`.
-3. Replace all other uses of `Capnp_rpc_lwt` with just `Capnp_rpc`.
-4. In `dune` and `opam` files, replace `capnp-rpc-lwt` with `capnp-rpc`.
-5. Some modules are in `Capnp_rpc` but not the `Capnp_rpc.Std` subset.
-   Those should now be fully qualified (e.g. replace `Persistence` with
-   `Capnp_rpc.Persistence`).
-6. Replace `Service.return_lwt` with `Lwt_eio.run_lwt`.
-7. Once all Lwt code is gone, `lwt_eio` can be removed.
+3. Upgrade your main application to capnp-rpc-unix 2.0.
+   Calls to functions in the `Capnp_rpc_unix` and `Capnp_rpc_net` modules will need minor updates.
+   They were previously called from Lwt context, so you'll need to wrap them with `Lwt_eio.run_eio`
+   (or remove a `Lwt_eio.run_lwt` if you already updated the surrounding code).
+   You should also use `mirage-crypto-rng-eio` to ensure randomness is available
+   (`capnp-rpc-unix` no longer does this, although some other library might).
+
+4. Upgrade code and libraries using `Capnp_rpc_lwt`:
+
+   1. Replace `open Capnp_rpc_lwt` with `open Capnp_rpc.Std`.
+   2. Replace all other uses of `Capnp_rpc_lwt` with just `Capnp_rpc`.
+   3. In `dune` and `opam` files, replace `capnp-rpc-lwt` with `capnp-rpc`.
+   4. Some modules are in `Capnp_rpc` but not the `Capnp_rpc.Std` subset.
+      Those should now be fully qualified (e.g. replace `Persistence` with
+      `Capnp_rpc.Persistence`).
+   5. Replace `Service.return_lwt` with `Lwt_eio.run_lwt`.
+      Replace `Lwt.return (Ok x)` with `Service.return x`.
+
+Once all Lwt code is gone, you can remove the dependencies on `lwt` and `lwt_eio`.
+
+New features:
+
+- Allow numeric IPv6 listen addresses (@talex5 #296, requested by @BChabanne).
+
+API changes:
+
+- Eio port (@talex5 #280 #284 #298 #292 #297 #300).
+
+  This switches capnp-rpc from Lwt to Eio.
+  One particularly nice side effect of this is that `Service.return_lwt` has gone,
+  as there is no distinction now between concurrent and non-concurrent service methods.
+
+  Uses of `Capnp_rpc_lwt` should be replaced by uses of `Capnp_rpc`
+  (and the old `Capnp_rpc` is now an internal module, `Capnp_rpc_proto`).
+  The new `Capnp_rpc` now provides `Error`, `Exception` and `Debug` aliases to the same modules in `Capnp_rpc_proto`,
+  so that `Capnp_rpc_proto` doesn't need to be used directly.
+
+  `Capnp_rpc_lwt` now provides (deprecated) compatibility wrappers, using `lwt_eio`.
+
+  This also adds `Capnp_rpc.Std` with some common module aliases,
+  to reduce the need to `open Capnp_rpc` (which is rather large).
+
+- Deprecate `Debug.failf` (@talex5 #291).
+
+Performance and bug fixes:
+
+- Add buffering of outgoing messages (@talex5 #287).  
+  Sending each message in its own TCP packet isn't very efficient, and also interacts very badly with Nagle's algorithm.
+  See <https://roscidus.com/blog/blog/2024/07/22/performance/> for details.
+
+- Only disconnect socket when sending is done (@talex5 #295).  
+  Allows sending the reason for the disconnection in some cases.
+
+- Fix type of `Capability.call` (@talex5 #293).  
+  It was previously unusable.
+
+- Work around FreeBSD `close` problem (@talex5 #302).
+
+Build:
+
+- Update to capnp 3.6.0 (@talex5 #285).
+
+- Update to dune 3.16 and fix warnings (@talex5 #282).
+
+- Use `String.starts_with` instead of `Astring` (@talex5 #290).
+
+- Remove unused `tls-mirage` dependency (@talex5 #289).
+
+- Remove `asetmap` dependency (@talex5 #288).
 
 [lwt_eio]: https://github.com/ocaml-multicore/lwt_eio
 
