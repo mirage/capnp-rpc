@@ -65,6 +65,12 @@ let error fmt =
 
 let parse_third_party_cap_id _ = `Two_party_only
 
+(* Work-around for FreeBSD returning errors from close.
+   Should ideally be fixed in Eio. *)
+let close x =
+  try Eio.Net.close x
+  with Eio.Io (Eio.Net.E Connection_reset _, _) -> ()
+
 let connect net ~sw ~secret_key (addr, auth) =
   let eio_addr =
     match addr with
@@ -77,6 +83,7 @@ let connect net ~sw ~secret_key (addr, auth) =
   Log.info (fun f -> f "Connecting to %a..." Eio.Net.Sockaddr.pp eio_addr);
   match Eio.Net.connect ~sw net eio_addr with
   | socket ->
+    Switch.on_release sw (fun () -> close socket);      (* Work-around *)
     begin match addr with
       | `Unix _ -> ()
       | `TCP _ ->
