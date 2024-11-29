@@ -1,6 +1,7 @@
-(** Cap'n Proto RPC using the Cap'n Proto serialisation and Lwt for concurrency. *)
+(** Lwt compatibility wrappers.
 
-[@@@deprecated "Use Capnp_rpc instead. See https://github.com/mirage/capnp-rpc/blob/master/CHANGES.md for migration instructions."]
+    This module wraps {!Capnp_rpc} to provide the old Lwt API, to make upgrading easier.
+    See {{:https://github.com/mirage/capnp-rpc/blob/master/CHANGES.md}} for migration instructions. *)
 
 open Capnp.RPC
 
