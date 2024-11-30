@@ -44,7 +44,7 @@ New features:
 
 API changes:
 
-- Eio port (@talex5 #280 #284 #298 #292 #297 #300).
+- Eio port (@talex5 #280 #284 #298 #292 #297 #300 #304).
 
   This switches capnp-rpc from Lwt to Eio.
   One particularly nice side effect of this is that `Service.return_lwt` has gone,
