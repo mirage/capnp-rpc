@@ -10,7 +10,7 @@ homepage: "https://github.com/mirage/capnp-rpc"
 bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 doc: "https://mirage.github.io/capnp-rpc/"
 depends: [
-  "ocaml" {>= "5.1"}
+  "ocaml" {>= "5.2"}
   "capnp-rpc" {>= version}
   "lwt_eio" {>= "0.5.1"}
   "dune" {>= "3.16"}

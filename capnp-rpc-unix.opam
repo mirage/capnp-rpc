@@ -10,7 +10,7 @@ homepage: "https://github.com/mirage/capnp-rpc"
 doc: "https://mirage.github.io/capnp-rpc/"
 bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 depends: [
-  "ocaml" {>= "4.08.0"}
+  "ocaml" {>= "5.2"}
   "capnp-rpc-net" {= version}
   "cmdliner" {>= "1.1.0"}
   "cstruct" {>= "6.2.0"}
@@ -20,6 +20,7 @@ depends: [
   "extunix"
   "base64" {>= "3.0.0"}
   "dune" {>= "3.16"}
+  "ipaddr" {>= "5.3.0" }
   "alcotest" {>= "1.6.0" & with-test}
   "mirage-crypto-rng-eio" {>= "1.1.0" & with-test}
   "mdx" {>= "2.4.1" & with-test}
