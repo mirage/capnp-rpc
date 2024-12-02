@@ -122,10 +122,13 @@ let with_vats ?serve_tls ~net ~service fn =
 (* Generic runner for Alcotest. *)
 let run_eio ~net name ?(expected_warnings=0) fn =
   Alcotest.test_case name `Quick @@ fun () ->
+  Switch.run @@ fun sw ->
+  Fiber.fork_daemon ~sw Capnp_rpc.Leak_handler.run;
   let warnings_at_start = Logs.(err_count () + warn_count ()) in
   Logs.info (fun f -> f "Start test-case");
   fn ~net;
   Gc.full_major ();
+  Fiber.yield ();               (* Allow leak-detector to run *)
   let warnings_at_end = Logs.(err_count () + warn_count ()) in
   Alcotest.(check int) "Check log for warnings" expected_warnings (warnings_at_end - warnings_at_start)
 
@@ -403,7 +406,7 @@ let except_ty = Alcotest.testable Capnp_rpc.Exception.pp_ty (=)
 let test_table_restorer ~net:_ =
   Switch.run @@ fun sw ->
   let make_sturdy id = Uri.make ~path:(Restorer.Id.to_string id) () in
-  let table = Restorer.Table.create make_sturdy in
+  let table = Restorer.Table.create ~sw make_sturdy in
   let echo_id = Restorer.Id.public "echo" in
   let registry_id = Restorer.Id.public "registry" in
   let broken_id = Restorer.Id.public "broken" in
@@ -428,8 +431,7 @@ let test_table_restorer ~net:_ =
   Capability.dec_ref a1;
   Capability.dec_ref a2;
   Capability.dec_ref r1;
-  Restorer.Table.remove table echo_id;
-  Restorer.Table.clear table
+  Restorer.Table.remove table echo_id
 
 module Loader = struct
   type t = string -> Restorer.resolution
