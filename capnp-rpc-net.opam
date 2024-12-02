@@ -11,7 +11,7 @@ homepage: "https://github.com/mirage/capnp-rpc"
 bug-reports: "https://github.com/mirage/capnp-rpc/issues"
 doc: "https://mirage.github.io/capnp-rpc/"
 depends: [
-  "ocaml" {>= "4.08.0"}
+  "ocaml" {>= "5.2"}
   "conf-capnproto" {build}
   "capnp" {>= "3.6.0"}
   "capnp-rpc" {= version}
