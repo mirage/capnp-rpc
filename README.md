@@ -358,7 +358,7 @@ let heartbeat t msg callback =
 ```
 
 `Capability.call_for_unit_exn` is a convenience wrapper around
-`Callback.call_for_value_exn` that discards the result.
+`Capability.call_for_value_exn` that discards the result.
 
 In `main.ml`, we can now wrap a regular OCaml function as the callback:
 
@@ -476,7 +476,7 @@ let () =
   <img src="./diagrams/vats.svg"/>
 </p>
 
-You'll need to edit your `dune` file to add a dependencies
+You'll need to edit your `dune` file to add dependencies
 on `capnp-rpc-unix` and `mirage-crypto-rng-eio` in the `(libraries ...` line and also:
 
 <!-- $MDX skip -->
