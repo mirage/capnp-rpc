@@ -90,7 +90,7 @@ To install, you will need a platform with the capnproto package available (e.g. 
     
 ## Structure of the library
 
-**Note:** This README documents the newer (unreleased) Eio API. For the 1.x Lwt API, see an older version of the README. The main change is that `Capnp_rpc_lwt` is now just `Capnp_rpc`. See the [CHANGES.md](./CHANGES.md) file for help migrating to 2.0.
+**Note:** This README documents the newer Eio API. For the 1.x Lwt API, see an older version of the README. See the [CHANGES.md](./CHANGES.md) file for instructions on migrating to 2.0.
 
 The code is split into several packages:
 
