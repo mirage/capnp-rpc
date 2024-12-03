@@ -104,15 +104,17 @@ module Restorer : sig
     type t
     (** A restorer that keeps a hashtable mapping IDs to capabilities in memory. *)
 
-    val create : (Id.t -> Uri.t) -> t
-    (** [create make_sturdy] is a new in-memory-only table.
+    val create : sw:Eio.Switch.t -> (Id.t -> Uri.t) -> t
+    (** [create ~sw make_sturdy] is a new in-memory-only table.
         [make_sturdy id] converts an ID to a full URI, by adding the
-        hosting vat's address and fingerprint. *)
+        hosting vat's address and fingerprint.
+        @param sw {!clear} is called when [sw] is turned off. *)
 
     val of_loader : sw:Eio.Switch.t -> (module LOADER with type t = 'loader) -> 'loader -> t
     (** [of_loader ~sw (module Loader) l] is a new caching table that uses
         [Loader.load l sr (Loader.hash id)] to restore services that aren't in the cache.
-        The load function runs in a new fiber in [sw]. *)
+        @param sw The [load] function runs in a new fiber in [sw].
+                  {!clear} is called when [sw] is turned off. *)
 
     val add : t -> Id.t -> 'a Capability.t -> unit
     (** [add t id cap] adds a mapping to [t].

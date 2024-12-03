@@ -17,8 +17,7 @@ let or_fail = function
 let start_server ~sw net =
   let config = Capnp_rpc_unix.Vat_config.create ~secret_key ~net listen_address in
   let make_sturdy = Capnp_rpc_unix.Vat_config.sturdy_uri config in
-  let services = Restorer.Table.create make_sturdy in
-  Switch.on_release sw (fun () -> Restorer.Table.clear services);
+  let services = Restorer.Table.create ~sw make_sturdy in
   let restore = Restorer.of_table services in
   (* $MDX part-begin=root *)
   let root_id = Capnp_rpc_unix.Vat_config.derived_id config "root" in

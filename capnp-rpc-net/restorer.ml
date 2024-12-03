@@ -78,6 +78,7 @@ module Table = struct
     | Manual of Core_types.cap          (* We hold a ref on the cap *)
 
   type t = {
+    sw : Switch.t;
     hash : Digestif.hash';
     cache : (digest, entry) Hashtbl.t;
     load : Id.t -> digest -> resolution Promise.or_exn;
@@ -86,11 +87,21 @@ module Table = struct
 
   (* [cache] contains promises or capabilities with positive ref-counts. *)
 
-  let create make_sturdy =
+  let release = function
+    | Manual cap -> Core_types.dec_ref cap;
+    | Cached _ -> ()
+
+  let clear t =
+    Hashtbl.iter (fun _ v -> release v) t.cache;
+    Hashtbl.clear t.cache
+
+  let create ~sw make_sturdy =
     let hash = `SHA256 in
     let cache = Hashtbl.create 53 in
     let load _ _ = Promise.create_resolved (Ok unknown_service_id) in
-    { hash; cache; load; make_sturdy }
+    let t = { sw; hash; cache; load; make_sturdy } in
+    Switch.on_release sw (fun () -> clear t);
+    t
 
   let hash t id =
     Id.digest t.hash id
@@ -102,13 +113,9 @@ module Table = struct
       Core_types.inc_ref cap;
       Ok cap
     | Cached res ->
-      begin match Promise.await_exn res with
-        | Error _ as e -> e
-        | Ok cap ->
-          Core_types.inc_ref cap;
-          Fiber.yield ();
-          Ok cap
-      end
+      let res = Promise.await_exn res in
+      Result.iter Core_types.inc_ref res;
+      res
     | exception Not_found ->
       let cap = t.load id digest in
       Hashtbl.add t.cache digest (Cached cap);
@@ -138,13 +145,15 @@ module Table = struct
           end in
           L.load loader (Cast.sturdy_of_raw sr) digest
         )
-    and t = { hash; cache; load; make_sturdy = L.make_sturdy loader } in
+    and t = { sw; hash; cache; load; make_sturdy = L.make_sturdy loader } in
+    Switch.on_release sw (fun () -> clear t);
     t
 
   let add t id cap =
     let cap = Cast.cap_to_raw cap in
     let id = hash t id in
     assert (not (Hashtbl.mem t.cache id));
+    Switch.check t.sw;
     Hashtbl.add t.cache id (Manual cap)
 
   let sturdy_ref t id =
@@ -153,10 +162,6 @@ module Table = struct
       method to_uri_with_secrets = t.make_sturdy id
     end
 
-  let release = function
-    | Manual cap -> Core_types.dec_ref cap;
-    | Cached _ -> ()
-
   let remove t id =
     let id = hash t id in
     match Hashtbl.find t.cache id with
@@ -164,10 +169,6 @@ module Table = struct
     | value ->
       release value;
       Hashtbl.remove t.cache id
-
-  let clear t =
-    Hashtbl.iter (fun _ v -> release v) t.cache;
-    Hashtbl.clear t.cache
 end
 
 let of_table = Table.resolve
