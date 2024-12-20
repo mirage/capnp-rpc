@@ -1,0 +1,17 @@
+(library
+ (name capnp_rpc_sync)
+ (public_name capnp-rpc-sync)
+ (ocamlc_flags :standard -w -55-53)
+ (ocamlopt_flags :standard -w -55-53)
+ (libraries astring capnp capnp-rpc logs unix containers
+            containers.unix containers.thread uri))
+
+(rule
+ (targets rpc_schema.ml rpc_schema.mli)
+ (deps rpc_schema.capnp)
+ (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
+
+(rule
+ (targets persistent.ml persistent.mli)
+ (deps persistent.capnp)
+ (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
