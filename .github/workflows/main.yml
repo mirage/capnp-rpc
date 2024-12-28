@@ -15,8 +15,6 @@ jobs:
         os:
           - macos-latest
           - windows-latest
-        ocaml-compiler:
-          - 5
 
     runs-on: ${{ matrix.os }}
 
@@ -24,20 +22,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Use OCaml ${{ matrix.ocaml-compiler }}
+      - name: Set-up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          ocaml-compiler: 5
 
       - name: Install Cap'n Proto (on Windows)
         if: runner.os == 'Windows'
         shell: bash
-        env:
-          CAPNP_VERSION: 1.1.0
-          SHELLOPTS: igncr
         run: |
           curl -LO https://capnproto.org/capnproto-c++-win32-$CAPNP_VERSION.zip && \
           unzip -j capnproto-c++-win32-$CAPNP_VERSION.zip capnproto-tools-win32-$CAPNP_VERSION/capnp.exe -d /usr/bin
+        env:
+          CAPNP_VERSION: 1.1.0
 
       - run: opam install . --deps-only --with-test
 
