@@ -33,7 +33,6 @@ let start_server ~sw net =
 
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Switch.run ~name:"main" @@ fun sw ->
   let uri = start_server ~sw env#net in
   Fmt.pr "Connecting to echo service at: %a@." Uri.pp_hum uri;

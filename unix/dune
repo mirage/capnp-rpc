@@ -1,4 +1,4 @@
 (library
  (name capnp_rpc_unix)
  (public_name capnp-rpc-unix)
- (libraries eio.unix astring capnp-rpc capnp-rpc-net fmt logs cmdliner cstruct extunix))
+ (libraries eio.unix astring capnp-rpc capnp-rpc-net fmt logs mirage-crypto-rng.unix cmdliner cstruct extunix))

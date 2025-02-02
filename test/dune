@@ -2,4 +2,4 @@
  (package capnp-rpc-unix)
  (name test)
  (libraries capnp-rpc capnp-rpc-unix testlib logs.fmt
-   mirage-crypto-rng-eio testbed eio_main eio.mock))
+   testbed eio_main eio.mock))

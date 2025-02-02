@@ -1,6 +1,6 @@
 (executable
  (name main)
- (libraries eio_main capnp-rpc-unix mirage-crypto-rng-eio logs.fmt))
+ (libraries eio_main capnp-rpc-unix logs.fmt))
 
 (rule
  (targets echo_api.ml echo_api.mli)

@@ -462,7 +462,6 @@ let start_server ~sw ~delay net =
 
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Switch.run @@ fun sw ->
   let delay = Eio.Time.Timeout.seconds env#mono_clock delay in
   let uri = start_server ~sw ~delay env#net in
@@ -476,12 +475,11 @@ let () =
   <img src="./diagrams/vats.svg"/>
 </p>
 
-You'll need to edit your `dune` file to add dependencies
-on `capnp-rpc-unix` and `mirage-crypto-rng-eio` in the `(libraries ...` line and also:
+You'll need to edit your `dune` file to add a dependency on `capnp-rpc-unix` in the `(libraries ...)` line and also:
 
 <!-- $MDX skip -->
 ```sh
-$ opam install capnp-rpc-unix mirage-crypto-rng-eio
+$ opam install capnp-rpc-unix
 ```
 
 Running this will give something like:
@@ -569,7 +567,7 @@ Edit the `dune` file to build a client and server:
 ```
 (executables
  (names client server)
- (libraries eio_main capnp-rpc logs.fmt capnp-rpc-unix mirage-crypto-rng-eio))
+ (libraries eio_main capnp-rpc logs.fmt capnp-rpc-unix))
 
 (rule
  (targets echo_api.ml echo_api.mli)
@@ -615,7 +613,6 @@ let serve_cmd env =
 
 let () =
   exit @@ Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Cmd.eval (serve_cmd env)
 ```
 
@@ -661,7 +658,6 @@ let connect_cmd env =
 
 let () =
   exit @@ Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Cmd.eval (connect_cmd env)
 ```
 
@@ -866,7 +862,6 @@ let run_client ~net cap_file msg =
 
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Switch.run @@ fun sw ->
   let net = env#net in
   start_server ~sw net;
@@ -910,7 +905,6 @@ We can use the new API like this:
 ```ocaml
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Switch.run @@ fun sw ->
   let net = env#net in
   let root_uri = start_server ~sw net in

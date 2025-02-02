@@ -1,6 +1,6 @@
 (executables
  (names client server)
- (libraries eio_main capnp-rpc logs.fmt capnp-rpc-unix mirage-crypto-rng-eio))
+ (libraries eio_main capnp-rpc logs.fmt capnp-rpc-unix))
 
 (rule
  (targets echo_api.ml echo_api.mli)

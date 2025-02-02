@@ -33,5 +33,4 @@ let connect_cmd env =
 
 let () =
   exit @@ Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Cmd.eval (connect_cmd env)
