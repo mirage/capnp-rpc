@@ -35,3 +35,4 @@ build: [
   ["dune" "runtest" "-p" name "-j" jobs] {with-test & os != "macos"}
 ]
 dev-repo: "git+https://github.com/mirage/capnp-rpc.git"
+x-maintenance-intent: ["(latest)"]
