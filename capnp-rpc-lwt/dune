@@ -1,4 +1,0 @@
-(library
- (name capnp_rpc_lwt)
- (public_name capnp-rpc-lwt)
- (libraries capnp-rpc lwt_eio))
