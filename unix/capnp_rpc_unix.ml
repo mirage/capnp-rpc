@@ -2,6 +2,8 @@ open Eio.Std
 
 module Log = Capnp_rpc.Debug.Log
 
+let () = Mirage_crypto_rng_unix.use_default ()
+
 module CapTP = Vat_network.CapTP
 module Vat = Vat_network.Vat
 module Network = Network

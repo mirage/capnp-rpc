@@ -100,5 +100,4 @@ let () =
   let doc = "a command-line interface for logger service" in
   let info = Cmd.info ~doc "logger-client" in
   exit @@ Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Cmd.eval @@ Cmd.group info (cmds env)

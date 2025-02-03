@@ -22,8 +22,6 @@ It is recommended to upgrade in stages, checking your application still works af
    Calls to functions in the `Capnp_rpc_unix` and `Capnp_rpc_net` modules will need minor updates.
    They were previously called from Lwt context, so you'll need to wrap them with `Lwt_eio.run_eio`
    (or remove a `Lwt_eio.run_lwt` if you already updated the surrounding code).
-   You should also use `mirage-crypto-rng-eio` to ensure randomness is available
-   (`capnp-rpc-unix` no longer does this, although some other library might).
 
 4. Upgrade code and libraries using `Capnp_rpc_lwt`:
 

@@ -33,7 +33,6 @@ let start_server ~sw ~delay net =
 
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Switch.run @@ fun sw ->
   let delay = Eio.Time.Timeout.seconds env#mono_clock delay in
   let uri = start_server ~sw ~delay env#net in

@@ -39,7 +39,6 @@ let run_client ~net cap_file =
 
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Switch.run @@ fun sw ->
   let net = env#net in
   let root_uri = start_server ~sw net in

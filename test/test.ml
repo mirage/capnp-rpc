@@ -806,7 +806,6 @@ let rpc_tests ~net ~dir =
 
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   (* Eio_unix.Ctf.with_tracing "/tmp/trace.ctf" @@ fun () -> *)
   Alcotest.run ~and_exit:false "capnp-rpc" [
     "eio", rpc_tests ~net:env#net ~dir:env#cwd;

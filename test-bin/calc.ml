@@ -76,7 +76,6 @@ let cmds env = [serve_cmd env; connect_cmd env]
 
 let () =
   Eio_main.run @@ fun env ->
-  Mirage_crypto_rng_eio.run (module Mirage_crypto_rng.Fortuna) env @@ fun () ->
   Fmt_tty.setup_std_outputs ();
   Logs.set_reporter reporter;
   Logs.set_level ~all:true (Some Logs.Info);
