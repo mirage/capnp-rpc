@@ -1,3 +1,24 @@
+### v2.1
+
+- Update to mirage-crypto-rng 1.2.0 (@talex5 #313).  
+  There is no need to do `Mirage_crypto_rng_eio.run` now.
+
+- `Restorer.Table.create` now takes a switch (@talex5 #306).  
+  The table is now cleared when the switch finishes. Avoids having to remember to set this up manually.
+
+- Update README now that 2.0 is released (@talex5 #307 #308).
+
+Build and opam metadata:
+
+- OCaml 5.2 is the minimum version (@talex5 #305).
+
+- Update Windows CI (@smorimoto #310 #311).
+
+- Add `x-maintenance-intent` to opam files (@talex5 #315, requested by @hannesm).
+
+- Remove capnp-rpc-lwt compatibility package (@talex5 #314).  
+  The existing release should continue working; no point releasing an unchanged version every time there's a capnp-rpc release.
+
 ### v2.0
 
 capnp-rpc 2.0 switches from using Lwt to Eio.
