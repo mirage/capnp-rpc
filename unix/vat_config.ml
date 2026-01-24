@@ -129,12 +129,14 @@ let disable_tls =
   Arg.(value @@ flag i)
 
 let cmd env =
+  let fs = env#fs in
+  let net = env#net in
   let make secret_key disable_tls listen_address public_address =
     let public_address =
       match public_address with
       | None -> listen_address
       | Some x -> x
     in
-    create ~net:env#net ~secret_key ~serve_tls:(not disable_tls) ~public_address listen_address
+    create ~net ~secret_key ~serve_tls:(not disable_tls) ~public_address listen_address
   in
-  Term.(const make $ secret_key_term env#fs $ disable_tls $ Listen_address.cmd $ public_address)
+  Term.(const make $ secret_key_term fs $ disable_tls $ Listen_address.cmd $ public_address)
