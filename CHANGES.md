@@ -1,3 +1,7 @@
+### v2.1.1
+
+- Add compatibility with cmdliner 2.0+ (@avsm #317).
+
 ### v2.1
 
 - Update to mirage-crypto-rng 1.2.0 (@talex5 #313).  
