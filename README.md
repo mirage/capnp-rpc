@@ -1151,22 +1151,24 @@ and uses `persist_new` to save the new logger to the database:
 
 <!-- $MDX dir=examples/sturdy-refs-4,non-deterministic -->
 ```sh
-$ dune exec -- ./main.exe serve --capnp-secret-key=server.key --capnp-listen-address unix:/tmp/demo.sock &
+$ dune build ./main.exe
+
+$ dune exec --no-build -- ./main.exe serve --capnp-secret-key=server.key --capnp-listen-address unix:/tmp/demo.sock &
 Wrote admin.cap
 
-$ dune exec -- ./main.exe log admin.cap "Hello from Admin"
+$ dune exec --no-build -- ./main.exe log admin.cap "Hello from Admin"
 [server] "root" says "Hello from Admin"
 
-$ dune exec -- ./main.exe sub admin.cap alice
+$ dune exec --no-build -- ./main.exe sub admin.cap alice
 Wrote "alice.cap"
 
-$ dune exec -- ./main.exe log alice.cap "Hello from Alice"
+$ dune exec --no-build -- ./main.exe log alice.cap "Hello from Alice"
 [server] "root/alice" says "Hello from Alice"
 
-$ dune exec -- ./main.exe sub alice.cap bob
+$ dune exec --no-build -- ./main.exe sub alice.cap bob
 Wrote "bob.cap"
 
-$ dune exec ./main.exe log bob.cap "Hello from Bob"
+$ dune exec --no-build ./main.exe log bob.cap "Hello from Bob"
 [server] "root/alice/bob" says "Hello from Bob"
 ```
 
