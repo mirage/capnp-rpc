@@ -885,13 +885,13 @@ module Make (EP : Message_types.ENDPOINT) = struct
 
     (* For some reason, we can't send broken caps in a payload message. So, if
        any of them are broken, we send a resolve for them immediately afterwards. *)
-    let resolve_broken t =
-      Queue.iter @@ fun (ex, problem) ->
+    let resolve_broken t q =
+      Queue.iter (fun (ex, problem) ->
       Log.debug (fun f -> f ~tags:t.tags "Sending resolve for already-broken export %a : %a"
                     Export.pp ex
                     Export.dump ex
                 );
-      t.queue_send (`Resolve (Export.id ex, Error problem))
+      t.queue_send (`Resolve (Export.id ex, Error problem))) q
 
     let call t remote_promise (target : message_target_cap) msg ~results_to =
       let broken_caps = Queue.create () in
