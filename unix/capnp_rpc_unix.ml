@@ -167,10 +167,7 @@ let create_server ?tags ?restore ~sw config =
       | [] -> Fmt.failwith "No addresses found for host name %S" host
       | addr :: _ ->
         let socket = Eio.Net.listen ~sw ~backlog ~reuse_addr:true net addr in
-        let unix_socket = Eio_unix.Resource.fd_opt socket |> Option.get in
-        Eio_unix.Fd.use_exn "keep-alive" unix_socket @@ fun unix_socket ->
-        Unix.setsockopt unix_socket Unix.SO_KEEPALIVE true;
-        Keepalive.try_set_idle unix_socket 60;
+        Keepalive.try_set socket;
         socket
   in
   Log.info (fun f -> f ?tags "Waiting for %s connections on %a"
