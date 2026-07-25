@@ -175,18 +175,12 @@ let create_server ?tags ?restore ~sw config =
                Vat_config.Listen_address.pp listen_address);
   vat, socket
 
-(* Work-around for FreeBSD returning errors from close.
-   Should ideally be fixed in Eio. *)
-let close x =
-  try Eio.Net.close x
-  with Eio.Io (Eio.Net.E Connection_reset _, _) -> ()
-
 let listen ?tags ~sw (config, vat, socket) =
   while true do
     (* This is like [Eio.Net.accept_fork], but using [fork_daemon] instead of [fork]. *)
     let child_started = ref false in
     let client, addr = Eio.Net.accept ~sw socket in
-    Fun.protect ~finally:(fun () -> if !child_started = false then close client)
+    Fun.protect ~finally:(fun () -> if !child_started = false then Eio.Net.close client)
       (fun () ->
          Log.info (fun f -> f ?tags "Accepting new connection from %a" Eio.Net.Sockaddr.pp addr);
          Fiber.fork_daemon ~sw (fun () ->
@@ -195,9 +189,9 @@ let listen ?tags ~sw (config, vat, socket) =
                let secret_key = if config.Vat_config.serve_tls then Some (Vat_config.secret_key config) else None in
                handle_connection ?tags ~secret_key vat client
              with
-             | () -> close client; `Stop_daemon
+             | () -> Eio.Net.close client; `Stop_daemon
              | exception ex ->
-               close client;
+               Eio.Net.close client;
                Fiber.check ();
                Log.info (fun f -> f ?tags "Error handling connection from %a: %a" Eio.Net.Sockaddr.pp addr Eio.Exn.pp ex);
                `Stop_daemon
