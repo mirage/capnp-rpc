@@ -72,8 +72,8 @@ let close x =
   with Eio.Io (Eio.Net.E Connection_reset _, _) -> ()
 
 let try_set_nodelay socket =
-  try Unix.setsockopt socket Unix.TCP_NODELAY true
-  with Unix.Unix_error ((EINVAL | EOPNOTSUPP), _, _) -> ()         (* Probably a Unix-domain socket *)
+  try Eio.Net.setsockopt socket Eio.Net.Sockopt.TCP_NODELAY true
+  with Eio.Io _ -> ()         (* Probably a Unix-domain socket *)
 
 let connect net ~sw ~secret_key (addr, auth) =
   let eio_addr =
@@ -91,13 +91,8 @@ let connect net ~sw ~secret_key (addr, auth) =
     begin match addr with
       | `Unix _ -> ()
       | `TCP _ ->
-        Eio_unix.Resource.fd_opt socket
-        |> Option.iter (fun socket ->
-            Eio_unix.Fd.use_exn "keep-alive" socket @@ fun socket ->
-            Unix.setsockopt socket Unix.SO_KEEPALIVE true;
-            try_set_nodelay socket;
-            Keepalive.try_set_idle socket 60
-          )
+        Keepalive.try_set socket;
+        try_set_nodelay socket;
     end;
     Tls_wrapper.connect_as_client socket secret_key auth
   | exception ex ->
@@ -105,8 +100,7 @@ let connect net ~sw ~secret_key (addr, auth) =
     error "@[<v2>Network connection for %a failed:@,%a@]" Location.pp addr Fmt.exn ex
 
 let accept_connection ~secret_key flow =
-  Eio_unix.Resource.fd_opt flow
-  |> Option.iter (fun fd -> Eio_unix.Fd.use_exn "TCP_NODELAY" fd try_set_nodelay);
+  try_set_nodelay flow;
   Tls_wrapper.connect_as_server flow secret_key
 
 let v t = (t :> [`Generic] Eio.Net.ty r)

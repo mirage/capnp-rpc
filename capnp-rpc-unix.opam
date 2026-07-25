@@ -24,7 +24,7 @@ depends: [
   "mirage-crypto-rng" {>= "1.2.0"}
   "mdx" {>= "2.4.1" & with-test}
   "eio_main" {with-test}
-  "eio" {>= "1.2"}
+  "eio" {>= "1.4"}
 ]
 conflicts: [
   "jbuilder"
