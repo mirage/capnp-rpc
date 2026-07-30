@@ -1,3 +1,9 @@
+### v2.1.2
+
+- Use Eio 1.4 sockopt support instead of handrolled stubs (@talex5 #321 #322)
+- Fix build on oxcaml and remove extlib dep (@avsm #318 #319)
+- Fix hanging tests with dune 3.20 (@talex5 #320)
+
 ### v2.1.1
 
 - Add compatibility with cmdliner 2.0+ (@avsm #317).
