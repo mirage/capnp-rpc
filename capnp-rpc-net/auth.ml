@@ -116,7 +116,8 @@ module Secret_key = struct
 
   let x509 t =
     let dn =
-      [ X509.Distinguished_name.(Relative_distinguished_name.singleton (CN "capnp")) ]
+      let cn = X509.Distinguished_name.Common_name.v "capnp" in
+      [ X509.Distinguished_name.(Relative_distinguished_name.singleton (CN cn)) ]
     in
     match X509.Signing_request.create dn t with
     | Error (`Msg m) ->
